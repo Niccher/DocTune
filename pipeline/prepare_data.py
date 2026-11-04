@@ -1,61 +1,44 @@
 """
-prepare_data.py
----------------
+pipeline/prepare_data.py
+------------------------
 Turn a folder of private documents (PDF, DOCX, CSV) into a clean
 instruction-tuning JSONL file that can be used by the training scripts.
-
-Pipeline:
-  1. Walk the documents folder
-  2. Extract text according to file type
-  3. Split text into overlapping chunks
-  4. Ask a strong "teacher" LLM to generate grounded Q&A pairs
-  5. Write each pair as one line of JSONL
-
-Output format (one object per line):
-{
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "question"},
-    {"role": "assistant", "content": "answer grounded in the document"}
-  ]
-}
 """
 
 import os
 import json
-import glob
+import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import polars as pl
-from pypdf import PdfReader
-from docx import Document
-from openai import OpenAI
+try:
+    import polars as pl
+    from pypdf import PdfReader
+    from docx import Document
+    from openai import OpenAI
+except ImportError:
+    pl = None
+    PdfReader = None
+    Document = None
+    OpenAI = None
 
-from common import DATA_DIR, DEFAULT_JSONL
-
-
-# ============================================================
-# CONFIGURATION – edit these values
-# ============================================================
-DOCS_DIR = Path("./raw_documents")          # Folder that contains your PDFs / DOCX / CSVs
-OUTPUT_JSONL = DEFAULT_JSONL                # Final training file (data/private_docs.jsonl)
-
-# Teacher model (local vLLM, Ollama, LM Studio, or real OpenAI-compatible endpoint)
-TEACHER_BASE_URL = "http://localhost:8000/v1"
-TEACHER_MODEL = "Qwen/Qwen2.5-72B-Instruct"  # Change to whatever strong model you run
-TEACHER_API_KEY = "not-needed"              # Only needed for real OpenAI / paid endpoints
-
-MAX_CHUNKS_PER_DOC = 3                      # Keep total pairs reasonable (~20-30k)
-CHUNK_SIZE_WORDS = 1000
-CHUNK_OVERLAP_WORDS = 150
-MAX_WORKERS = 12                            # Parallel file processing
+try:
+    from pipeline.common import DATA_DIR, RAW_DOCS_DIR, DEFAULT_JSONL
+except ImportError:
+    from common import DATA_DIR, RAW_DOCS_DIR, DEFAULT_JSONL
 
 
 # ============================================================
-# CLIENT
+# DEFAULTS
 # ============================================================
-client = OpenAI(base_url=TEACHER_BASE_URL, api_key=TEACHER_API_KEY)
+DEFAULT_TEACHER_BASE_URL = "http://localhost:8000/v1"
+DEFAULT_TEACHER_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+DEFAULT_TEACHER_API_KEY = "not-needed"
+
+DEFAULT_MAX_CHUNKS = 3
+DEFAULT_CHUNK_SIZE = 1000
+DEFAULT_CHUNK_OVERLAP = 150
+DEFAULT_MAX_WORKERS = 12
 
 
 # ============================================================
@@ -79,7 +62,6 @@ def extract_text(file_path: Path) -> str:
             return "\n".join(paragraphs)
 
         elif ext == ".csv":
-            # Convert each row into a readable key-value style string
             df = pl.read_csv(str(file_path))
             rows = [str(row) for row in df.iter_rows(named=True)]
             return "\n".join(rows)
@@ -93,12 +75,9 @@ def extract_text(file_path: Path) -> str:
 # ============================================================
 # CHUNKING
 # ============================================================
-def chunk_text(text: str,
-               chunk_size: int = CHUNK_SIZE_WORDS,
-               overlap: int = CHUNK_OVERLAP_WORDS) -> list[str]:
+def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     """
     Simple overlapping word-based chunker.
-    Returns only chunks that contain meaningful content.
     """
     words = text.split()
     if not words:
@@ -110,7 +89,7 @@ def chunk_text(text: str,
     for start in range(0, len(words), step):
         chunk_words = words[start : start + chunk_size]
         chunk = " ".join(chunk_words).strip()
-        if len(chunk) > 80:                     # Skip near-empty fragments
+        if len(chunk) > 80:
             chunks.append(chunk)
 
     return chunks
@@ -119,13 +98,9 @@ def chunk_text(text: str,
 # ============================================================
 # SYNTHETIC Q&A GENERATION
 # ============================================================
-def synthesize_qa(chunk: str) -> list[dict]:
+def synthesize_qa(client: OpenAI, model: str, chunk: str) -> list[dict]:
     """
-    Ask the teacher model to create one high-quality, grounded
-    question-answer pair from the given text chunk.
-
-    Returns a list containing zero or one record in the
-    messages format expected by SFTTrainer / TRL.
+    Ask the teacher model to create one grounded question-answer pair.
     """
     system_prompt = (
         "You are an internal company assistant. "
@@ -145,7 +120,7 @@ Document excerpt:
 
     try:
         response = client.chat.completions.create(
-            model=TEACHER_MODEL,
+            model=model,
             messages=[{"role": "user", "content": user_prompt}],
             temperature=0.15,
             response_format={"type": "json_object"},
@@ -176,23 +151,20 @@ Document excerpt:
 # ============================================================
 # PER-FILE PROCESSING
 # ============================================================
-def process_one_file(file_path: Path) -> int:
-    """
-    Full pipeline for a single document:
-    extract → chunk → generate Q&A → append to JSONL.
-    Returns the number of pairs written.
-    """
+def process_one_file(file_path: Path, client: OpenAI, model: str,
+                     output_file: Path, max_chunks: int,
+                     chunk_size: int, overlap: int) -> int:
     text = extract_text(file_path)
     if not text:
         return 0
 
-    chunks = chunk_text(text)[:MAX_CHUNKS_PER_DOC]
+    chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)[:max_chunks]
     written = 0
 
     for chunk in chunks:
-        records = synthesize_qa(chunk)
+        records = synthesize_qa(client, model, chunk)
         if records:
-            with open(OUTPUT_JSONL, "a", encoding="utf-8") as f:
+            with open(output_file, "a", encoding="utf-8") as f:
                 for record in records:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             written += len(records)
@@ -203,39 +175,83 @@ def process_one_file(file_path: Path) -> int:
 # ============================================================
 # MAIN
 # ============================================================
-def main():
-    # Make sure the data directory exists
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
+                    output_file: Path = DEFAULT_JSONL,
+                    teacher_url: str = DEFAULT_TEACHER_BASE_URL,
+                    teacher_model: str = DEFAULT_TEACHER_MODEL,
+                    teacher_api_key: str = DEFAULT_TEACHER_API_KEY,
+                    max_chunks: int = DEFAULT_MAX_CHUNKS,
+                    chunk_size: int = DEFAULT_CHUNK_SIZE,
+                    overlap: int = DEFAULT_CHUNK_OVERLAP,
+                    max_workers: int = DEFAULT_MAX_WORKERS):
+    if any(pkg is None for pkg in [pl, PdfReader, Document, OpenAI]):
+        raise ImportError(
+            "Data ingestion packages (polars, pypdf, python-docx, openai) are not installed. "
+            "Please run: pip install -r requirements.txt"
+        )
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Start fresh
-    if OUTPUT_JSONL.exists():
-        OUTPUT_JSONL.unlink()
-        print(f"Removed previous {OUTPUT_JSONL}")
+    if output_file.exists():
+        output_file.unlink()
+        print(f"Removed previous {output_file}")
 
-    # Collect files
     patterns = ["*.pdf", "*.docx", "*.csv", "*.PDF", "*.DOCX", "*.CSV"]
     all_files = []
     for pattern in patterns:
-        all_files.extend(DOCS_DIR.glob(pattern))
+        all_files.extend(docs_dir.glob(pattern))
 
     all_files = sorted(set(all_files))
-    print(f"Found {len(all_files)} documents in {DOCS_DIR}")
+    print(f"Found {len(all_files)} documents in {docs_dir}")
 
     if not all_files:
-        print("No documents found. Put PDF / DOCX / CSV files into the raw_documents folder.")
-        return
+        print(f"No documents found. Put PDF / DOCX / CSV files into: {docs_dir}")
+        return 0
+
+    client = OpenAI(base_url=teacher_url, api_key=teacher_api_key)
 
     total_pairs = 0
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(process_one_file, f): f for f in all_files}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                process_one_file, f, client, teacher_model, output_file,
+                max_chunks, chunk_size, overlap
+            ): f for f in all_files
+        }
         for future in as_completed(futures):
             pairs = future.result()
             total_pairs += pairs
             print(f"  +{pairs} pairs  (running total: {total_pairs})")
 
     print("\n" + "=" * 60)
-    print(f"Finished. Wrote {total_pairs} instruction pairs → {OUTPUT_JSONL}")
+    print(f"Finished. Wrote {total_pairs} instruction pairs → {output_file}")
     print("=" * 60)
+    return total_pairs
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Prepare document instruction dataset.")
+    parser.add_argument("--docs-dir", type=Path, default=RAW_DOCS_DIR)
+    parser.add_argument("--output-jsonl", type=Path, default=DEFAULT_JSONL)
+    parser.add_argument("--teacher-url", type=str, default=DEFAULT_TEACHER_BASE_URL)
+    parser.add_argument("--teacher-model", type=str, default=DEFAULT_TEACHER_MODEL)
+    parser.add_argument("--teacher-api-key", type=str, default=DEFAULT_TEACHER_API_KEY)
+    parser.add_argument("--max-chunks", type=int, default=DEFAULT_MAX_CHUNKS)
+    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
+    parser.add_argument("--overlap", type=int, default=DEFAULT_CHUNK_OVERLAP)
+    parser.add_argument("--workers", type=int, default=DEFAULT_MAX_WORKERS)
+
+    args = parser.parse_args()
+    run_preparation(
+        docs_dir=args.docs_dir,
+        output_file=args.output_jsonl,
+        teacher_url=args.teacher_url,
+        teacher_model=args.teacher_model,
+        teacher_api_key=args.teacher_api_key,
+        max_chunks=args.max_chunks,
+        chunk_size=args.chunk_size,
+        overlap=args.overlap,
+        max_workers=args.workers
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <!-- Upload & Document Manager -->
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-file-earmark-arrow-up me-2 text-warning"></i>Raw Documents</h5>
+        <span class="badge bg-secondary">{{ files|length }} files</span>
+      </div>
+      <div class="card-body">
+        <!-- File Input -->
+        <form id="uploadForm" class="mb-3">
+          <label class="form-label small fw-semibold">Upload Documents (PDF, DOCX, CSV)</label>
+          <div class="input-group">
+            <input type="file" class="form-control" id="fileInput" multiple accept=".pdf,.docx,.csv">
+            <button class="btn btn-warning" type="submit" id="uploadBtn">
+              <i class="bi bi-upload me-1"></i> Upload
+            </button>
+          </div>
+          <div class="form-text small">Files will be saved into <code>raw_documents/</code></div>
+        </form>
+
+        <!-- Document List Table -->
+        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Document</th>
+                <th>Size</th>
+                <th class="text-end">Action</th>
+              </tr>
+            </thead>
+            <tbody id="documentListTable">
+              {% if files %}
+                {% for f in files %}
+                  <tr id="doc-row-{{ loop.index }}">
+                    <td>
+                      {% if f.extension == '.pdf' %}
+                        <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
+                      {% elif f.extension == '.docx' %}
+                        <i class="bi bi-file-earmark-word text-primary me-1"></i>
+                      {% else %}
+                        <i class="bi bi-file-earmark-spreadsheet text-success me-1"></i>
+                      {% endif %}
+                      <span class="small fw-semibold">{{ f.name }}</span>
+                    </td>
+                    <td class="small text-muted">{{ f.size_kb }} KB</td>
+                    <td class="text-end">
+                      <button class="btn btn-xs btn-outline-danger" onclick="deleteDoc('{{ f.name }}')">
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr>
+                  <td colspan="3" class="text-center text-muted py-3 small">No documents in <code>raw_documents/</code>.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Teacher Model Configuration & Run Trigger -->
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-gear-wide-connected me-2 text-primary"></i>Teacher LLM Ingestion Settings</h5>
+      </div>
+      <div class="card-body">
+        <form id="dataPrepForm">
+          <div class="row g-2 mb-3">
+            <div class="col-md-7">
+              <label class="form-label small fw-semibold">Teacher Endpoint URL</label>
+              <input type="text" class="form-control form-control-sm" name="teacher_url" value="http://localhost:8000/v1" required>
+              <div class="form-text small">Local vLLM, Ollama, or OpenAI-compatible server</div>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label small fw-semibold">Teacher Model Name</label>
+              <input type="text" class="form-control form-control-sm" name="teacher_model" value="Qwen/Qwen2.5-72B-Instruct" required>
+            </div>
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Max Chunks / Doc</label>
+              <input type="number" class="form-control form-control-sm" name="max_chunks" value="3" min="1" max="50">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Chunk Size (Words)</label>
+              <input type="number" class="form-control form-control-sm" name="chunk_size" value="1000" min="100">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Overlap (Words)</label>
+              <input type="number" class="form-control form-control-sm" name="overlap" value="150" min="0">
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center pt-2">
+            <div class="text-muted small">
+              Output: <code>data/private_docs.jsonl</code>
+            </div>
+            <button type="submit" class="btn btn-primary" id="startPrepBtn">
+              <i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Live Execution Terminal -->
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center">
+    <span class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>Ingestion Process Output</span>
+    <div>
+      <button class="btn btn-xs btn-outline-secondary" onclick="document.getElementById('terminalBox').innerText = ''">Clear</button>
+    </div>
+  </div>
+  <div class="card-body p-2 bg-dark rounded-bottom">
+    <div class="terminal-window" id="terminalBox" style="height: 220px;">Ready. Upload files and click "Generate Training Dataset" to begin.</div>
+  </div>
+</div>
+
+<!-- Dataset Inspector (private_docs.jsonl Preview) -->
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+    <div>
+      <h5 class="card-title mb-0 fw-bold"><i class="bi bi-card-checklist me-2 text-success"></i>Dataset Inspector</h5>
+      <small class="text-muted">Total instruction pairs: <strong>{{ total_samples }}</strong></small>
+    </div>
+    {% if total_pages > 1 %}
+      <nav>
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {% if current_page <= 1 %}disabled{% endif %}">
+            <a class="page-link" href="?page={{ current_page - 1 }}">Prev</a>
+          </li>
+          <li class="page-item active">
+            <span class="page-link">{{ current_page }} / {{ total_pages }}</span>
+          </li>
+          <li class="page-item {% if current_page >= total_pages %}disabled{% endif %}">
+            <a class="page-link" href="?page={{ current_page + 1 }}">Next</a>
+          </li>
+        </ul>
+      </nav>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width: 50px;">#</th>
+            <th style="width: 40%;">User Question</th>
+            <th>Grounded Assistant Answer</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if samples %}
+            {% for s in samples %}
+              <tr>
+                <td class="text-muted small">{{ (current_page - 1) * 15 + loop.index }}</td>
+                <td>
+                  {% for m in s.messages %}
+                    {% if m.role == 'user' %}
+                      <span class="fw-semibold small text-primary">{{ m.content }}</span>
+                    {% endif %}
+                  {% endfor %}
+                </td>
+                <td>
+                  {% for m in s.messages %}
+                    {% if m.role == 'assistant' %}
+                      <span class="small">{{ m.content }}</span>
+                    {% endif %}
+                  {% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="3" class="text-center text-muted py-4">No dataset generated yet. Run ingestion to create <code>data/private_docs.jsonl</code>.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // File Upload Handler
+  document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('fileInput');
+    if (!input.files.length) return showToast('Please select at least one file', 'error');
+
+    const formData = new FormData();
+    for (let f of input.files) formData.append('files', f);
+
+    const btn = document.getElementById('uploadBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Uploading...';
+
+    try {
+      const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Uploaded ${data.uploaded.length} file(s)`, 'success');
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        showToast('Upload failed', 'error');
+      }
+    } catch (err) {
+      showToast('Error uploading: ' + err, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-upload me-1"></i> Upload';
+    }
+  });
+
+  // Delete Document Handler
+  async function deleteDoc(filename) {
+    if (!confirm(`Delete ${filename}?`)) return;
+    const formData = new FormData();
+    formData.append('filename', filename);
+
+    try {
+      const res = await fetch('/api/documents/delete', { method: 'POST', body: formData });
+      if (res.ok) {
+        showToast('Deleted ' + filename, 'success');
+        setTimeout(() => window.location.reload(), 500);
+      } else {
+        showToast('Failed to delete', 'error');
+      }
+    } catch (err) {
+      showToast('Error deleting', 'error');
+    }
+  }
+
+  // Start Ingestion Handler
+  document.getElementById('dataPrepForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+
+    const btn = document.getElementById('startPrepBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Starting...';
+
+    try {
+      const res = await fetch('/api/data-prep/start', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Dataset preparation launched!', 'success');
+        document.getElementById('terminalBox').innerText = '';
+      } else {
+        showToast(data.message || 'Failed to start', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset';
+      }
+    } catch (err) {
+      showToast('Error: ' + err, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset';
+    }
+  });
+
+  // Handle WebSocket Terminal Output
+  window.handleCustomWS = (msg) => {
+    if (msg.type === 'log') {
+      const box = document.getElementById('terminalBox');
+      if (box) {
+        box.innerText += msg.line + '\n';
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+  };
+</script>
+{% endblock %}

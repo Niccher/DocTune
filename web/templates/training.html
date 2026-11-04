@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <!-- Hyperparameter Configuration Panel -->
+  <div class="col-12 col-xl-4">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-sliders me-2 text-primary"></i>Training Hyperparameters</h5>
+      </div>
+      <div class="card-body">
+        <form id="trainForm">
+          <!-- Method Selection -->
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Fine-Tuning Method</label>
+            <div class="btn-group w-100" role="group">
+              <input type="radio" class="btn-check" name="method" id="m_qlora" value="qlora" checked>
+              <label class="btn btn-outline-primary btn-sm" for="m_qlora">QLoRA (4-bit)</label>
+
+              <input type="radio" class="btn-check" name="method" id="m_lora" value="lora">
+              <label class="btn btn-outline-primary btn-sm" for="m_lora">LoRA (16-bit)</label>
+
+              <input type="radio" class="btn-check" name="method" id="m_fft" value="fft">
+              <label class="btn btn-outline-primary btn-sm" for="m_fft">FFT</label>
+            </div>
+            <div class="form-text small" id="methodHint">QLoRA fits easily on consumer GPUs (9–13 GB VRAM).</div>
+          </div>
+
+          <!-- Base Model ID -->
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Base Model ID</label>
+            <input type="text" class="form-control form-control-sm" name="model_id" value="{{ config.model_id }}" required>
+          </div>
+
+          <!-- LoRA Rank & Alpha -->
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label small fw-semibold">LoRA Rank (r)</label>
+              <input type="number" class="form-control form-control-sm" name="lora_r" value="{{ config.lora_r }}" min="4" max="256">
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">LoRA Alpha</label>
+              <input type="number" class="form-control form-control-sm" name="lora_alpha" value="{{ config.lora_alpha }}" min="8" max="512">
+            </div>
+          </div>
+
+          <!-- Epochs & Learning Rate -->
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Epochs</label>
+              <input type="number" class="form-control form-control-sm" name="epochs" value="{{ config.num_train_epochs }}" min="1" max="20">
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Learning Rate</label>
+              <input type="number" step="0.00001" class="form-control form-control-sm" name="learning_rate" value="{{ config.learning_rate_lora }}">
+            </div>
+          </div>
+
+          <!-- Batch Size & Accumulation -->
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Batch Size</label>
+              <input type="number" class="form-control form-control-sm" name="batch_size" value="{{ config.per_device_train_batch_size }}" min="1">
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Grad Accum Steps</label>
+              <input type="number" class="form-control form-control-sm" name="grad_accum" value="{{ config.gradient_accumulation_steps }}" min="1">
+            </div>
+          </div>
+
+          <!-- Sequence Length -->
+          <div class="mb-4">
+            <label class="form-label small fw-semibold">Max Sequence Length</label>
+            <input type="number" class="form-control form-control-sm" name="max_seq_length" value="{{ config.max_seq_length }}" min="256" max="4096">
+          </div>
+
+          <!-- Controls -->
+          <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-success" id="startTrainBtn">
+              <i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning
+            </button>
+            <button type="button" class="btn btn-outline-danger" id="abortTrainBtn" onclick="abortTraining()">
+              <i class="bi bi-stop-circle me-1"></i> Abort Running Job
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live Loss Chart & Terminal Console -->
+  <div class="col-12 col-xl-8">
+    <!-- Real-time ApexChart -->
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-graph-up me-2 text-primary"></i>Real-Time Training Loss Curve</h5>
+        <div class="d-flex align-items-center gap-3">
+          <small class="text-muted">Current Loss: <strong id="currentLossText" class="text-primary">-</strong></small>
+          <small class="text-muted">Step: <strong id="currentStepText">-</strong></small>
+        </div>
+      </div>
+      <div class="card-body p-2">
+        <div id="lossChart" style="min-height: 250px;"></div>
+      </div>
+    </div>
+
+    <!-- Live Execution Console -->
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center">
+        <span class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>Live Training Console</span>
+        <div>
+          <button class="btn btn-xs btn-outline-secondary" onclick="document.getElementById('trainTerminal').innerText = ''">Clear</button>
+        </div>
+      </div>
+      <div class="card-body p-2 bg-dark rounded-bottom">
+        <div class="terminal-window" id="trainTerminal" style="height: 280px;">Ready. Configure parameters and click "Start Fine-Tuning".</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // ApexChart Initialization
+  const initialLossData = {{ loss_history | tojson }};
+  const seriesData = initialLossData.map(d => ({ x: d.step, y: d.loss }));
+
+  const chartOptions = {
+    chart: {
+      type: 'area',
+      height: 260,
+      animations: { enabled: true, easing: 'linear', dynamicAnimation: { speed: 800 } },
+      toolbar: { show: false },
+      background: 'transparent'
+    },
+    series: [{ name: 'Training Loss', data: seriesData }],
+    xaxis: {
+      type: 'numeric',
+      title: { text: 'Optimization Step' },
+      labels: { formatter: val => parseInt(val) }
+    },
+    yaxis: {
+      title: { text: 'Loss' },
+      labels: { formatter: val => parseFloat(val).toFixed(3) }
+    },
+    stroke: { curve: 'smooth', width: 2 },
+    colors: ['#0d6efd'],
+    fill: {
+      type: 'gradient',
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 90, 100] }
+    },
+    dataLabels: { enabled: false },
+    tooltip: {
+      theme: 'dark',
+      y: { formatter: val => val.toFixed(4) }
+    }
+  };
+
+  const chart = new ApexCharts(document.querySelector("#lossChart"), chartOptions);
+  chart.render();
+
+  // Method Hint Updates
+  document.querySelectorAll('input[name="method"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      const hint = document.getElementById('methodHint');
+      if (e.target.value === 'qlora') hint.innerText = 'QLoRA (4-bit): Fits on 9-13 GB VRAM (RTX 3090/4090).';
+      else if (e.target.value === 'lora') hint.innerText = 'LoRA (16-bit): Needs ~28-35 GB VRAM (A100 or multi-GPU).';
+      else hint.innerText = 'Full Fine-Tuning: High resource requirement (120-160 GB VRAM).';
+    });
+  });
+
+  // Start Fine-Tuning
+  document.getElementById('trainForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+
+    const btn = document.getElementById('startTrainBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Launching...';
+
+    try {
+      const res = await fetch('/api/training/start', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Training launched successfully!', 'success');
+        document.getElementById('trainTerminal').innerText = '';
+      } else {
+        showToast(data.message || 'Failed to start training', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning';
+      }
+    } catch (err) {
+      showToast('Error: ' + err, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning';
+    }
+  });
+
+  // Abort Fine-Tuning
+  async function abortTraining() {
+    if (!confirm('Are you sure you want to abort the current training run?')) return;
+    try {
+      const res = await fetch('/api/training/stop', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Job aborted', 'success');
+      } else {
+        showToast(data.message || 'Failed to stop', 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err, 'error');
+    }
+  }
+
+  // Handle WebSocket updates
+  window.handleCustomWS = (msg) => {
+    if (msg.type === 'init') {
+      if (msg.logs && msg.logs.length) {
+        const term = document.getElementById('trainTerminal');
+        term.innerText = msg.logs.join('\n') + '\n';
+        term.scrollTop = term.scrollHeight;
+      }
+      if (msg.loss_history && msg.loss_history.length) {
+        const points = msg.loss_history.map(d => ({ x: d.step, y: d.loss }));
+        chart.updateSeries([{ data: points }]);
+        const last = msg.loss_history[msg.loss_history.length - 1];
+        document.getElementById('currentLossText').innerText = last.loss.toFixed(4);
+        document.getElementById('currentStepText').innerText = last.step;
+      }
+    } else if (msg.type === 'log') {
+      const term = document.getElementById('trainTerminal');
+      if (term) {
+        term.innerText += msg.line + '\n';
+        term.scrollTop = term.scrollHeight;
+      }
+    } else if (msg.type === 'metric') {
+      const pt = { x: msg.data.step, y: msg.data.loss };
+      seriesData.push(pt);
+      chart.appendData([{ data: [pt] }]);
+      document.getElementById('currentLossText').innerText = msg.data.loss.toFixed(4);
+      document.getElementById('currentStepText').innerText = msg.data.step;
+    }
+  };
+</script>
+{% endblock %}

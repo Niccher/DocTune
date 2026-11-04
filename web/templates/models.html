@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <!-- Checkpoints List -->
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-archive-fill me-2 text-info"></i>Checkpoint Repositories</h5>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <!-- QLoRA -->
+          <div class="col-12 col-md-6">
+            <div class="p-3 border rounded bg-body-tertiary h-100">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="fw-bold mb-0">QLoRA Adapter</h6>
+                {% if checkpoints.qlora %}
+                  <span class="badge bg-success">Ready</span>
+                {% else %}
+                  <span class="badge bg-secondary">Not Found</span>
+                {% endif %}
+              </div>
+              <p class="text-muted small mb-2"><code>output_qlora/</code></p>
+              {% if checkpoints.qlora %}
+                <ul class="list-unstyled small text-muted mb-3">
+                  <li><strong>Size:</strong> {{ checkpoints.qlora.size_mb }} MB</li>
+                  <li><strong>Files:</strong> {{ checkpoints.qlora.files_count }}</li>
+                  {% if checkpoints.qlora.adapter_config %}
+                    <li><strong>Rank:</strong> {{ checkpoints.qlora.adapter_config.r }}, <strong>Alpha:</strong> {{ checkpoints.qlora.adapter_config.lora_alpha }}</li>
+                  {% endif %}
+                </ul>
+              {% else %}
+                <p class="small text-muted mb-3">Train a model using QLoRA to generate these adapter weights.</p>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- LoRA -->
+          <div class="col-12 col-md-6">
+            <div class="p-3 border rounded bg-body-tertiary h-100">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="fw-bold mb-0">LoRA Adapter</h6>
+                {% if checkpoints.lora %}
+                  <span class="badge bg-success">Ready</span>
+                {% else %}
+                  <span class="badge bg-secondary">Not Found</span>
+                {% endif %}
+              </div>
+              <p class="text-muted small mb-2"><code>output_lora/</code></p>
+              {% if checkpoints.lora %}
+                <ul class="list-unstyled small text-muted mb-3">
+                  <li><strong>Size:</strong> {{ checkpoints.lora.size_mb }} MB</li>
+                  <li><strong>Files:</strong> {{ checkpoints.lora.files_count }}</li>
+                </ul>
+              {% else %}
+                <p class="small text-muted mb-3">Train a model using LoRA to generate these adapter weights.</p>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Merged Standalone -->
+          <div class="col-12 col-md-6">
+            <div class="p-3 border rounded bg-body-tertiary h-100">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="fw-bold mb-0">Merged Standalone Model</h6>
+                {% if checkpoints.merged %}
+                  <span class="badge bg-success">Ready</span>
+                {% else %}
+                  <span class="badge bg-secondary">Not Found</span>
+                {% endif %}
+              </div>
+              <p class="text-muted small mb-2"><code>output_merged/</code></p>
+              {% if checkpoints.merged %}
+                <ul class="list-unstyled small text-muted mb-3">
+                  <li><strong>Size:</strong> {{ checkpoints.merged.size_mb }} MB</li>
+                  <li><strong>Files:</strong> {{ checkpoints.merged.files_count }}</li>
+                </ul>
+              {% else %}
+                <p class="small text-muted mb-3">Merge adapter weights to create a standalone model.</p>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- FFT -->
+          <div class="col-12 col-md-6">
+            <div class="p-3 border rounded bg-body-tertiary h-100">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="fw-bold mb-0">Full Fine-Tune (FFT)</h6>
+                {% if checkpoints.fft %}
+                  <span class="badge bg-success">Ready</span>
+                {% else %}
+                  <span class="badge bg-secondary">Not Found</span>
+                {% endif %}
+              </div>
+              <p class="text-muted small mb-2"><code>output_fft/</code></p>
+              {% if checkpoints.fft %}
+                <ul class="list-unstyled small text-muted mb-3">
+                  <li><strong>Size:</strong> {{ checkpoints.fft.size_mb }} MB</li>
+                  <li><strong>Files:</strong> {{ checkpoints.fft.files_count }}</li>
+                </ul>
+              {% else %}
+                <p class="small text-muted mb-3">Full model checkpoint from FFT.</p>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Adapter Merging Tool -->
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-node-plus me-2 text-primary"></i>Merge LoRA to Standalone Model</h5>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted">
+          Folds low-rank updates ($W = W_0 + \frac{\alpha}{r}BA$) into the base model. Generates standard Hugging Face weights ready for vLLM, Ollama, or llama.cpp.
+        </p>
+
+        <form id="mergeForm">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Source Adapter Directory</label>
+            <select class="form-select form-select-sm" name="adapter_dir">
+              <option value="{{ cfg.output_qlora }}" selected>output_qlora/ (QLoRA)</option>
+              <option value="{{ cfg.output_lora }}">output_lora/ (LoRA)</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Destination Directory</label>
+            <input type="text" class="form-control form-control-sm" name="export_dir" value="{{ cfg.output_merged }}" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Base Model ID</label>
+            <input type="text" class="form-control form-control-sm" name="model_id" value="{{ cfg.model_id }}" required>
+          </div>
+
+          <button type="submit" class="btn btn-primary w-100" id="mergeBtn">
+            <i class="bi bi-play-circle me-1"></i> Merge Weights
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Merge Console -->
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center">
+    <span class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>Merge Process Output</span>
+    <div>
+      <button class="btn btn-xs btn-outline-secondary" onclick="document.getElementById('mergeTerminal').innerText = ''">Clear</button>
+    </div>
+  </div>
+  <div class="card-body p-2 bg-dark rounded-bottom">
+    <div class="terminal-window" id="mergeTerminal" style="height: 200px;">Ready. Select an adapter and click "Merge Weights".</div>
+  </div>
+</div>
+
+<!-- Deployment Snippets -->
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-body border-0 py-3">
+    <h5 class="card-title mb-0 fw-bold"><i class="bi bi-send-check me-2 text-success"></i>Serving Your Merged Model</h5>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <h6 class="fw-bold mb-1">Serve with vLLM (High-throughput inference)</h6>
+        <pre class="bg-dark text-light p-3 rounded small mb-0"><code>vllm serve ./output_merged --dtype bfloat16 --port 8000</code></pre>
+      </div>
+      <div class="col-12 col-md-6">
+        <h6 class="fw-bold mb-1">Serve with Ollama</h6>
+        <pre class="bg-dark text-light p-3 rounded small mb-0"><code>ollama create my-private-model -f ./Modelfile
+ollama run my-private-model</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.getElementById('mergeForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+
+    const btn = document.getElementById('mergeBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Merging...';
+
+    try {
+      const res = await fetch('/api/models/merge', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Adapter merge started!', 'success');
+        document.getElementById('mergeTerminal').innerText = '';
+      } else {
+        showToast(data.message || 'Merge failed to start', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-circle me-1"></i> Merge Weights';
+      }
+    } catch (err) {
+      showToast('Error: ' + err, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-circle me-1"></i> Merge Weights';
+    }
+  });
+
+  window.handleCustomWS = (msg) => {
+    if (msg.type === 'log') {
+      const term = document.getElementById('mergeTerminal');
+      if (term) {
+        term.innerText += msg.line + '\n';
+        term.scrollTop = term.scrollHeight;
+      }
+    }
+  };
+</script>
+{% endblock %}

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }} | LLM Fine-Tuning Studio</title>
+
+  <!-- Google Font: Source Sans 3 -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap">
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <!-- AdminLTE v4 CSS (Bootstrap 5) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@4.0.0-beta3/dist/css/adminlte.min.css">
+  <!-- ApexCharts -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/apexcharts/dist/apexcharts.css">
+  <!-- Custom Overrides -->
+  <link rel="stylesheet" href="/static/css/custom.css">
+
+  <style>
+    .terminal-window {
+      background-color: #111827;
+      color: #10b981;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.85rem;
+      border-radius: 6px;
+      padding: 12px;
+      height: 380px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .status-badge-running {
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.4; }
+      100% { opacity: 1; }
+    }
+    .metric-card {
+      transition: transform 0.15s ease-in-out;
+    }
+    .metric-card:hover {
+      transform: translateY(-2px);
+    }
+
+    /* Sidebar Alignment */
+    .app-sidebar .nav-link {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      gap: 0.75rem !important;
+      padding: 0.6rem 0.85rem !important;
+      font-size: 0.92rem !important;
+      font-weight: 500;
+      border-radius: 6px;
+      margin-bottom: 0.25rem;
+    }
+    .app-sidebar .nav-link i.nav-icon {
+      font-size: 1.15rem !important;
+      width: 1.5rem !important;
+      text-align: center !important;
+      flex-shrink: 0 !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin: 0 !important;
+    }
+    .app-sidebar .nav-link span,
+    .app-sidebar .nav-link p {
+      display: inline-block !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      line-height: 1.2 !important;
+      white-space: nowrap !important;
+      flex-grow: 1;
+    }
+    .sidebar-header-label {
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.4);
+      padding: 0.75rem 0.85rem 0.25rem 0.85rem;
+      font-weight: 700;
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="layout-fixed sidebar-expand-lg bg-body-tertiary">
+  <div class="app-wrapper">
+
+    <!-- Navbar -->
+    <nav class="app-header navbar navbar-expand bg-body">
+      <div class="container-fluid">
+        <ul class="navbar-nav">
+          <li class="nav-item">
+            <a class="nav-link" data-lte-toggle="sidebar" href="#" role="button">
+              <i class="bi bi-list fs-5"></i>
+            </a>
+          </li>
+          <li class="nav-item d-none d-md-block">
+            <span class="nav-link fw-semibold text-secondary">
+              <i class="bi bi-cpu me-1"></i> Private Document Fine-Tuning Pipeline
+            </span>
+          </li>
+        </ul>
+
+        <ul class="navbar-nav ms-auto align-items-center gap-2">
+          <!-- Job Status Pill -->
+          <li class="nav-item">
+            <span id="globalJobPill" class="badge rounded-pill px-3 py-2 bg-secondary">
+              <i class="bi bi-circle-fill me-1 small"></i> <span id="globalJobText">IDLE</span>
+            </span>
+          </li>
+
+          <!-- Dark/Light Mode Toggle -->
+          <li class="nav-item">
+            <button class="btn btn-sm btn-outline-secondary rounded-circle" id="themeToggleBtn" title="Toggle Theme">
+              <i class="bi bi-moon-stars" id="themeIcon"></i>
+            </button>
+          </li>
+        </ul>
+      </div>
+    </nav>
+
+    <!-- Sidebar -->
+    <aside class="app-sidebar bg-body-secondary shadow" data-bs-theme="dark">
+      <div class="sidebar-brand">
+        <a href="/" class="brand-link text-decoration-none d-flex align-items-center gap-2">
+          <i class="bi bi-layers-fill fs-4 text-primary"></i>
+          <span class="brand-text fw-bold fs-5">LLM Studio</span>
+        </a>
+      </div>
+
+      <div class="sidebar-wrapper">
+        <nav class="mt-2">
+          <ul class="nav nav-pills flex-column" data-lte-toggle="treeview" role="menu">
+            <li class="sidebar-header-label">STUDIO WORKFLOW</li>
+
+            <li class="nav-item">
+              <a href="/" class="nav-link d-flex align-items-center gap-2 {% if active_page == 'dashboard' %}active{% endif %}">
+                <i class="nav-icon bi bi-speedometer2"></i>
+                <span>Dashboard</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="/data-prep" class="nav-link d-flex align-items-center gap-2 {% if active_page == 'data_prep' %}active{% endif %}">
+                <i class="nav-icon bi bi-file-earmark-text"></i>
+                <span>Document & Data Studio</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="/training" class="nav-link d-flex align-items-center gap-2 {% if active_page == 'training' %}active{% endif %}">
+                <i class="nav-icon bi bi-fire"></i>
+                <span>Training Studio</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="/models" class="nav-link d-flex align-items-center gap-2 {% if active_page == 'models' %}active{% endif %}">
+                <i class="nav-icon bi bi-box-seam"></i>
+                <span>Checkpoints & Merging</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="/playground" class="nav-link d-flex align-items-center gap-2 {% if active_page == 'playground' %}active{% endif %}">
+                <i class="nav-icon bi bi-chat-square-text"></i>
+                <span>Evaluation & Playground</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="app-main">
+      <div class="app-content-header py-3">
+        <div class="container-fluid">
+          <div class="row align-items-center">
+            <div class="col-sm-6">
+              <h3 class="mb-0 fw-bold">{{ page_title }}</h3>
+            </div>
+            <div class="col-sm-6 text-sm-end text-muted small">
+              Pipeline Root: <code>Fine Tuning</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="app-content">
+        <div class="container-fluid">
+          {% block content %}{% endblock %}
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer text-muted small py-3">
+      <div class="container-fluid d-flex justify-content-between">
+        <div>
+          <strong>Private Document Fine-Tuning</strong> &bull; Meta-Llama-3-8B-Instruct
+        </div>
+        <div>
+          AdminLTE v4 &bull; FastAPI Backend
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1090;">
+    <div id="appToast" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body" id="toastMessage">Notification</div>
+        <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/admin-lte@4.0.0-beta3/dist/js/adminlte.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
+  <script>
+    // Theme Switcher (Dark / Light)
+    const currentTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-bs-theme', currentTheme);
+    const themeIcon = document.getElementById('themeIcon');
+    if (themeIcon) {
+      themeIcon.className = currentTheme === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
+    }
+
+    document.getElementById('themeToggleBtn')?.addEventListener('click', () => {
+      const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+      const nextTheme = isDark ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-bs-theme', nextTheme);
+      localStorage.setItem('theme', nextTheme);
+      if (themeIcon) {
+        themeIcon.className = nextTheme === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
+      }
+    });
+
+    // Global Toast Notification Helper
+    function showToast(message, type = 'info') {
+      const toastEl = document.getElementById('appToast');
+      const toastMsg = document.getElementById('toastMessage');
+      if (!toastEl || !toastMsg) return;
+
+      toastEl.className = `toast align-items-center text-white border-0 bg-${type === 'error' ? 'danger' : type === 'success' ? 'success' : 'primary'}`;
+      toastMsg.innerText = message;
+      const toast = new bootstrap.Toast(toastEl, { delay: 4000 });
+      toast.show();
+    }
+
+    // Global WebSocket Manager for Status updates
+    let ws = null;
+    function connectWS(onMessageCustom) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/stream`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('[WS] Connected to live pipeline stream');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          updateGlobalStatus(data);
+          if (typeof onMessageCustom === 'function') {
+            onMessageCustom(data);
+          }
+        } catch (e) {
+          console.error('[WS] Parse error', e);
+        }
+      };
+
+      ws.onclose = () => {
+        console.warn('[WS] Closed, retrying in 3s...');
+        setTimeout(() => connectWS(onMessageCustom), 3000);
+      };
+    }
+
+    function updateGlobalStatus(data) {
+      const pill = document.getElementById('globalJobPill');
+      const text = document.getElementById('globalJobText');
+      if (!pill || !text) return;
+
+      let job = data.active_job;
+      if (data.type === 'init') {
+        job = data.active_job;
+      }
+
+      if (job && job.status === 'RUNNING') {
+        pill.className = 'badge rounded-pill px-3 py-2 bg-warning text-dark status-badge-running';
+        text.innerText = `${job.job_type}`;
+      } else {
+        pill.className = 'badge rounded-pill px-3 py-2 bg-success text-white';
+        text.innerText = 'READY / IDLE';
+      }
+    }
+
+    // Auto connect on load
+    document.addEventListener('DOMContentLoaded', () => {
+      connectWS(window.handleCustomWS);
+    });
+  </script>
+
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

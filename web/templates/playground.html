@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <!-- Benchmark Runner Panel -->
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-shield-check me-2 text-success"></i>Evaluation Benchmark</h5>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          Measures <strong>Fact Retrieval Accuracy</strong> (grounded recall) and <strong>Hallucination Resistance</strong> (refusal to guess unknown secrets).
+        </p>
+
+        <form id="evalForm" class="mb-3">
+          <label class="form-label small fw-semibold">Target Checkpoint</label>
+          <div class="input-group mb-3">
+            <select class="form-select form-select-sm" name="adapter_path" id="adapterPathSelect">
+              {% if available_adapters %}
+                {% for a in available_adapters %}
+                  <option value="{{ a.path }}">{{ a.name }} ({{ a.path }})</option>
+                {% endfor %}
+              {% else %}
+                <option value="output_qlora">output_qlora/ (Default)</option>
+              {% endif %}
+            </select>
+            <button class="btn btn-success btn-sm" type="submit" id="runEvalBtn">
+              <i class="bi bi-play-fill me-1"></i> Run Benchmark
+            </button>
+          </div>
+        </form>
+
+        <h6 class="fw-semibold small text-muted mb-2">Golden Test Cases</h6>
+        <div class="list-group list-group-flush border rounded" style="max-height: 240px; overflow-y: auto;">
+          {% for tc in test_cases %}
+            <div class="list-group-item p-2">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="badge {% if tc.type == 'Fact Retrieval' %}bg-primary{% else %}bg-warning text-dark{% endif %} small">{{ tc.type }}</span>
+                <small class="text-muted">Expected: <code>{{ tc.expected }}</code></small>
+              </div>
+              <div class="small fw-semibold">{{ tc.question }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Side-by-Side Playground -->
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-chat-left-dots me-2 text-primary"></i>Side-by-Side Knowledge Comparison</h5>
+      </div>
+      <div class="card-body d-flex flex-column">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Enter Document Prompt / Question</label>
+          <div class="input-group">
+            <input type="text" class="form-control" id="promptInput" placeholder="e.g. What is the primary failover protocol for Facility B?" value="What is the primary failover protocol for Facility B?">
+            <button class="btn btn-primary" type="button" id="compareBtn" onclick="simulateComparison()">
+              <i class="bi bi-send-fill me-1"></i> Compare Models
+            </button>
+          </div>
+        </div>
+
+        <div class="row g-2 flex-grow-1">
+          <!-- Base Model -->
+          <div class="col-12 col-md-6 d-flex flex-column">
+            <div class="p-2 border rounded bg-body-tertiary flex-grow-1 d-flex flex-column">
+              <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                <span class="small fw-bold text-secondary"><i class="bi bi-robot me-1"></i>Base Model (Zero-Shot)</span>
+                <span class="badge bg-secondary-subtle text-secondary small">Pre-trained</span>
+              </div>
+              <div id="baseResponse" class="small text-muted flex-grow-1 p-2" style="min-height: 140px; white-space: pre-wrap;">
+Click "Compare Models" to see how the pre-trained base model answers.
+              </div>
+            </div>
+          </div>
+
+          <!-- Fine-Tuned Model -->
+          <div class="col-12 col-md-6 d-flex flex-column">
+            <div class="p-2 border border-primary-subtle rounded bg-primary-subtle bg-opacity-10 flex-grow-1 d-flex flex-column">
+              <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                <span class="small fw-bold text-primary"><i class="bi bi-stars me-1"></i>Fine-Tuned Model (Adapters)</span>
+                <span class="badge bg-success small">Private Docs</span>
+              </div>
+              <div id="tunedResponse" class="small text-dark flex-grow-1 p-2" style="min-height: 140px; white-space: pre-wrap;">
+Click "Compare Models" to see how the fine-tuned adapter answers using your documents.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Evaluation Execution Console -->
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center">
+    <span class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>Benchmark Runner Log</span>
+    <button class="btn btn-xs btn-outline-secondary" onclick="document.getElementById('evalTerminal').innerText = ''">Clear</button>
+  </div>
+  <div class="card-body p-2 bg-dark rounded-bottom">
+    <div class="terminal-window" id="evalTerminal" style="height: 220px;">Ready. Select target checkpoint and click "Run Benchmark".</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Benchmark Runner Trigger
+  document.getElementById('evalForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+
+    const btn = document.getElementById('runEvalBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Running...';
+
+    try {
+      const res = await fetch('/api/evaluate/run', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Benchmark run started!', 'success');
+        document.getElementById('evalTerminal').innerText = '';
+      } else {
+        showToast(data.message || 'Failed to start benchmark', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i> Run Benchmark';
+      }
+    } catch (err) {
+      showToast('Error: ' + err, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i> Run Benchmark';
+    }
+  });
+
+  // Interactive Comparison via Backend API
+  async function simulateComparison() {
+    const q = document.getElementById('promptInput').value.trim();
+    if (!q) return showToast('Please enter a question', 'error');
+
+    const baseBox = document.getElementById('baseResponse');
+    const tunedBox = document.getElementById('tunedResponse');
+    const compareBtn = document.getElementById('compareBtn');
+
+    baseBox.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary"></div> Querying pre-trained model...';
+    tunedBox.innerHTML = '<div class="spinner-border spinner-border-sm text-primary"></div> Querying fine-tuned adapter...';
+    compareBtn.disabled = true;
+
+    try {
+      const formData = new FormData();
+      formData.append('prompt', q);
+
+      const res = await fetch('/api/playground/chat', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        baseBox.innerText = data.base_response;
+        tunedBox.innerText = data.tuned_response;
+      } else {
+        showToast('Error querying playground', 'error');
+        baseBox.innerText = 'Request failed.';
+        tunedBox.innerText = 'Request failed.';
+      }
+    } catch (err) {
+      showToast('Playground error: ' + err, 'error');
+      baseBox.innerText = 'Failed to connect to playground service.';
+      tunedBox.innerText = 'Failed to connect to playground service.';
+    } finally {
+      compareBtn.disabled = false;
+    }
+  }
+
+  // Handle WebSocket
+  window.handleCustomWS = (msg) => {
+    if (msg.type === 'log') {
+      const term = document.getElementById('evalTerminal');
+      if (term) {
+        term.innerText += msg.line + '\n';
+        term.scrollTop = term.scrollHeight;
+      }
+    }
+  };
+</script>
+{% endblock %}

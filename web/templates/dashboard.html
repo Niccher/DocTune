@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Section 1: Live Job Status Hero Banner -->
+<div class="row mb-4">
+  <div class="col-12">
+    {% if active_job and active_job.status == 'RUNNING' %}
+      <div class="card border-warning bg-warning bg-opacity-10 shadow-sm">
+        <div class="card-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-3">
+          <div class="d-flex align-items-center gap-3">
+            <span class="spinner-grow spinner-grow-sm text-warning" role="status"></span>
+            <div>
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="badge bg-warning text-dark fw-bold">ACTIVE PIPELINE JOB</span>
+                <strong class="fs-6">{{ active_job.job_type }}</strong>
+                <span class="badge bg-secondary-subtle text-secondary small">PID: {{ active_job.pid or '-' }}</span>
+              </div>
+              <small class="text-muted">
+                Running job <code>{{ active_job.job_id }}</code> &bull; Started {{ active_job.duration_sec }}s ago
+              </small>
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <a href="/training" class="btn btn-sm btn-outline-primary">
+              <i class="bi bi-terminal me-1"></i> View Live Console
+            </a>
+            <button class="btn btn-sm btn-danger" onclick="abortJobFromDash()">
+              <i class="bi bi-stop-circle me-1"></i> Abort Job
+            </button>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <div class="card border-0 bg-success bg-opacity-10 shadow-sm">
+        <div class="card-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div class="d-flex align-items-center gap-3">
+            <i class="bi bi-check-circle-fill text-success fs-4"></i>
+            <div>
+              <h6 class="mb-0 fw-bold text-success">Pipeline Idle & Ready</h6>
+              <small class="text-muted">
+                Host: <strong>{{ system.host.hostname }}</strong> &bull; Linux {{ system.host.kernel }} &bull; Python {{ system.host.python }}
+              </small>
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <a href="/data-prep" class="btn btn-sm btn-outline-success">
+              <i class="bi bi-cloud-arrow-up me-1"></i> Ingest Documents
+            </a>
+            <a href="/training" class="btn btn-sm btn-success text-white">
+              <i class="bi bi-play-fill me-1"></i> Start Fine-Tuning
+            </a>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Section 2: Hardware Telemetry Grid (CPU, RAM, Disk, GPU) -->
+<div class="row g-3 mb-4">
+  <!-- CPU Card -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card shadow-sm h-100 metric-card border-0">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="text-uppercase small fw-bold text-muted">CPU PROCESSOR</span>
+          <i class="bi bi-cpu fs-4 text-primary"></i>
+        </div>
+        <h6 class="fw-bold mb-1 text-truncate" title="{{ system.cpu.model_name }}">{{ system.cpu.model_name }}</h6>
+        <div class="d-flex flex-wrap gap-1 mb-3">
+          <span class="badge bg-secondary-subtle text-secondary">{{ system.cpu.cores }} Cores</span>
+          <span class="badge bg-secondary-subtle text-secondary">{{ system.cpu.architecture }}</span>
+        </div>
+        <div class="pt-2 border-top">
+          <div class="d-flex justify-content-between small text-muted">
+            <span>Load Avg (1m, 5m, 15m)</span>
+            <span class="fw-semibold text-body">{{ system.cpu.load_avg_1m }}, {{ system.cpu.load_avg_5m }}, {{ system.cpu.load_avg_15m }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System RAM Card -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card shadow-sm h-100 metric-card border-0">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="text-uppercase small fw-bold text-muted">SYSTEM MEMORY (RAM)</span>
+          <i class="bi bi-memory fs-4 text-info"></i>
+        </div>
+        <h4 class="fw-bold mb-1">{{ system.ram.used_gb }} <small class="text-muted fs-6">/ {{ system.ram.total_gb }} GB</small></h4>
+        <div class="d-flex justify-content-between small text-muted mb-2">
+          <span>In-Use Memory</span>
+          <span><strong>{{ system.ram.used_pct }}%</strong></span>
+        </div>
+        <div class="progress mb-3" style="height: 8px;">
+          <div class="progress-bar {% if system.ram.used_pct > 85 %}bg-danger{% elif system.ram.used_pct > 65 %}bg-warning{% else %}bg-info{% endif %}"
+               role="progressbar" style="width: {{ system.ram.used_pct }}%"></div>
+        </div>
+        <div class="pt-2 border-top small text-muted d-flex justify-content-between">
+          <span>Available</span>
+          <span class="fw-semibold text-body">{{ system.ram.avail_gb }} GB Free</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disk Storage Card -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card shadow-sm h-100 metric-card border-0">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="text-uppercase small fw-bold text-muted">CHECKPOINT STORAGE</span>
+          <i class="bi bi-hdd-network fs-4 text-warning"></i>
+        </div>
+        <h4 class="fw-bold mb-1">{{ system.disk.free_gb }} <small class="text-muted fs-6">GB Free</small></h4>
+        <div class="d-flex justify-content-between small text-muted mb-2">
+          <span>Drive Capacity</span>
+          <span><strong>{{ system.disk.used_gb }} / {{ system.disk.total_gb }} GB</strong> ({{ system.disk.used_pct }}%)</span>
+        </div>
+        <div class="progress mb-3" style="height: 8px;">
+          <div class="progress-bar {% if system.disk.is_low %}bg-danger{% elif system.disk.used_pct > 75 %}bg-warning{% else %}bg-warning{% endif %}"
+               role="progressbar" style="width: {{ system.disk.used_pct }}%"></div>
+        </div>
+        <div class="pt-2 border-top small text-muted d-flex justify-content-between">
+          <span>Status</span>
+          {% if system.disk.is_low %}
+            <span class="badge bg-danger">Low Disk Space (<20GB)</span>
+          {% else %}
+            <span class="badge bg-success-subtle text-success">Ample Storage</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GPU Card -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card shadow-sm h-100 metric-card border-0">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="text-uppercase small fw-bold text-muted">GPU ACCELERATOR</span>
+          <i class="bi bi-gpu-card fs-4 text-success"></i>
+        </div>
+        {% if system.gpu.has_gpu and system.gpu.primary %}
+          <h6 class="fw-bold mb-1 text-truncate" title="{{ system.gpu.primary.name }}">{{ system.gpu.primary.name }}</h6>
+          <div class="d-flex justify-content-between small text-muted mb-2">
+            <span>VRAM: <strong>{{ system.gpu.primary.used_gb }}</strong> / {{ system.gpu.primary.total_gb }} GB</span>
+            <span><strong>{{ system.gpu.primary.memory_util_pct }}%</strong></span>
+          </div>
+          <div class="progress mb-3" style="height: 8px;">
+            <div class="progress-bar {% if system.gpu.primary.memory_util_pct > 85 %}bg-danger{% elif system.gpu.primary.memory_util_pct > 60 %}bg-warning{% else %}bg-success{% endif %}"
+                 role="progressbar" style="width: {{ system.gpu.primary.memory_util_pct }}%"></div>
+          </div>
+          <div class="pt-2 border-top small text-muted d-flex justify-content-between">
+            <span>Core Temp</span>
+            <span class="badge bg-secondary-subtle text-secondary">{{ system.gpu.primary.temperature_c or 'N/A' }}°C</span>
+          </div>
+        {% else %}
+          <h6 class="fw-bold mb-1 text-secondary">CPU / Standard Host</h6>
+          <p class="small text-muted mb-3">{{ system.gpu.message }}</p>
+          <div class="pt-2 border-top small text-muted d-flex justify-content-between">
+            <span>Precision Mode</span>
+            <span class="badge bg-secondary">CPU / FP32</span>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Section 3: Interactive Pipeline Stages & Command Center -->
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+    <h5 class="card-title mb-0 fw-bold"><i class="bi bi-diagram-3-fill me-2 text-primary"></i>Pipeline Command Center</h5>
+    <span class="badge bg-primary-subtle text-primary">4 End-to-End Stages</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <!-- Stage 1 -->
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="p-3 border rounded bg-body-tertiary h-100 d-flex flex-column justify-content-between">
+          <div>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="badge bg-primary rounded-circle p-2">1</span>
+              <span class="badge bg-secondary">{{ pipeline.raw_docs_count }} Files</span>
+            </div>
+            <h6 class="fw-bold mb-1">1. Document Ingestion</h6>
+            <p class="text-muted small mb-2">
+              Chunk proprietary documents and query Teacher LLM for synthetic Q&A instruction pairs.
+            </p>
+            <div class="small text-muted mb-3">
+              <code>{{ pipeline.pdf_count }} PDFs</code> &bull; <code>{{ pipeline.docx_count }} DOCX</code> &bull; <code>{{ pipeline.csv_count }} CSV</code>
+            </div>
+          </div>
+          <a href="/data-prep" class="btn btn-sm btn-outline-primary w-100">
+            <i class="bi bi-folder-plus me-1"></i> Manage & Ingest Docs &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- Stage 2 -->
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="p-3 border rounded bg-body-tertiary h-100 d-flex flex-column justify-content-between">
+          <div>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="badge bg-primary rounded-circle p-2">2</span>
+              <span class="badge bg-success">{{ pipeline.qa_pairs_count }} QA Pairs</span>
+            </div>
+            <h6 class="fw-bold mb-1">2. Fine-Tuning Studio</h6>
+            <p class="text-muted small mb-2">
+              Train LoRA/QLoRA adapters on Meta-Llama-3-8B with real-time loss tracking.
+            </p>
+            <div class="small text-muted mb-3">
+              Dataset: <code>private_docs.jsonl</code> ({{ pipeline.dataset_size_kb }} KB)
+            </div>
+          </div>
+          <a href="/training" class="btn btn-sm btn-outline-primary w-100">
+            <i class="bi bi-sliders me-1"></i> Configure & Train &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- Stage 3 -->
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="p-3 border rounded bg-body-tertiary h-100 d-flex flex-column justify-content-between">
+          <div>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="badge bg-primary rounded-circle p-2">3</span>
+              <span class="badge bg-info">Merge Tools</span>
+            </div>
+            <h6 class="fw-bold mb-1">3. Checkpoints & Merging</h6>
+            <p class="text-muted small mb-2">
+              Fold low-rank updates ($W_0 + \frac{\alpha}{r}BA$) to build a standalone model for vLLM or Ollama.
+            </p>
+            <div class="small text-muted mb-3">
+              Target: <code>output_merged/</code>
+            </div>
+          </div>
+          <a href="/models" class="btn btn-sm btn-outline-primary w-100">
+            <i class="bi bi-box-seam me-1"></i> Manage Checkpoints &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- Stage 4 -->
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="p-3 border rounded bg-body-tertiary h-100 d-flex flex-column justify-content-between">
+          <div>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="badge bg-primary rounded-circle p-2">4</span>
+              <span class="badge bg-warning text-dark">Playground</span>
+            </div>
+            <h6 class="fw-bold mb-1">4. Eval & Playground</h6>
+            <p class="text-muted small mb-2">
+              Automated fact retrieval accuracy, hallucination checks, and side-by-side prompt chat.
+            </p>
+            <div class="small text-muted mb-3">
+              Zero-Shot vs Fine-Tuned
+            </div>
+          </div>
+          <a href="/playground" class="btn btn-sm btn-outline-primary w-100">
+            <i class="bi bi-chat-dots me-1"></i> Test Prompts &rarr;
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Section 4: Checkpoints Overview & Recent Runs (Split Layout) -->
+<div class="row g-3">
+  <!-- Checkpoints Table -->
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-archive me-2 text-info"></i>Checkpoint Repositories</h5>
+        <a href="/models" class="btn btn-xs btn-outline-secondary">View Hub</a>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Checkpoint</th>
+                <th>Status</th>
+                <th>Size</th>
+                <th class="text-end">Quick Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ck in pipeline.checkpoints %}
+                <tr>
+                  <td>
+                    <strong class="d-block small">{{ ck.name }}</strong>
+                    <code class="text-muted small">{{ ck.path }}</code>
+                  </td>
+                  <td>
+                    {% if ck.exists %}
+                      <span class="badge bg-success">Ready</span>
+                    {% else %}
+                      <span class="badge bg-secondary-subtle text-secondary">Not Built</span>
+                    {% endif %}
+                  </td>
+                  <td class="small">{{ ck.size_mb }} MB</td>
+                  <td class="text-end">
+                    <a href="{{ ck.action_url }}" class="btn btn-xs {% if ck.exists %}btn-outline-primary{% else %}btn-outline-secondary disabled{% endif %}">
+                      {{ ck.action_label }}
+                    </a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Executions Log -->
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-clock-history me-2 text-primary"></i>Recent Pipeline Executions</h5>
+        <span class="badge bg-secondary">{{ recent_jobs|length }} Logged</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Job Type</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>PID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if recent_jobs %}
+                {% for j in recent_jobs %}
+                  <tr>
+                    <td><strong>{{ j.job_type }}</strong></td>
+                    <td>
+                      {% if j.status == 'COMPLETED' %}
+                        <span class="badge bg-success">{{ j.status }}</span>
+                      {% elif j.status == 'FAILED' %}
+                        <span class="badge bg-danger">{{ j.status }}</span>
+                      {% elif j.status == 'ABORTED' %}
+                        <span class="badge bg-warning text-dark">{{ j.status }}</span>
+                      {% else %}
+                        <span class="badge bg-primary">{{ j.status }}</span>
+                      {% endif %}
+                    </td>
+                    <td>{{ j.duration_sec }}s</td>
+                    <td><code>{{ j.pid or '-' }}</code></td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr>
+                  <td colspan="4" class="text-center text-muted py-4 small">No execution jobs recorded in this server session.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  async function abortJobFromDash() {
+    if (!confirm('Are you sure you want to abort the currently running pipeline job?')) return;
+    try {
+      const res = await fetch('/api/training/stop', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Job aborted successfully', 'success');
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        showToast(data.message || 'Failed to abort job', 'error');
+      }
+    } catch (err) {
+      showToast('Error aborting job: ' + err, 'error');
+    }
+  }
+</script>
+{% endblock %}

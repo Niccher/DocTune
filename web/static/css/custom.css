@@ -1,0 +1,108 @@
+/* Custom styling for Fine-Tuning Studio */
+
+/* Terminal Box */
+.terminal-window {
+  background-color: #111827;
+  color: #10b981;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  border-radius: 6px;
+  padding: 12px;
+  height: 380px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Pulsing Badge for Running Jobs */
+.status-badge-running {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+/* Metric Hover Effect */
+.metric-card {
+  transition: transform 0.15s ease-in-out;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+}
+
+/* ============================================================
+   Sidebar Navigation Alignment Fix (AdminLTE v4 + Bootstrap 5)
+   ============================================================ */
+.app-sidebar .sidebar-brand {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.app-sidebar .nav-pills {
+  padding: 0.5rem 0.5rem;
+}
+
+.app-sidebar .nav-item {
+  margin-bottom: 0.25rem;
+}
+
+.app-sidebar .nav-link {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  padding: 0.6rem 0.85rem !important;
+  font-size: 0.92rem !important;
+  font-weight: 500;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.75);
+  transition: all 0.15s ease-in-out;
+}
+
+.app-sidebar .nav-link:hover {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.app-sidebar .nav-link.active {
+  color: #ffffff !important;
+  background-color: #0d6efd !important;
+  box-shadow: 0 2px 4px rgba(13, 110, 253, 0.35);
+}
+
+.app-sidebar .nav-link i.nav-icon {
+  font-size: 1.15rem !important;
+  width: 1.5rem !important;
+  text-align: center !important;
+  flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+}
+
+.app-sidebar .nav-link p,
+.app-sidebar .nav-link span {
+  display: inline-block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+  flex-grow: 1;
+}
+
+.sidebar-header-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 0.75rem 1rem 0.25rem 1rem;
+  font-weight: 700;
+}

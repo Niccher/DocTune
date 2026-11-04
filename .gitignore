@@ -17,6 +17,7 @@ output_qlora/
 output_merged/
 checkpoint-*/
 runs/
+.runs/
 wandb/
 
 # Raw and proprietary document inputs
