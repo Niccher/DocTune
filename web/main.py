@@ -33,6 +33,26 @@ app.include_router(admin.router)
 
 
 
+from web.db.session import init_db
+from web.services.storage_service import storage_service
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database tables on application start."""
+    init_db()
+
+
+@app.get("/health")
+async def health_check():
+    """Healthcheck probe for Docker containers and load balancers."""
+    return {
+        "status": "healthy",
+        "app": "DocTune Studio",
+        "version": "1.0.0",
+        "s3_storage": storage_service.is_s3_enabled(),
+    }
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Ensure any running background processes are cleanly terminated."""

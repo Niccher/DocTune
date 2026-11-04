@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-04
+
+### Added
+- **Multi-Container Enterprise Orchestration (`docker-compose.yml`)**:
+  - `web`: FastAPI Studio & AdminLTE v4 (`Dockerfile.web`, port 4444).
+  - `celery_worker`: Distributed ML training & data prep worker (`Dockerfile.worker`, 8GB shm_size, GPU passthrough with CPU fallback).
+  - `postgres`: PostgreSQL 16 relational database for run histories, loss curves, and model registry (port 5432).
+  - `redis`: Redis 7 broker & real-time telemetry Pub/Sub channel (port 6379).
+  - `minio`: MinIO S3 object storage for raw documents, datasets, checkpoints, and merged models (API :9000, Web Console :9001).
+  - `minio_init`: Ephemeral bucket auto-provisioner.
+- **One-Click Automated Deployment Engine (`scripts/deploy.sh`)**:
+  - 13-stage automated pipeline: Dynamic host IP detection, pre-flight system inspection, automated 4GB swapfile creation, git sanity check, `.env` auto-patching, container rebuilds with image/layer size reporting, health probe loops, database schema init, MinIO bucket verification, WebApp readiness check, permission enforcement, build cache pruning, and timeline summary table.
+- **Dual-Audience Project Documentation**:
+  - User-facing `README.md` ($\le 150$ lines, run-only).
+  - Complete software engineering `docs/` hub: architecture overview (C4 context & container diagrams), communication sequences, data & storage ERD, local and Google Cloud Platform (GCP) deployment guide, threat model (STRIDE), API contracts, OpenAPI 3.0 specification (`openapi.yaml`), service guides, runbooks (`restart.md`, `backup-and-restore.md`), and Architecture Decision Records (ADRs).
+  - Interactive documentation website configuration (`mkdocs.yml`) and CI verification workflow (`.github/workflows/docs-verify.yml`).
+- **Database & Storage Adapters (`web/db/`, `web/services/storage_service.py`)**:
+  - SQLAlchemy models for `Run`, `MetricPoint`, `Checkpoint`, `UploadedDocument` with transparent SQLite fallback for native local development.
+  - S3 / MinIO storage client with local filesystem fallback.
+
 ## [1.0.0] - 2026-11-04
 
 ### Added

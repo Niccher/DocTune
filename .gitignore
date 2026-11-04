@@ -28,3 +28,10 @@ raw_documents/
 .DS_Store
 .idea/
 .vscode/
+
+# Local Environment & Scratch
+.env
+.scratch/
+.storage/
+*.db
+

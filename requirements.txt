@@ -17,3 +17,10 @@ openai>=1.30.0          # Works with local vLLM / Ollama / LM Studio
 flash-attn>=2.5.0       # Significant speed-up on supported GPUs
 sentencepiece>=0.2.0
 protobuf>=4.25.0
+
+# Distributed Pipeline Worker & Storage
+redis>=5.0.0
+celery>=5.3.6
+boto3>=1.34.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9

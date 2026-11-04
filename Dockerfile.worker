@@ -1,0 +1,35 @@
+# ==============================================================================
+# DocTune Studio — Distributed Celery ML Worker Dockerfile
+# ==============================================================================
+# Supports both NVIDIA CUDA GPUs (on GCP / GPU hosts) and CPU fallback mode.
+# ==============================================================================
+FROM python:3.11-slim-bookworm AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# Install system dependencies for Hugging Face tokenizers, PyPDF, and healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ML stack and worker dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code and configurations
+COPY pipeline/ ./pipeline/
+COPY web/ ./web/
+COPY config/ ./config/
+COPY VERSION .
+
+RUN mkdir -p /app/.scratch /root/.cache/huggingface
+
+CMD ["celery", "-A", "web.celery_app.app", "worker", "--loglevel=INFO", "-c", "1", "-Q", "training_queue,data_prep_queue"]

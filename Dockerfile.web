@@ -1,0 +1,38 @@
+# ==============================================================================
+# DocTune Studio — Web Service Dockerfile
+# ==============================================================================
+FROM python:3.12-slim-bookworm AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=4444
+
+WORKDIR /app
+
+# Install lightweight runtime utilities for healthcheck & network diagnostics
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install web application dependencies
+COPY requirements-web.txt .
+RUN pip install --no-cache-dir -r requirements-web.txt
+
+# Copy application source code
+COPY pipeline/ ./pipeline/
+COPY web/ ./web/
+COPY config/ ./config/
+COPY run_web.py .
+COPY VERSION .
+
+# Create internal scratch directory for temporary buffers
+RUN mkdir -p /app/.scratch /app/config
+
+EXPOSE 4444
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:4444/api/admin/hardware-bounds || exit 1
+
+CMD ["python", "run_web.py", "--host", "0.0.0.0", "--port", "4444"]

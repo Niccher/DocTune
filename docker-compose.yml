@@ -1,0 +1,195 @@
+# ==============================================================================
+# DocTune Studio — Multi-Container Distributed Stack
+# ==============================================================================
+# Services:
+#   1. postgres      : PostgreSQL 16 relational database (runs, metrics, metadata)
+#   2. redis         : Redis 7 broker & real-time telemetry Pub/Sub
+#   3. minio         : MinIO S3-compatible object store (raw docs, datasets, weights)
+#   4. minio_init    : S3 buckets auto-provisioner (ephemeral)
+#   5. web           : FastAPI Studio & AdminLTE v4 UI (port 4444)
+#   6. celery_worker : PyTorch distributed training & data preparation worker
+# ==============================================================================
+
+services:
+  # ── 1. PostgreSQL Database ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: doctune-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-doctune_studio}
+      POSTGRES_USER: ${POSTGRES_USER:-doctune}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-doctune_secure_password_2026}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-doctune} -d ${POSTGRES_DB:-doctune_studio}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - doctune-net
+
+  # ── 2. Redis Message Broker & Telemetry Pub/Sub ────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: doctune-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - doctune-net
+
+  # ── 3. MinIO S3 Object Store ────────────────────────────────────────────────
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: doctune-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_secure_password_2026}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9000/minio/health/live || curl -f http://127.0.0.1:9000/minio/health/live || minio --version || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - doctune-net
+
+  # ── 4. MinIO S3 Bucket Provisioner (Ephemeral) ──────────────────────────────
+  minio_init:
+    image: minio/mc:latest
+    container_name: doctune-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin_secure_password_2026};
+      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_DOCS:-doc-tune-raw-docs};
+      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_DATASETS:-doc-tune-datasets};
+      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_CHECKPOINTS:-doc-tune-checkpoints};
+      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_MERGED:-doc-tune-merged-models};
+      echo 'MinIO buckets successfully provisioned and verified.';
+      exit 0;
+      "
+    networks:
+      - doctune-net
+
+  # ── 5. Web Studio & FastAPI Application ─────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: doctune-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-4444}:4444"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - PORT=4444
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
+      - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT_URL=http://minio:9000
+    volumes:
+      - ./config:/app/config
+      - scratch_data:/app/.scratch
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4444/api/admin/hardware-bounds || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - doctune-net
+
+  # ── 6. Celery ML Fine-Tuning Worker ─────────────────────────────────────────
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: doctune-celery-worker
+    restart: unless-stopped
+    shm_size: '8gb'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
+      - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT_URL=http://minio:9000
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config:/app/config
+      - scratch_data:/app/.scratch
+      - hf_cache:/root/.cache/huggingface
+    networks:
+      - doctune-net
+
+  # ── 7. Dozzle Real-Time Container Log Viewer & Monitoring ─────────────────
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: doctune-dozzle
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "${DOZZLE_PORT:-8888}:8080"
+    environment:
+      - DOZZLE_LEVEL=info
+      - DOZZLE_NO_ANALYTICS=true
+    networks:
+      - doctune-net
+
+# ── Volumes & Networks ────────────────────────────────────────────────────────
+volumes:
+  pg_data:
+    name: doctune_pg_data
+  redis_data:
+    name: doctune_redis_data
+  minio_data:
+    name: doctune_minio_data
+  scratch_data:
+    name: doctune_scratch_data
+  hf_cache:
+    name: doctune_hf_cache
+
+networks:
+  doctune-net:
+    name: doctune_network
+    driver: bridge

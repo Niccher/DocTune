@@ -1,0 +1,69 @@
+site_name: DocTune Studio Documentation
+site_description: Private Document LLM Fine-Tuning Platform Engineering Documentation
+site_author: Niccher
+repo_url: https://github.com/Niccher/Fine-Tuning
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+
+nav:
+  - Home: README.md
+  - Engineering Hub: docs/README.md
+  - Operator Guide:
+      - Setup and Run: docs/user/setup-and-run.md
+      - Configuration: docs/user/configuration.md
+      - Troubleshooting: docs/user/troubleshooting.md
+  - Architecture:
+      - System Overview: docs/architecture/overview.md
+      - Communication & Sequences: docs/architecture/communication.md
+      - Data & Storage: docs/architecture/data-and-storage.md
+      - Deployment (Local & GCP): docs/architecture/deployment.md
+      - Threat Model: docs/architecture/threat-model.md
+  - API Specifications:
+      - REST & WebSocket Contract: docs/api/contract.md
+  - Services:
+      - FastAPI Web Studio: docs/services/fastapi.md
+      - Celery ML Worker: docs/services/celery-worker.md
+      - MinIO Object Store: docs/services/minio-storage.md
+  - Engineering & Quality:
+      - Local Development: docs/engineering/local-development.md
+      - Making Changes: docs/engineering/making-changes.md
+      - Database Architecture: docs/engineering/database.md
+      - Testing Guide: docs/engineering/testing.md
+      - Security Controls: docs/engineering/security.md
+  - Runbooks:
+      - Container Restarts: docs/runbooks/restart.md
+      - Backup & Disaster Recovery: docs/runbooks/backup-and-restore.md
+  - Architecture Decisions (ADRs):
+      - 0001 Distributed Celery Workers: docs/adr/0001-distributed-celery-worker-architecture.md
+      - 0002 MinIO S3 Object Storage: docs/adr/0002-s3-minio-artifact-storage.md
+      - 0003 Redis PubSub Telemetry: docs/adr/0003-redis-pubsub-telemetry-streaming.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables

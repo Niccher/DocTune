@@ -1,0 +1,96 @@
+openapi: 3.0.3
+info:
+  title: DocTune Studio REST API
+  description: API specifications for DocTune Studio private document fine-tuning platform.
+  version: 1.0.0
+servers:
+  - url: http://localhost:4444
+    description: Local Docker & Native Web Studio
+paths:
+  /health:
+    get:
+      summary: Healthcheck Probe
+      description: Returns service health status and storage connectivity.
+      responses:
+        '200':
+          description: Healthy status response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  app:
+                    type: string
+                    example: DocTune Studio
+                  version:
+                    type: string
+                    example: 1.0.0
+                  s3_storage:
+                    type: boolean
+                    example: true
+
+  /api/training/start:
+    post:
+      summary: Start Fine-Tuning Job
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                method:
+                  type: string
+                  enum: [qlora, lora, fft]
+                  default: qlora
+                model_id:
+                  type: string
+                  default: meta-llama/Meta-Llama-3-8B-Instruct
+                epochs:
+                  type: integer
+                  default: 3
+                batch_size:
+                  type: integer
+                  default: 4
+                grad_accum:
+                  type: integer
+                  default: 4
+                lora_r:
+                  type: integer
+                  default: 16
+                lora_alpha:
+                  type: integer
+                  default: 32
+                lora_dropout:
+                  type: number
+                  default: 0.05
+                learning_rate:
+                  type: number
+                  default: 0.0002
+                max_seq_length:
+                  type: integer
+                  default: 1024
+      responses:
+        '200':
+          description: Job started successfully
+        '409':
+          description: Another job is currently active
+
+  /api/training/stop:
+    post:
+      summary: Abort Active Training Job
+      responses:
+        '200':
+          description: Abort signal sent
+        '400':
+          description: No active process running
+
+  /api/admin/hardware-bounds:
+    get:
+      summary: Physical Host Limits & Bounds
+      responses:
+        '200':
+          description: Live detected hardware limits

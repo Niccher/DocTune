@@ -227,8 +227,18 @@ def test_config_load_integration():
     client.post("/api/admin/reset")
 
 
+def test_healthcheck_api():
+    res = client.get("/health")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "healthy"
+    assert data["app"] == "DocTune Studio"
+    assert data["version"] == "1.0.0"
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
+    test_healthcheck_api()
     test_dashboard_route()
     test_data_prep_route()
     test_training_route()
