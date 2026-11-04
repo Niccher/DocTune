@@ -8,14 +8,14 @@ pipeline health, and command center navigation.
 from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 
 from pipeline.common import PROJECT_ROOT, RAW_DOCS_DIR, DEFAULT_JSONL, Config
 from web.state import state
 from web.services.system_service import get_system_telemetry
+from web.templates_config import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
+
 
 
 def get_pipeline_details():
@@ -49,7 +49,7 @@ def get_pipeline_details():
         except Exception:
             jsonl_count = 0
 
-    cfg = Config()
+    cfg = Config.load()
 
     def get_ckpt_meta(path: Path, is_peft: bool, action_label: str, action_url: str):
         exists = (path / "adapter_config.json").exists() if is_peft else (path / "config.json").exists()

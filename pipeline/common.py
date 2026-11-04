@@ -25,9 +25,12 @@ except ImportError:
 # ============================================================
 PIPELINE_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = PIPELINE_DIR.parent.resolve()
+CONFIG_DIR = PROJECT_ROOT / "config"
+CONFIG_FILE = CONFIG_DIR / "settings.json"
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DOCS_DIR = PROJECT_ROOT / "raw_documents"
 DEFAULT_JSONL = DATA_DIR / "private_docs.jsonl"
+
 
 
 # ============================================================
@@ -99,6 +102,62 @@ class Config:
                 else:
                     kwargs[k] = v
         return cls(**kwargs)
+
+    @classmethod
+    def load(cls, config_path: Optional[Path] = None) -> "Config":
+        """
+        Load configuration from JSON settings file if present,
+        falling back to default dataclass parameters.
+        """
+        path = config_path or CONFIG_FILE
+        if path.exists():
+            try:
+                import json
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                flattened: Dict[str, Any] = {}
+                if "huggingface" in data and "default_model_id" in data["huggingface"]:
+                    flattened["model_id"] = data["huggingface"]["default_model_id"]
+
+                if "training_defaults" in data:
+                    td = data["training_defaults"]
+                    for k in [
+                        "num_train_epochs", "per_device_train_batch_size",
+                        "gradient_accumulation_steps", "learning_rate_lora",
+                        "learning_rate_fft", "max_seq_length", "logging_steps", "seed"
+                    ]:
+                        if k in td:
+                            flattened[k] = td[k]
+                    if "lora" in td:
+                        lora = td["lora"]
+                        if "r" in lora:
+                            flattened["lora_r"] = lora["r"]
+                        if "alpha" in lora:
+                            flattened["lora_alpha"] = lora["alpha"]
+                        if "dropout" in lora:
+                            flattened["lora_dropout"] = lora["dropout"]
+                        if "target_modules" in lora:
+                            flattened["target_modules"] = tuple(lora["target_modules"])
+
+                if "storage_paths" in data:
+                    sp = data["storage_paths"]
+                    if "data_dir" in sp:
+                        flattened["dataset_path"] = PROJECT_ROOT / sp["data_dir"] / "private_docs.jsonl"
+                    if "output_fft_dir" in sp:
+                        flattened["output_fft"] = PROJECT_ROOT / sp["output_fft_dir"]
+                    if "output_lora_dir" in sp:
+                        flattened["output_lora"] = PROJECT_ROOT / sp["output_lora_dir"]
+                    if "output_qlora_dir" in sp:
+                        flattened["output_qlora"] = PROJECT_ROOT / sp["output_qlora_dir"]
+                    if "output_merged_dir" in sp:
+                        flattened["output_merged"] = PROJECT_ROOT / sp["output_merged_dir"]
+
+                return cls.from_dict(flattened)
+            except Exception:
+                return cls()
+        return cls()
+
 
 
 def get_tokenizer(model_id: str):

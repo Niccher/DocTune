@@ -11,14 +11,14 @@ from typing import List
 from pathlib import Path
 from fastapi import APIRouter, Request, UploadFile, File, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 
 from pipeline.common import PROJECT_ROOT, RAW_DOCS_DIR, DEFAULT_JSONL
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
+from web.templates_config import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
+
 
 
 def list_raw_documents():

@@ -11,6 +11,11 @@ Private Document Fine-Tuning Pipeline components:
 - merge_adapters: Standalone model merge utility
 """
 
+from pathlib import Path
 from pipeline.common import Config, get_tokenizer, get_device
 
-__all__ = ["Config", "get_tokenizer", "get_device"]
+_version_file = Path(__file__).parent.parent / "VERSION"
+__version__ = _version_file.read_text().strip() if _version_file.exists() else "1.0.0"
+
+__all__ = ["Config", "get_tokenizer", "get_device", "__version__"]
+

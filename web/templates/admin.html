@@ -1,0 +1,738 @@
+{% extends "base.html" %}
+
+{% block extra_head %}
+<style>
+  .nav-tabs .nav-link {
+    font-weight: 500;
+    color: var(--bs-secondary-color);
+  }
+  .nav-tabs .nav-link.active {
+    font-weight: 600;
+    color: var(--bs-primary);
+    border-bottom: 2px solid var(--bs-primary);
+  }
+  .tab-pane {
+    padding-top: 1.25rem;
+  }
+  .form-label {
+    font-weight: 600;
+    font-size: 0.88rem;
+  }
+  .form-text {
+    font-size: 0.78rem;
+  }
+  .card-admin-action {
+    position: sticky;
+    bottom: 0;
+    z-index: 100;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.12);
+  }
+</style>
+{% endblock %}
+
+{% block header_actions %}
+<div class="d-flex gap-2 justify-content-sm-end align-items-center">
+  <span class="text-muted me-2 d-none d-md-inline">Pipeline Root: <code>Fine Tuning</code></span>
+  <a href="/api/admin/export" class="btn btn-outline-secondary btn-sm" download="fine_tuning_settings.json">
+    <i class="bi bi-download me-1"></i> Export JSON
+  </a>
+  <button class="btn btn-outline-danger btn-sm" id="btnResetDefaults">
+    <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Defaults
+  </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Main Admin Card with Tabs -->
+<div class="card shadow-sm border-0 mb-4">
+
+  <div class="card-header bg-body border-bottom p-0">
+    <ul class="nav nav-tabs px-3 border-bottom-0" id="adminTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active d-flex align-items-center gap-2 py-3" id="tab-server-link" data-bs-toggle="tab" data-bs-target="#tab-server" type="button" role="tab">
+          <i class="bi bi-hdd-network text-primary"></i> Server & Storage
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link d-flex align-items-center gap-2 py-3" id="tab-hf-link" data-bs-toggle="tab" data-bs-target="#tab-hf" type="button" role="tab">
+          <i class="bi bi-shield-lock text-warning"></i> Hugging Face & Models
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link d-flex align-items-center gap-2 py-3" id="tab-training-link" data-bs-toggle="tab" data-bs-target="#tab-training" type="button" role="tab">
+          <i class="bi bi-cpu text-danger"></i> Training & Compute
+        </button>
+
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link d-flex align-items-center gap-2 py-3" id="tab-dataprep-link" data-bs-toggle="tab" data-bs-target="#tab-dataprep" type="button" role="tab">
+          <i class="bi bi-file-earmark-diff text-success"></i> Data Prep & QA
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link d-flex align-items-center gap-2 py-3" id="tab-integrations-link" data-bs-toggle="tab" data-bs-target="#tab-integrations" type="button" role="tab">
+          <i class="bi bi-puzzle text-info"></i> Integrations & Alerts
+        </button>
+      </li>
+    </ul>
+  </div>
+
+  <div class="card-body p-4">
+    <form id="adminSettingsForm">
+      <div class="tab-content" id="adminTabsContent">
+
+        <!-- TAB 1: SERVER & STORAGE -->
+        <div class="tab-pane fade show active" id="tab-server" role="tabpanel">
+          <div class="row g-3 mb-4">
+            <div class="col-12">
+              <h6 class="fw-bold text-uppercase small text-muted border-bottom pb-2">Web Studio Server & Branding</h6>
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="srv_app_name">Application Brand Name</label>
+              <input type="text" class="form-control" id="srv_app_name" name="server.app_name" value="{{ settings.server.app_name or 'DocTune Studio' }}">
+              <div class="form-text">Controls branding in the sidebar, navbar header, footer, and browser page title globally across the studio.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="srv_host">Host Binding</label>
+              <input type="text" class="form-control" id="srv_host" name="server.host" value="{{ settings.server.host }}">
+              <div class="form-text">e.g. <code>0.0.0.0</code> to allow local network access.</div>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label" for="srv_port">Port</label>
+              <input type="number" class="form-control" id="srv_port" name="server.port" value="{{ settings.server.port }}">
+              <div class="form-text">Default port <code>4444</code> avoids collisions with local LLM runners.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="srv_loglevel">Log Verbosity</label>
+              <select class="form-select" id="srv_loglevel" name="server.log_level">
+                <option value="DEBUG" {% if settings.server.log_level == 'DEBUG' %}selected{% endif %}>DEBUG (Verbose)</option>
+                <option value="INFO" {% if settings.server.log_level == 'INFO' %}selected{% endif %}>INFO (Recommended)</option>
+                <option value="WARNING" {% if settings.server.log_level == 'WARNING' %}selected{% endif %}>WARNING</option>
+                <option value="ERROR" {% if settings.server.log_level == 'ERROR' %}selected{% endif %}>ERROR</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="srv_max_jobs">Max Concurrent Training Jobs</label>
+              <input type="number" class="form-control" id="srv_max_jobs" name="server.max_concurrent_jobs" value="{{ settings.server.max_concurrent_jobs }}" min="1" max="4">
+              <div class="form-text">Prevents multi-job VRAM exhaustion on local hardware.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="srv_log_buffer">In-Memory Log Buffer Size</label>
+              <input type="number" class="form-control" id="srv_log_buffer" name="server.max_log_buffer_lines" value="{{ settings.server.max_log_buffer_lines }}" min="100" max="10000">
+              <div class="form-text">Number of recent lines buffered for WebSocket log streaming.</div>
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12 d-flex justify-content-between align-items-center border-bottom pb-2">
+              <h6 class="fw-bold text-uppercase small text-muted mb-0">Storage & Checkpoint Directories</h6>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="btnCheckPaths">
+                <i class="bi bi-folder-check me-1"></i> Verify & Create Directories
+              </button>
+            </div>
+            <div id="pathCheckResults" class="col-12 d-none">
+              <div class="alert alert-info py-2 small mb-0" id="pathCheckMessage"></div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label" for="path_raw_docs">Raw Documents Directory</label>
+              <input type="text" class="form-control" id="path_raw_docs" name="storage_paths.raw_documents_dir" value="{{ settings.storage_paths.raw_documents_dir }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="path_data">Prepared Dataset Directory</label>
+              <input type="text" class="form-control" id="path_data" name="storage_paths.data_dir" value="{{ settings.storage_paths.data_dir }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="path_qlora">QLoRA Output Directory</label>
+              <input type="text" class="form-control" id="path_qlora" name="storage_paths.output_qlora_dir" value="{{ settings.storage_paths.output_qlora_dir }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="path_lora">LoRA Output Directory</label>
+              <input type="text" class="form-control" id="path_lora" name="storage_paths.output_lora_dir" value="{{ settings.storage_paths.output_lora_dir }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="path_fft">Full Fine-Tuning Directory</label>
+              <input type="text" class="form-control" id="path_fft" name="storage_paths.output_fft_dir" value="{{ settings.storage_paths.output_fft_dir }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="path_merged">Merged Model Directory</label>
+              <input type="text" class="form-control" id="path_merged" name="storage_paths.output_merged_dir" value="{{ settings.storage_paths.output_merged_dir }}">
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: HUGGING FACE & MODELS -->
+        <div class="tab-pane fade" id="tab-hf" role="tabpanel">
+          <div class="row g-3">
+            <div class="col-12">
+              <h6 class="fw-bold text-uppercase small text-muted border-bottom pb-2">Hugging Face Hub Authentication</h6>
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="hf_token">Hugging Face User Access Token (<code>HF_TOKEN</code>)</label>
+              <div class="input-group">
+                <input type="password" class="form-control font-monospace" id="hf_token" name="huggingface.token" value="{{ settings.huggingface.token }}" placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                <button class="btn btn-outline-secondary" type="button" id="btnToggleHfToken" title="Toggle Visibility">
+                  <i class="bi bi-eye" id="hfTokenEye"></i>
+                </button>
+                <button class="btn btn-outline-primary" type="button" id="btnTestHfToken">
+                  <i class="bi bi-patch-check me-1"></i> Test Token
+                </button>
+              </div>
+              <div class="form-text">Required to download gated models like <code>meta-llama/Meta-Llama-3-8B-Instruct</code>.</div>
+              <div id="hfTestFeedback" class="mt-2 d-none"></div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label" for="hf_default_model">Default Base Model</label>
+              <input type="text" class="form-control font-monospace" id="hf_default_model" name="huggingface.default_model_id" value="{{ settings.huggingface.default_model_id }}">
+              <div class="form-text">Pre-selected across Training Studio and Evaluation pages.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="hf_cache_dir">Hub Cache Directory</label>
+              <input type="text" class="form-control" id="hf_cache_dir" name="huggingface.cache_dir" value="{{ settings.huggingface.cache_dir }}">
+              <div class="form-text">Defaults to <code>~/.cache/huggingface/hub</code>.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: TRAINING & COMPUTE ALLOCATION -->
+        <div class="tab-pane fade" id="tab-training" role="tabpanel">
+          <div class="row g-3 mb-4">
+            <div class="col-12 d-flex justify-content-between align-items-center border-bottom pb-2">
+              <h6 class="fw-bold text-uppercase small text-muted mb-0">Hardware & Compute Allocation (Job Execution)</h6>
+              <span class="badge {% if hardware_bounds.has_sufficient_disk %}bg-success-subtle text-success border-success-subtle{% else %}bg-danger-subtle text-danger border-danger-subtle{% endif %} border small">
+                <i class="bi bi-hdd me-1"></i> Free Disk: {{ hardware_bounds.free_disk_gb }} GB (Min Safe: {{ hardware_bounds.min_required_disk_gb }} GB)
+              </span>
+            </div>
+            <div class="col-md-3">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label mb-0" for="res_cpu_threads">CPU Threads</label>
+                <span class="badge bg-secondary-subtle text-secondary border small">Host: {{ hardware_bounds.host_cores }} Cores</span>
+              </div>
+              <input type="number" class="form-control" id="res_cpu_threads" name="compute_resources.cpu_threads" value="{{ settings.compute_resources.cpu_threads or 4 }}" min="1" max="{{ hardware_bounds.host_cores }}">
+              <div class="form-text">Caps PyTorch/OMP thread pool. Safe: &le; {{ hardware_bounds.max_safe_cpu }}.</div>
+            </div>
+            <div class="col-md-3">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label mb-0" for="res_max_ram">Max RAM Budget (GB)</label>
+                <span class="badge bg-secondary-subtle text-secondary border small">Safe Cap: {{ hardware_bounds.max_safe_ram }} GB</span>
+              </div>
+              <input type="number" class="form-control" id="res_max_ram" name="compute_resources.max_ram_gb" value="{{ settings.compute_resources.max_ram_gb or 10 }}" min="1" max="{{ hardware_bounds.max_safe_ram }}">
+              <div class="form-text">Total Host: {{ hardware_bounds.total_ram_gb }} GB. Prevents OOM kill.</div>
+            </div>
+            <div class="col-md-3">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label mb-0" for="res_gpu_device">GPU Device(s)</label>
+                <span class="badge bg-secondary-subtle text-secondary border small">Detected: {{ hardware_bounds.detected_gpus }} GPU(s)</span>
+              </div>
+              <input type="text" class="form-control font-monospace" id="res_gpu_device" name="compute_resources.gpu_device" value="{{ settings.compute_resources.gpu_device or '0' }}">
+              <div class="form-text">e.g. <code>0</code>, <code>0,1</code>, or <code>CPU</code> for fallback.</div>
+            </div>
+            <div class="col-md-3">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label mb-0" for="res_gpu_count">GPU Count</label>
+                <span class="badge bg-secondary-subtle text-secondary border small">Max: {{ [1, hardware_bounds.detected_gpus]|max }}</span>
+              </div>
+              <input type="number" class="form-control" id="res_gpu_count" name="compute_resources.gpu_count" value="{{ settings.compute_resources.gpu_count or 1 }}" min="0" max="{{ [1, hardware_bounds.detected_gpus]|max }}">
+              <div class="form-text">Total physical GPUs to allocate.</div>
+            </div>
+          </div>
+
+
+          <div class="row g-3 mb-4">
+            <div class="col-12">
+              <h6 class="fw-bold text-uppercase small text-muted border-bottom pb-2">LoRA & QLoRA Hyperparameters</h6>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label" for="lora_r">LoRA Rank (\(r\))</label>
+              <input type="number" class="form-control" id="lora_r" name="training_defaults.lora.r" value="{{ settings.training_defaults.lora.r }}" min="1" max="256">
+              <div class="form-text">Standard ranks: 8, 16, 32, 64.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="lora_alpha">LoRA Alpha (\(\alpha\))</label>
+              <input type="number" class="form-control" id="lora_alpha" name="training_defaults.lora.alpha" value="{{ settings.training_defaults.lora.alpha }}" min="1" max="512">
+              <div class="form-text">Typically set to \(2 \times r\) (e.g. 32).</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="lora_dropout">LoRA Dropout</label>
+              <input type="number" step="0.01" class="form-control" id="lora_dropout" name="training_defaults.lora.dropout" value="{{ settings.training_defaults.lora.dropout }}" min="0" max="0.5">
+              <div class="form-text">Regularization dropout (e.g. 0.05).</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="lora_target_modules">Target Modules</label>
+              <input type="text" class="form-control font-monospace" id="lora_target_modules" name="training_defaults.lora.target_modules" value="{{ settings.training_defaults.lora.target_modules | join(', ') }}">
+              <div class="form-text">Comma-separated module names (e.g. <code>q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj</code>).</div>
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12">
+              <h6 class="fw-bold text-uppercase small text-muted border-bottom pb-2">General Training Engine Defaults</h6>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="tr_epochs">Epochs</label>
+              <input type="number" class="form-control" id="tr_epochs" name="training_defaults.num_train_epochs" value="{{ settings.training_defaults.num_train_epochs }}" min="1">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="tr_batch_size">Per-Device Batch Size</label>
+              <input type="number" class="form-control" id="tr_batch_size" name="training_defaults.per_device_train_batch_size" value="{{ settings.training_defaults.per_device_train_batch_size }}" min="1">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="tr_grad_accum">Gradient Accumulation</label>
+              <input type="number" class="form-control" id="tr_grad_accum" name="training_defaults.gradient_accumulation_steps" value="{{ settings.training_defaults.gradient_accumulation_steps }}" min="1">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="tr_precision">Precision</label>
+              <select class="form-select" id="tr_precision" name="training_defaults.precision">
+                <option value="bf16" {% if settings.training_defaults.precision == 'bf16' %}selected{% endif %}>bfloat16 (Ampere / Hopper / Modern)</option>
+                <option value="fp16" {% if settings.training_defaults.precision == 'fp16' %}selected{% endif %}>float16 (Turing / Volta / Legacy)</option>
+                <option value="float32" {% if settings.training_defaults.precision == 'float32' %}selected{% endif %}>float32 (CPU Fallback)</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="tr_lr_lora">LoRA Learning Rate</label>
+              <input type="number" step="0.00001" class="form-control font-monospace" id="tr_lr_lora" name="training_defaults.learning_rate_lora" value="{{ settings.training_defaults.learning_rate_lora }}">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="tr_lr_fft">Full Fine-Tuning Learning Rate</label>
+              <input type="number" step="0.000001" class="form-control font-monospace" id="tr_lr_fft" name="training_defaults.learning_rate_fft" value="{{ settings.training_defaults.learning_rate_fft }}">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="tr_max_seq">Max Sequence Length</label>
+              <input type="number" class="form-control" id="tr_max_seq" name="training_defaults.max_seq_length" value="{{ settings.training_defaults.max_seq_length }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="tr_logging_steps">Logging Frequency (steps)</label>
+              <input type="number" class="form-control" id="tr_logging_steps" name="training_defaults.logging_steps" value="{{ settings.training_defaults.logging_steps }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="tr_seed">Random Seed</label>
+              <input type="number" class="form-control" id="tr_seed" name="training_defaults.seed" value="{{ settings.training_defaults.seed }}">
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 4: DATA PREP & SYNTHETIC QA -->
+        <div class="tab-pane fade" id="tab-dataprep" role="tabpanel">
+          <div class="row g-3 mb-4">
+            <div class="col-12">
+              <h6 class="fw-bold text-uppercase small text-muted border-bottom pb-2">Document Ingestion & Splitting</h6>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="dp_chunk_size">Chunk Size (characters)</label>
+              <input type="number" class="form-control" id="dp_chunk_size" name="data_prep.chunk_size" value="{{ settings.data_prep.chunk_size }}">
+              <div class="form-text">Characters per document text chunk (e.g. 1000).</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="dp_chunk_overlap">Chunk Overlap</label>
+              <input type="number" class="form-control" id="dp_chunk_overlap" name="data_prep.chunk_overlap" value="{{ settings.data_prep.chunk_overlap }}">
+              <div class="form-text">Sliding window overlap between adjacent chunks (e.g. 200).</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="dp_split">Train / Eval Split Ratio</label>
+              <input type="number" step="0.05" class="form-control" id="dp_split" name="data_prep.train_eval_split" value="{{ settings.data_prep.train_eval_split }}" min="0.5" max="0.99">
+              <div class="form-text">e.g. <code>0.90</code> allocates 90% to training and 10% to evaluation.</div>
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12 d-flex justify-content-between align-items-center border-bottom pb-2">
+              <h6 class="fw-bold text-uppercase small text-muted mb-0">Synthetic Q&A Generation Engine</h6>
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="qa_enabled" name="data_prep.qa_generator.enabled" {% if settings.data_prep.qa_generator.enabled %}checked{% endif %}>
+                <label class="form-check-label fw-bold small" for="qa_enabled">Enable Synthetic QA Extraction</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="qa_provider">LLM Provider</label>
+              <select class="form-select" id="qa_provider" name="data_prep.qa_generator.provider">
+                <option value="ollama" {% if settings.data_prep.qa_generator.provider == 'ollama' %}selected{% endif %}>Ollama (Local)</option>
+                <option value="vllm" {% if settings.data_prep.qa_generator.provider == 'vllm' %}selected{% endif %}>vLLM / Local OpenAI-compatible API</option>
+                <option value="openai" {% if settings.data_prep.qa_generator.provider == 'openai' %}selected{% endif %}>OpenAI API</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="qa_model">QA Model Name</label>
+              <input type="text" class="form-control" id="qa_model" name="data_prep.qa_generator.model" value="{{ settings.data_prep.qa_generator.model }}">
+              <div class="form-text">e.g. <code>llama3:latest</code>, <code>gpt-4o-mini</code></div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="qa_temperature">Temperature</label>
+              <input type="number" step="0.1" class="form-control" id="qa_temperature" name="data_prep.qa_generator.temperature" value="{{ settings.data_prep.qa_generator.temperature }}" min="0" max="1.5">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="qa_base_url">API Base URL</label>
+              <input type="text" class="form-control" id="qa_base_url" name="data_prep.qa_generator.base_url" value="{{ settings.data_prep.qa_generator.base_url }}">
+              <div class="form-text">e.g. <code>http://localhost:11434/v1</code> for Ollama or <code>https://api.openai.com/v1</code></div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="qa_api_key">API Key (Optional for local Ollama)</label>
+              <input type="password" class="form-control font-monospace" id="qa_api_key" name="data_prep.qa_generator.api_key" value="{{ settings.data_prep.qa_generator.api_key }}">
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 5: INTEGRATIONS & NOTIFICATIONS -->
+        <div class="tab-pane fade" id="tab-integrations" role="tabpanel">
+          <div class="row g-3 mb-4">
+            <div class="col-12 d-flex justify-content-between align-items-center border-bottom pb-2">
+              <h6 class="fw-bold text-uppercase small text-muted mb-0">Weights & Biases (W&B) Telemetry</h6>
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="wandb_enabled" name="integrations.wandb.enabled" {% if settings.integrations.wandb.enabled %}checked{% endif %}>
+                <label class="form-check-label fw-bold small" for="wandb_enabled">Enable W&B Logging</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="wandb_project">Project Name</label>
+              <input type="text" class="form-control" id="wandb_project" name="integrations.wandb.project" value="{{ settings.integrations.wandb.project }}">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="wandb_entity">Entity / Team (Optional)</label>
+              <input type="text" class="form-control" id="wandb_entity" name="integrations.wandb.entity" value="{{ settings.integrations.wandb.entity }}">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="wandb_key">W&B API Key</label>
+              <input type="password" class="form-control font-monospace" id="wandb_key" name="integrations.wandb.api_key" value="{{ settings.integrations.wandb.api_key }}">
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12">
+              <h6 class="fw-bold text-uppercase small text-muted border-bottom pb-2">Webhook Notifications (Slack / Discord / Teams)</h6>
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="webhook_url">Webhook Incoming URL</label>
+              <div class="input-group">
+                <input type="text" class="form-control font-monospace" id="webhook_url" name="integrations.webhooks.slack_discord_url" value="{{ settings.integrations.webhooks.slack_discord_url }}" placeholder="https://hooks.slack.com/services/...">
+                <button class="btn btn-outline-info" type="button" id="btnTestWebhook">
+                  <i class="bi bi-bell me-1"></i> Send Test Ping
+                </button>
+              </div>
+              <div id="webhookFeedback" class="mt-2 d-none"></div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="notify_complete" name="integrations.webhooks.notify_on_complete" {% if settings.integrations.webhooks.notify_on_complete %}checked{% endif %}>
+                <label class="form-check-label" for="notify_complete">Send notification on training completion</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="notify_failure" name="integrations.webhooks.notify_on_failure" {% if settings.integrations.webhooks.notify_on_failure %}checked{% endif %}>
+                <label class="form-check-label" for="notify_failure">Send immediate alert on job error / OOM</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </form>
+  </div>
+
+  <!-- Card Action Footer -->
+  <div class="card-footer bg-body-tertiary border-top p-3 d-flex justify-content-between align-items-center">
+    <div id="saveFeedback" class="small fw-semibold text-muted">
+      <span><i class="bi bi-info-circle me-1"></i> Changes will update <code>config/settings.json</code>.</span>
+    </div>
+    <div class="d-flex gap-2">
+      <button type="button" class="btn btn-primary px-4 fw-semibold" id="btnSaveSettings">
+        <i class="bi bi-check2-circle me-1"></i> Save Configuration
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const form = document.getElementById("adminSettingsForm");
+  const saveBtn = document.getElementById("btnSaveSettings");
+  const resetBtn = document.getElementById("btnResetDefaults");
+  const saveFeedback = document.getElementById("saveFeedback");
+
+  // Toggle HF Token Visibility
+  const toggleHfBtn = document.getElementById("btnToggleHfToken");
+  const hfTokenInput = document.getElementById("hf_token");
+  const hfTokenEye = document.getElementById("hfTokenEye");
+  if (toggleHfBtn && hfTokenInput) {
+    toggleHfBtn.addEventListener("click", () => {
+      if (hfTokenInput.type === "password") {
+        hfTokenInput.type = "text";
+        hfTokenEye.classList.replace("bi-eye", "bi-eye-slash");
+      } else {
+        hfTokenInput.type = "password";
+        hfTokenEye.classList.replace("bi-eye-slash", "bi-eye");
+      }
+    });
+  }
+
+  // Helper to collect nested object from form inputs with dot notation
+  function getNestedFormData() {
+    const data = {
+      server: {
+        app_name: document.getElementById("srv_app_name").value.trim() || "DocTune Studio",
+        host: document.getElementById("srv_host").value.trim(),
+        port: parseInt(document.getElementById("srv_port").value) || 4444,
+        log_level: document.getElementById("srv_loglevel").value,
+        max_concurrent_jobs: parseInt(document.getElementById("srv_max_jobs").value) || 1,
+        max_log_buffer_lines: parseInt(document.getElementById("srv_log_buffer").value) || 1000
+      },
+      compute_resources: {
+        cpu_threads: parseInt(document.getElementById("res_cpu_threads").value) || 4,
+        max_ram_gb: parseInt(document.getElementById("res_max_ram").value) || 10,
+        gpu_device: document.getElementById("res_gpu_device").value.trim() || "0",
+        gpu_count: parseInt(document.getElementById("res_gpu_count").value) || 1,
+        cuda_memory_fraction: 0.90
+      },
+
+      huggingface: {
+        token: document.getElementById("hf_token").value.trim(),
+        default_model_id: document.getElementById("hf_default_model").value.trim(),
+        cache_dir: document.getElementById("hf_cache_dir").value.trim()
+      },
+      storage_paths: {
+        raw_documents_dir: document.getElementById("path_raw_docs").value.trim(),
+        data_dir: document.getElementById("path_data").value.trim(),
+        output_qlora_dir: document.getElementById("path_qlora").value.trim(),
+        output_lora_dir: document.getElementById("path_lora").value.trim(),
+        output_fft_dir: document.getElementById("path_fft").value.trim(),
+        output_merged_dir: document.getElementById("path_merged").value.trim()
+      },
+      training_defaults: {
+        num_train_epochs: parseInt(document.getElementById("tr_epochs").value) || 3,
+        per_device_train_batch_size: parseInt(document.getElementById("tr_batch_size").value) || 4,
+        gradient_accumulation_steps: parseInt(document.getElementById("tr_grad_accum").value) || 4,
+        learning_rate_lora: parseFloat(document.getElementById("tr_lr_lora").value) || 0.0002,
+        learning_rate_fft: parseFloat(document.getElementById("tr_lr_fft").value) || 0.00001,
+        max_seq_length: parseInt(document.getElementById("tr_max_seq").value) || 1024,
+        logging_steps: parseInt(document.getElementById("tr_logging_steps").value) || 10,
+        seed: parseInt(document.getElementById("tr_seed").value) || 42,
+        precision: document.getElementById("tr_precision").value,
+        lora: {
+          r: parseInt(document.getElementById("lora_r").value) || 16,
+          alpha: parseInt(document.getElementById("lora_alpha").value) || 32,
+          dropout: parseFloat(document.getElementById("lora_dropout").value) || 0.05,
+          target_modules: document.getElementById("lora_target_modules").value
+        }
+      },
+      data_prep: {
+        chunk_size: parseInt(document.getElementById("dp_chunk_size").value) || 1000,
+        chunk_overlap: parseInt(document.getElementById("dp_chunk_overlap").value) || 200,
+        train_eval_split: parseFloat(document.getElementById("dp_split").value) || 0.9,
+        qa_generator: {
+          enabled: document.getElementById("qa_enabled").checked,
+          provider: document.getElementById("qa_provider").value,
+          model: document.getElementById("qa_model").value.trim(),
+          temperature: parseFloat(document.getElementById("qa_temperature").value) || 0.3,
+          base_url: document.getElementById("qa_base_url").value.trim(),
+          api_key: document.getElementById("qa_api_key").value.trim()
+        }
+      },
+      integrations: {
+        wandb: {
+          enabled: document.getElementById("wandb_enabled").checked,
+          project: document.getElementById("wandb_project").value.trim(),
+          entity: document.getElementById("wandb_entity").value.trim(),
+          api_key: document.getElementById("wandb_key").value.trim()
+        },
+        webhooks: {
+          slack_discord_url: document.getElementById("webhook_url").value.trim(),
+          notify_on_complete: document.getElementById("notify_complete").checked,
+          notify_on_failure: document.getElementById("notify_failure").checked
+        }
+      }
+    };
+    return data;
+  }
+
+  // Save Settings
+  saveBtn.addEventListener("click", async function () {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status"></span> Saving...`;
+
+    try {
+      const payload = getNestedFormData();
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        saveFeedback.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i> ${data.message}</span>`;
+        // Refresh compute input values if clamped
+        if (data.settings && data.settings.compute_resources) {
+          const cr = data.settings.compute_resources;
+          if (cr.cpu_threads !== undefined) document.getElementById("res_cpu_threads").value = cr.cpu_threads;
+          if (cr.max_ram_gb !== undefined) document.getElementById("res_max_ram").value = cr.max_ram_gb;
+          if (cr.gpu_count !== undefined) document.getElementById("res_gpu_count").value = cr.gpu_count;
+        }
+      } else {
+        saveFeedback.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> ${data.detail || "Failed to save"}</span>`;
+      }
+    } catch (err) {
+      saveFeedback.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> Error: ${err.message}</span>`;
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = `<i class="bi bi-check2-circle me-1"></i> Save Configuration`;
+      setTimeout(() => {
+        saveFeedback.innerHTML = `<span><i class="bi bi-info-circle me-1"></i> Changes will update <code>config/settings.json</code>.</span>`;
+      }, 7000);
+    }
+  });
+
+  // Client-side auto-clamp input listeners
+  const clampInputs = [
+    document.getElementById("res_cpu_threads"),
+    document.getElementById("res_max_ram"),
+    document.getElementById("res_gpu_count")
+  ];
+  clampInputs.forEach(input => {
+    if (!input) return;
+    input.addEventListener("change", function () {
+      const min = parseInt(this.min);
+      const max = parseInt(this.max);
+      let val = parseInt(this.value);
+      if (!isNaN(max) && val > max) {
+        this.value = max;
+        saveFeedback.innerHTML = `<span class="text-warning"><i class="bi bi-shield-exclamation me-1"></i> Capped ${this.id.replace('res_', '')} to physical limit (${max}).</span>`;
+      } else if (!isNaN(min) && val < min) {
+        this.value = min;
+      }
+    });
+  });
+
+
+  // Reset to Defaults
+  resetBtn.addEventListener("click", async function () {
+    if (!confirm("Are you sure you want to reset all configurations to factory defaults?")) return;
+    try {
+      const res = await fetch("/api/admin/reset", { method: "POST" });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        alert("Failed to reset settings");
+      }
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  });
+
+  // Test Hugging Face Token
+  const testHfBtn = document.getElementById("btnTestHfToken");
+  const hfFeedback = document.getElementById("hfTestFeedback");
+  testHfBtn.addEventListener("click", async function () {
+    const token = document.getElementById("hf_token").value.trim();
+    if (!token) {
+      hfFeedback.className = "alert alert-warning py-2 small mt-2";
+      hfFeedback.innerHTML = `<i class="bi bi-exclamation-circle me-1"></i> Please enter a token first.`;
+      hfFeedback.classList.remove("d-none");
+      return;
+    }
+
+    testHfBtn.disabled = true;
+    testHfBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Testing...`;
+    try {
+      const res = await fetch("/api/admin/test-hf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: token })
+      });
+      const data = await res.json();
+
+      hfFeedback.classList.remove("d-none");
+      if (data.valid) {
+        hfFeedback.className = "alert alert-success py-2 small mt-2";
+        hfFeedback.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> <strong>Valid Token!</strong> ${data.message || ""}`;
+      } else {
+        hfFeedback.className = "alert alert-danger py-2 small mt-2";
+        hfFeedback.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> <strong>Validation Failed:</strong> ${data.error || "Unknown error"}`;
+      }
+    } catch (err) {
+      hfFeedback.className = "alert alert-danger py-2 small mt-2";
+      hfFeedback.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> <strong>Network error:</strong> ${err.message}`;
+      hfFeedback.classList.remove("d-none");
+    } finally {
+      testHfBtn.disabled = false;
+      testHfBtn.innerHTML = `<i class="bi bi-patch-check me-1"></i> Test Token`;
+    }
+  });
+
+  // Check & Create Paths
+  const checkPathsBtn = document.getElementById("btnCheckPaths");
+  const pathResultsBox = document.getElementById("pathCheckResults");
+  const pathMessage = document.getElementById("pathCheckMessage");
+  checkPathsBtn.addEventListener("click", async function () {
+    checkPathsBtn.disabled = true;
+    checkPathsBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Checking...`;
+
+    try {
+      const res = await fetch("/api/admin/check-paths", { method: "POST" });
+      const data = await res.json();
+      pathResultsBox.classList.remove("d-none");
+
+      let createdCount = 0;
+      let okCount = 0;
+      for (const k in data.paths) {
+        if (data.paths[k].created) createdCount++;
+        if (data.paths[k].exists && data.paths[k].writable) okCount++;
+      }
+      pathMessage.innerHTML = `<i class="bi bi-folder-check me-1"></i> All ${okCount} storage paths verified and writable. (${createdCount} missing directories automatically created).`;
+    } catch (err) {
+      pathResultsBox.classList.remove("d-none");
+      pathMessage.className = "alert alert-danger py-2 small mb-0";
+      pathMessage.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-1"></i> Failed to verify paths: ${err.message}`;
+    } finally {
+      checkPathsBtn.disabled = false;
+      checkPathsBtn.innerHTML = `<i class="bi bi-folder-check me-1"></i> Verify & Create Directories`;
+    }
+  });
+
+  // Test Webhook
+  const testWebhookBtn = document.getElementById("btnTestWebhook");
+  const webhookFeedback = document.getElementById("webhookFeedback");
+  testWebhookBtn.addEventListener("click", async function () {
+    const url = document.getElementById("webhook_url").value.trim();
+    if (!url) {
+      webhookFeedback.className = "alert alert-warning py-2 small mt-2";
+      webhookFeedback.innerHTML = `<i class="bi bi-exclamation-circle me-1"></i> Please enter a webhook URL first.`;
+      webhookFeedback.classList.remove("d-none");
+      return;
+    }
+
+    testWebhookBtn.disabled = true;
+    testWebhookBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Pinging...`;
+
+    try {
+      const res = await fetch("/api/admin/test-webhook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url })
+      });
+      const data = await res.json();
+      webhookFeedback.classList.remove("d-none");
+
+      if (data.success) {
+        webhookFeedback.className = "alert alert-success py-2 small mt-2";
+        webhookFeedback.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> ${data.message}`;
+      } else {
+        webhookFeedback.className = "alert alert-danger py-2 small mt-2";
+        webhookFeedback.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> <strong>Ping failed:</strong> ${data.error || "Unknown error"}`;
+      }
+    } catch (err) {
+      webhookFeedback.className = "alert alert-danger py-2 small mt-2";
+      webhookFeedback.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> Error: ${err.message}`;
+      webhookFeedback.classList.remove("d-none");
+    } finally {
+      testWebhookBtn.disabled = false;
+      testWebhookBtn.innerHTML = `<i class="bi bi-bell me-1"></i> Send Test Ping`;
+    }
+  });
+
+});
+</script>
+{% endblock %}

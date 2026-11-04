@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from pipeline.common import PROJECT_ROOT
-from web.routers import dashboard, data_prep, training, models, playground
+from web.routers import dashboard, data_prep, training, models, playground, admin
 from web.services.process_manager import process_mgr
 
 app = FastAPI(
@@ -29,6 +29,8 @@ app.include_router(data_prep.router)
 app.include_router(training.router)
 app.include_router(models.router)
 app.include_router(playground.router)
+app.include_router(admin.router)
+
 
 
 @app.on_event("shutdown")

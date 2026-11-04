@@ -48,7 +48,7 @@
           <div class="row g-2 mb-3">
             <div class="col-6">
               <label class="form-label small fw-semibold">Epochs</label>
-              <input type="number" class="form-control form-control-sm" name="epochs" value="{{ config.num_train_epochs }}" min="1" max="20">
+              <input type="number" class="form-control form-control-sm" name="epochs" value="{{ config.num_train_epochs }}" min="1" max="50">
             </div>
             <div class="col-6">
               <label class="form-label small fw-semibold">Learning Rate</label>
@@ -60,18 +60,18 @@
           <div class="row g-2 mb-3">
             <div class="col-6">
               <label class="form-label small fw-semibold">Batch Size</label>
-              <input type="number" class="form-control form-control-sm" name="batch_size" value="{{ config.per_device_train_batch_size }}" min="1">
+              <input type="number" class="form-control form-control-sm" name="batch_size" value="{{ config.per_device_train_batch_size }}" min="1" max="32">
             </div>
             <div class="col-6">
               <label class="form-label small fw-semibold">Grad Accum Steps</label>
-              <input type="number" class="form-control form-control-sm" name="grad_accum" value="{{ config.gradient_accumulation_steps }}" min="1">
+              <input type="number" class="form-control form-control-sm" name="grad_accum" value="{{ config.gradient_accumulation_steps }}" min="1" max="64">
             </div>
           </div>
 
           <!-- Sequence Length -->
           <div class="mb-4">
             <label class="form-label small fw-semibold">Max Sequence Length</label>
-            <input type="number" class="form-control form-control-sm" name="max_seq_length" value="{{ config.max_seq_length }}" min="256" max="4096">
+            <input type="number" class="form-control form-control-sm" name="max_seq_length" value="{{ config.max_seq_length }}" min="128" max="8192">
           </div>
 
           <!-- Controls -->

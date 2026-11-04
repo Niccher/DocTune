@@ -10,21 +10,21 @@ import time
 from pathlib import Path
 from fastapi import APIRouter, Request, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 
 from pipeline.common import PROJECT_ROOT, Config
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
+from web.templates_config import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
+
 RUNS_DIR = PROJECT_ROOT / ".runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/training", response_class=HTMLResponse)
 async def training_view(request: Request):
-    cfg = Config()
+    cfg = Config.load()
     return templates.TemplateResponse(
         request=request,
         name="training.html",
@@ -53,6 +53,16 @@ async def start_training(
 ):
     if state.active_job is not None:
         return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
+
+    # Enforce safe parameter boundaries
+    epochs = max(1, min(int(epochs), 50))
+    batch_size = max(1, min(int(batch_size), 32))
+    grad_accum = max(1, min(int(grad_accum), 64))
+    lora_r = max(2, min(int(lora_r), 256))
+    lora_alpha = max(2, min(int(lora_alpha), 512))
+    lora_dropout = max(0.0, min(float(lora_dropout), 0.50))
+    learning_rate = max(1e-7, min(float(learning_rate), 0.1))
+    max_seq_length = max(128, min(int(max_seq_length), 8192))
 
     cfg = Config(
         model_id=model_id,

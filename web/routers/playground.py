@@ -7,20 +7,20 @@ Evaluation benchmark runner and side-by-side prompt testing playground.
 from pathlib import Path
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 
 from pipeline.common import PROJECT_ROOT, Config
 from pipeline.evaluate import TEST_CASES
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
+from web.templates_config import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
+
 
 
 @router.get("/playground", response_class=HTMLResponse)
 async def playground_view(request: Request):
-    cfg = Config()
+    cfg = Config.load()
     available_adapters = []
     if (cfg.output_qlora / "adapter_config.json").exists():
         available_adapters.append({"name": "QLoRA Adapter", "path": str(cfg.output_qlora)})

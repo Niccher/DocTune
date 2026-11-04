@@ -8,14 +8,14 @@ import json
 from pathlib import Path
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 
 from pipeline.common import PROJECT_ROOT, Config
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
+from web.templates_config import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
+
 
 
 def get_checkpoint_details(dir_path: Path):
@@ -48,7 +48,7 @@ def get_checkpoint_details(dir_path: Path):
 
 @router.get("/models", response_class=HTMLResponse)
 async def models_view(request: Request):
-    cfg = Config()
+    cfg = Config.load()
     checkpoints = {
         "qlora": get_checkpoint_details(cfg.output_qlora),
         "lora": get_checkpoint_details(cfg.output_lora),

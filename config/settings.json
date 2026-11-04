@@ -1,0 +1,83 @@
+{
+  "server": {
+    "app_name": "DocTune Studio",
+    "host": "0.0.0.0",
+    "port": 4444,
+    "log_level": "INFO",
+    "max_concurrent_jobs": 1,
+    "max_log_buffer_lines": 1000,
+    "theme": "dark"
+  },
+  "compute_resources": {
+    "cpu_threads": 4,
+    "max_ram_gb": 10,
+    "gpu_device": "0",
+    "gpu_count": 1,
+    "cuda_memory_fraction": 0.9
+  },
+  "huggingface": {
+    "token": "",
+    "cache_dir": "~/.cache/huggingface/hub",
+    "default_model_id": "meta-llama/Meta-Llama-3-8B-Instruct"
+  },
+  "storage_paths": {
+    "raw_documents_dir": "raw_documents",
+    "data_dir": "data",
+    "output_qlora_dir": "output_qlora",
+    "output_lora_dir": "output_lora",
+    "output_fft_dir": "output_fft",
+    "output_merged_dir": "output_merged",
+    "runs_dir": ".runs"
+  },
+  "training_defaults": {
+    "num_train_epochs": 3,
+    "per_device_train_batch_size": 4,
+    "gradient_accumulation_steps": 4,
+    "learning_rate_lora": 0.0002,
+    "learning_rate_fft": 1e-05,
+    "max_seq_length": 1024,
+    "logging_steps": 10,
+    "seed": 42,
+    "precision": "bf16",
+    "lora": {
+      "r": 16,
+      "alpha": 32,
+      "dropout": 0.05,
+      "target_modules": [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj"
+      ]
+    }
+  },
+  "data_prep": {
+    "chunk_size": 1000,
+    "chunk_overlap": 200,
+    "train_eval_split": 0.9,
+    "qa_generator": {
+      "enabled": false,
+      "provider": "ollama",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "",
+      "model": "llama3:latest",
+      "temperature": 0.3
+    }
+  },
+  "integrations": {
+    "wandb": {
+      "enabled": false,
+      "api_key": "",
+      "project": "llm-private-fine-tuning",
+      "entity": ""
+    },
+    "webhooks": {
+      "slack_discord_url": "",
+      "notify_on_complete": true,
+      "notify_on_failure": true
+    }
+  }
+}

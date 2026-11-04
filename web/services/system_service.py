@@ -197,3 +197,39 @@ def get_system_telemetry() -> Dict[str, Any]:
             "hostname": platform.node(),
         },
     }
+
+
+def get_hardware_bounds() -> Dict[str, Any]:
+    """
+    Calculate safe operational upper boundaries based on live physical host inspection.
+    Used for backend sanitization, frontend input limits, and pre-flight checks.
+    """
+    cpu = get_cpu_info()
+    ram = get_ram_info()
+    disk = get_disk_info()
+    gpu = get_gpu_info()
+
+    host_cores = int(cpu.get("cores", 1))
+    max_safe_cpu = max(1, host_cores - 1) if host_cores > 1 else 1
+
+    total_ram_gb = float(ram.get("total_gb", 0.0))
+    max_safe_ram = max(2, int(total_ram_gb - 2.0)) if total_ram_gb > 4.0 else max(1, int(total_ram_gb))
+
+    gpu_count = int(gpu.get("device_count", 0))
+    max_safe_gpus = max(0, gpu_count)
+
+    free_disk_gb = float(disk.get("free_gb", 0.0))
+    min_required_disk_gb = 15.0
+
+    return {
+        "host_cores": host_cores,
+        "max_safe_cpu": max_safe_cpu,
+        "total_ram_gb": total_ram_gb,
+        "max_safe_ram": max_safe_ram,
+        "detected_gpus": gpu_count,
+        "max_safe_gpus": max_safe_gpus,
+        "free_disk_gb": free_disk_gb,
+        "min_required_disk_gb": min_required_disk_gb,
+        "has_sufficient_disk": free_disk_gb >= min_required_disk_gb,
+    }
+
