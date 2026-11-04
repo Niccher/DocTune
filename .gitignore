@@ -1,0 +1,29 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Training and model outputs / checkpoints
+output_fft/
+output_lora/
+output_qlora/
+output_merged/
+checkpoint-*/
+runs/
+wandb/
+
+# Raw and proprietary document inputs
+raw_documents/
+
+# Logs and system files
+*.log
+.DS_Store
+.idea/
+.vscode/
