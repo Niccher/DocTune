@@ -10,7 +10,7 @@ DocTune Studio is structured as a **distributed, cloud-native ML platform**. Hea
 flowchart TB
     User["Operator / ML Engineer"]
     HF["Hugging Face Hub\n(Base Models & Tokenizers)"]
-    Teacher["Local Teacher LLM\n(vLLM / Ollama / LM Studio)"]
+    Teacher["Universal Teacher LLM Gateway\n(Ollama / llama.cpp / Grok / Gemini / OpenAI)"]
 
     subgraph Studio["DocTune Studio Platform"]
         WebUI["Web Studio & AdminLTE v4\n(FastAPI :4444)"]

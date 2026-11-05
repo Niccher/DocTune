@@ -1,25 +1,112 @@
 # REST & WebSocket API Contract Reference
 
-DocTune Studio exposes a clean REST API and WebSocket streams for external automation, pipeline orchestration, and custom dashboard integrations.
+DocTune Studio exposes a canonical, versioned REST API under `/api/v1/*` and WebSocket streams for external automation, pipeline orchestration, and dashboard integrations.
+
+> **Versioning Policy**: All domain REST endpoints are strictly routed under `/api/v1/*`. Legacy unversioned `/api/*` endpoints return `404 Not Found` (no backward compatibility aliases). System operational probes (`/health`) and real-time streaming sockets (`/ws/*`) remain unversioned at root.
 
 ---
 
-## 1. REST Endpoints
+## 1. System & Health Probes
 
-### Training Studio Endpoints
+### `GET /health`
+Container and load balancer healthcheck endpoint.
+* **Response**: `200 OK`
+  ```json
+  {
+    "status": "healthy",
+    "app": "DocTune Studio",
+    "version": "1.0.0",
+    "s3_storage": true
+  }
+  ```
 
-#### `POST /api/training/start`
-Starts a new fine-tuning run.
+---
+
+## 2. Dashboard & Telemetry
+
+### `GET /api/v1/telemetry`
+Returns live host resource metrics (CPU, RAM, GPU, Disk) and pipeline status.
+* **Response**: `200 OK`
+  ```json
+  {
+    "system": {
+      "cpu": {"percent": 18.2, "count": 8},
+      "ram": {"percent": 45.1, "used_gb": 6.8, "total_gb": 15.1},
+      "disk": {"percent": 32.0, "free_gb": 133.2},
+      "gpu": {"available": false, "name": "N/A"}
+    },
+    "pipeline": {
+      "status": "IDLE",
+      "active_job": null,
+      "recent_jobs": [],
+      "checkpoints": []
+    }
+  }
+  ```
+
+---
+
+## 3. Data Preparation & Teacher LLM Endpoints
+
+### `GET /api/v1/teacher/presets`
+Returns supported teacher inference engines (`ollama`, `llamacpp`, `vllm`, `gemini`, `grok`, `openai`, `custom`) and their base URL / model configurations.
+
+### `GET /api/v1/teacher/models?provider={provider}&base_url={url}&api_key={key}`
+Dynamically queries a teacher endpoint via standard `/v1/models` to discover hosted model IDs.
+
+### `POST /api/v1/teacher/test`
+Validates connectivity, measuring latency and reporting available model weights.
+* **Payload**:
+  ```json
+  {
+    "provider": "ollama",
+    "base_url": "http://localhost:11434/v1",
+    "api_key": "not-needed",
+    "model": "llama3.1:latest"
+  }
+  ```
+* **Response**:
+  ```json
+  {
+    "valid": true,
+    "latency_ms": 38,
+    "models": ["llama3.1:latest"],
+    "active_model": "llama3.1:latest",
+    "message": "Connection verified successfully!"
+  }
+  ```
+
+### `POST /api/v1/documents/upload`
+Uploads raw documents (`.pdf`, `.docx`, `.txt`, `.md`) to raw storage or S3.
+* **Content-Type**: `multipart/form-data` (`files`)
+
+### `POST /api/v1/documents/delete`
+Deletes an uningested document from raw storage.
+* **Form Parameters**: `filename`
+
+### `POST /api/v1/data-prep/start`
+Starts background synthetic QA dataset extraction pipeline.
+* **Form Parameters**: `chunk_size`, `chunk_overlap`, `provider`, `teacher_base_url`, `teacher_model`, `teacher_api_key`.
+
+### `GET /api/v1/dataset/preview?offset=0&limit=5`
+Paginated inspection of generated instruction-tuning dataset pairs (`train.jsonl`).
+
+---
+
+## 4. Training Studio Endpoints
+
+### `POST /api/v1/training/start`
+Starts a QLoRA / LoRA / Full fine-tuning run.
 * **Form Parameters**:
   * `method` (string): `qlora`, `lora`, or `fft`. Default: `qlora`.
-  * `model_id` (string): Hugging Face model repository ID.
-  * `epochs` (integer): Number of training epochs (clamped [1, 50]).
+  * `model_id` (string): Base model repository ID.
+  * `epochs` (integer): Training epochs (clamped [1, 50]).
   * `batch_size` (integer): Per-device batch size (clamped [1, 32]).
   * `grad_accum` (integer): Gradient accumulation steps (clamped [1, 64]).
-  * `lora_r` (integer): LoRA attention dimension rank (clamped [2, 256]).
-  * `lora_alpha` (integer): LoRA alpha scaling factor (clamped [2, 512]).
-  * `learning_rate` (float): Training learning rate (clamped [1e-7, 0.1]).
-  * `max_seq_length` (integer): Maximum sequence context tokens (clamped [128, 8192]).
+  * `lora_r` (integer): LoRA attention rank (clamped [2, 256]).
+  * `lora_alpha` (integer): LoRA scaling factor (clamped [2, 512]).
+  * `learning_rate` (float): Learning rate (clamped [1e-7, 0.1]).
+  * `max_seq_length` (integer): Context token limit (clamped [128, 8192]).
 * **Response**: `200 OK`
   ```json
   {
@@ -28,8 +115,8 @@ Starts a new fine-tuning run.
   }
   ```
 
-#### `POST /api/training/stop`
-Aborts the currently active training or data preparation process.
+### `POST /api/v1/training/stop`
+Aborts currently active training or data preparation process.
 * **Response**: `200 OK`
   ```json
   {
@@ -40,10 +127,25 @@ Aborts the currently active training or data preparation process.
 
 ---
 
-### System Administration Endpoints
+## 5. Model Management & Evaluation
 
-#### `GET /api/admin/hardware-bounds`
-Returns live physical host boundary metrics.
+### `POST /api/v1/models/merge`
+Fuses 16-bit LoRA adapter weights with base checkpoint.
+* **Form Parameters**: `adapter_path`, `output_name`, `export_format` (`hf` or `gguf`).
+
+### `POST /api/v1/evaluate/run`
+Runs automated validation benchmarks against test split.
+
+### `POST /api/v1/playground/chat`
+Performs side-by-side inference queries comparing base and fine-tuned checkpoints.
+* **Form Parameters**: `prompt`
+
+---
+
+## 6. System Administration Endpoints
+
+### `GET /api/v1/admin/hardware-bounds`
+Returns physical host resource boundaries and safe ceilings.
 * **Response**: `200 OK`
   ```json
   {
@@ -59,25 +161,41 @@ Returns live physical host boundary metrics.
   }
   ```
 
-#### `POST /api/admin/settings`
-Updates system configurations with automatic boundary clamping.
-* **Payload**: Complete or partial settings JSON object.
-* **Response**: `200 OK` with updated settings and informative clamping notices.
+### `GET /api/v1/admin/settings`
+Returns active `config/settings.json`.
+
+### `POST /api/v1/admin/settings`
+Updates and persists system configurations with automatic physical boundary clamping.
+
+### `POST /api/v1/admin/reset`
+Restores configurations to factory defaults.
+
+### `GET /api/v1/admin/export`
+Downloads `fine_tuning_settings.json`.
+
+### `POST /api/v1/admin/test-hf`
+Validates Hugging Face access tokens against HF Hub.
+
+### `POST /api/v1/admin/check-paths`
+Verifies and creates pipeline directory paths.
+
+### `POST /api/v1/admin/test-webhook`
+Sends a test notification ping to alert webhook.
 
 ---
 
-## 2. WebSocket Telemetry Streaming
+## 7. WebSocket Streaming
 
 ### `WS /ws/stream` & `WS /ws/training`
-Full-duplex WebSocket stream for real-time loss plotting and log streaming.
+Full-duplex WebSocket stream for real-time loss telemetry and terminal logging.
 
 * **Client Message**: Send `"ping"` to receive `"pong"` heartbeat.
 * **Server Frames**:
-  * Log lines:
-    ```json
-    "Epoch 1/3: 25% [=====>     ] loss=1.423"
+  * Raw terminal lines:
     ```
-  * Structured metric lines:
+    Epoch 1/3: 25% [=====>     ] loss=1.423
+    ```
+  * Structured metrics:
     ```json
     "[METRIC_JSON] {\"step\": 20, \"loss\": 1.35, \"epoch\": 0.4}"
     ```

@@ -122,8 +122,10 @@ services:
     volumes:
       - ./config:/app/config
       - scratch_data:/app/.scratch
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:4444/api/admin/hardware-bounds || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:4444/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -158,6 +160,8 @@ services:
       - ./config:/app/config
       - scratch_data:/app/.scratch
       - hf_cache:/root/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - doctune-net
 

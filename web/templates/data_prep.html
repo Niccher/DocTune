@@ -69,41 +69,100 @@
   <!-- Teacher Model Configuration & Run Trigger -->
   <div class="col-12 col-lg-7">
     <div class="card shadow-sm border-0 h-100">
-      <div class="card-header bg-body border-0 py-3">
-        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-gear-wide-connected me-2 text-primary"></i>Teacher LLM Ingestion Settings</h5>
+      <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-cpu me-2 text-primary"></i>Universal Teacher LLM Gateway</h5>
+        <span class="badge bg-primary-subtle text-primary border small" id="providerBadge">Local / Free</span>
       </div>
       <div class="card-body">
         <form id="dataPrepForm">
-          <div class="row g-2 mb-3">
+          <!-- Provider Dropdown & Quick Actions -->
+          <div class="row g-2 mb-2">
             <div class="col-md-7">
-              <label class="form-label small fw-semibold">Teacher Endpoint URL</label>
-              <input type="text" class="form-control form-control-sm" name="teacher_url" value="http://localhost:8000/v1" required>
-              <div class="form-text small">Local vLLM, Ollama, or OpenAI-compatible server</div>
+              <label class="form-label small fw-semibold" for="teacher_provider">Teacher Engine Provider</label>
+              <select class="form-select form-select-sm" id="teacher_provider" name="teacher_provider">
+                <option value="ollama" {% if settings.data_prep.qa_generator.provider == 'ollama' %}selected{% endif %}>Ollama (Local / Free &amp; Private)</option>
+                <option value="llamacpp" {% if settings.data_prep.qa_generator.provider == 'llamacpp' %}selected{% endif %}>llama.cpp Server (llama-server / Free)</option>
+                <option value="vllm" {% if settings.data_prep.qa_generator.provider == 'vllm' %}selected{% endif %}>vLLM / High-Throughput Runner</option>
+                <option value="gemini" {% if settings.data_prep.qa_generator.provider == 'gemini' %}selected{% endif %}>Google Gemini (Google AI Studio)</option>
+                <option value="grok" {% if settings.data_prep.qa_generator.provider == 'grok' %}selected{% endif %}>xAI Grok (API Key Required)</option>
+                <option value="openai" {% if settings.data_prep.qa_generator.provider == 'openai' %}selected{% endif %}>OpenAI API (GPT-4o / mini)</option>
+                <option value="custom" {% if settings.data_prep.qa_generator.provider == 'custom' %}selected{% endif %}>Custom OpenAI-Compatible API</option>
+              </select>
             </div>
-            <div class="col-md-5">
-              <label class="form-label small fw-semibold">Teacher Model Name</label>
-              <input type="text" class="form-control form-control-sm" name="teacher_model" value="Qwen/Qwen2.5-72B-Instruct" required>
+            <div class="col-md-5 d-flex align-items-end">
+              <button type="button" class="btn btn-sm btn-outline-info w-100" id="btnTestTeacher">
+                <i class="bi bi-broadcast me-1"></i> Test Connection
+              </button>
             </div>
           </div>
 
+          <!-- Provider Hint banner -->
+          <div class="alert alert-light border py-1 px-2 small mb-3 text-muted" id="providerHint">
+            Local private inference via Ollama on port 11434. 100% confidential and free.
+          </div>
+
+          <!-- Base URL and Model Inputs -->
+          <div class="row g-2 mb-2">
+            <div class="col-md-7">
+              <label class="form-label small fw-semibold" for="teacher_url">Endpoint Base URL</label>
+              <input type="text" class="form-control form-control-sm font-monospace" id="teacher_url" name="teacher_url" value="{{ settings.data_prep.qa_generator.base_url or 'http://localhost:11434/v1' }}" required>
+            </div>
+            <div class="col-md-5">
+              <div class="d-flex justify-content-between align-items-center">
+                <label class="form-label small fw-semibold mb-0" for="teacher_model">Model ID</label>
+                <a href="javascript:void(0)" class="small text-decoration-none" id="btnProbeModels" title="Discover models from server"><i class="bi bi-arrow-clockwise"></i> Probe</a>
+              </div>
+              <input type="text" class="form-control form-control-sm font-monospace" id="teacher_model" name="teacher_model" list="teacherModelList" value="{{ settings.data_prep.qa_generator.model or 'llama3.1:latest' }}" required>
+              <datalist id="teacherModelList">
+                <option value="llama3.1:latest">
+                <option value="llama3:latest">
+                <option value="mistral:latest">
+                <option value="gemini-1.5-flash">
+                <option value="grok-beta">
+                <option value="gpt-4o-mini">
+              </datalist>
+            </div>
+          </div>
+
+          <!-- API Key Input -->
+          <div class="mb-3" id="apiKeyGroup">
+            <label class="form-label small fw-semibold" for="teacher_api_key">
+              API Key <span class="text-muted fw-normal" id="apiKeyHint">(Optional for local Ollama / llama.cpp)</span>
+            </label>
+            <div class="input-group input-group-sm">
+              <input type="password" class="form-control font-monospace" id="teacher_api_key" name="teacher_api_key" value="{{ settings.data_prep.qa_generator.api_key }}" placeholder="not-needed">
+              <button class="btn btn-outline-secondary" type="button" id="btnToggleTeacherKey">
+                <i class="bi bi-eye" id="teacherKeyEye"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Live Connection Test Feedback Box -->
+          <div id="teacherFeedback" class="mb-3 d-none"></div>
+
+          <!-- Chunks & Hyperparameters -->
           <div class="row g-2 mb-3">
-            <div class="col-md-4">
+            <div class="col-6 col-md-3">
               <label class="form-label small fw-semibold">Max Chunks / Doc</label>
               <input type="number" class="form-control form-control-sm" name="max_chunks" value="3" min="1" max="50">
             </div>
-            <div class="col-md-4">
-              <label class="form-label small fw-semibold">Chunk Size (Words)</label>
-              <input type="number" class="form-control form-control-sm" name="chunk_size" value="1000" min="100">
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Chunk Words</label>
+              <input type="number" class="form-control form-control-sm" name="chunk_size" value="{{ settings.data_prep.chunk_size or 1000 }}" min="100">
             </div>
-            <div class="col-md-4">
-              <label class="form-label small fw-semibold">Overlap (Words)</label>
-              <input type="number" class="form-control form-control-sm" name="overlap" value="150" min="0">
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Overlap Words</label>
+              <input type="number" class="form-control form-control-sm" name="overlap" value="{{ settings.data_prep.chunk_overlap or 150 }}" min="0">
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Workers</label>
+              <input type="number" class="form-control form-control-sm" name="workers" value="8" min="1" max="32">
             </div>
           </div>
 
-          <div class="d-flex justify-content-between align-items-center pt-2">
+          <div class="d-flex justify-content-between align-items-center pt-2 border-top">
             <div class="text-muted small">
-              Output: <code>data/private_docs.jsonl</code>
+              Target: <code>data/private_docs.jsonl</code>
             </div>
             <button type="submit" class="btn btn-primary" id="startPrepBtn">
               <i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset
@@ -113,6 +172,7 @@
       </div>
     </div>
   </div>
+
 </div>
 
 <!-- Live Execution Terminal -->
@@ -210,7 +270,7 @@
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Uploading...';
 
     try {
-      const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/documents/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         showToast(`Uploaded ${data.uploaded.length} file(s)`, 'success');
@@ -233,7 +293,7 @@
     formData.append('filename', filename);
 
     try {
-      const res = await fetch('/api/documents/delete', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/documents/delete', { method: 'POST', body: formData });
       if (res.ok) {
         showToast('Deleted ' + filename, 'success');
         setTimeout(() => window.location.reload(), 500);
@@ -256,7 +316,7 @@
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Starting...';
 
     try {
-      const res = await fetch('/api/data-prep/start', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/data-prep/start', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         showToast('Dataset preparation launched!', 'success');
@@ -283,5 +343,142 @@
       }
     }
   };
+
+  // Teacher LLM Gateway Management
+  const teacherPresets = {{ presets | tojson | safe }};
+  const providerSelect = document.getElementById('teacher_provider');
+  const urlInput = document.getElementById('teacher_url');
+  const modelInput = document.getElementById('teacher_model');
+  const keyInput = document.getElementById('teacher_api_key');
+  const hintBox = document.getElementById('providerHint');
+  const badgeEl = document.getElementById('providerBadge');
+  const keyHint = document.getElementById('apiKeyHint');
+  const modelList = document.getElementById('teacherModelList');
+  const testBtn = document.getElementById('btnTestTeacher');
+  const feedbackBox = document.getElementById('teacherFeedback');
+  const probeBtn = document.getElementById('btnProbeModels');
+
+  function updateTeacherUI(providerKey) {
+    const preset = teacherPresets[providerKey] || teacherPresets['custom'] || {};
+    if (urlInput && preset.effective_base_url) urlInput.value = preset.effective_base_url;
+    if (modelInput && preset.default_model) modelInput.value = preset.default_model;
+    if (hintBox && preset.hint) hintBox.innerText = preset.hint;
+
+    if (preset.auth_required) {
+      if (badgeEl) {
+        badgeEl.className = 'badge bg-warning-subtle text-warning border small';
+        badgeEl.innerText = 'API Key Required';
+      }
+      if (keyHint) keyHint.innerText = '(Requires Commercial API Key)';
+      if (keyInput) keyInput.placeholder = providerKey === 'gemini' ? 'AIzaSy...' : (providerKey === 'grok' ? 'xai-...' : 'sk-...');
+    } else {
+      if (badgeEl) {
+        badgeEl.className = 'badge bg-success-subtle text-success border small';
+        badgeEl.innerText = 'Local / Zero-Cost';
+      }
+      if (keyHint) keyHint.innerText = '(Optional for local runners)';
+      if (keyInput) keyInput.placeholder = 'not-needed';
+    }
+
+    if (modelList && preset.suggested_models && preset.suggested_models.length) {
+      modelList.innerHTML = '';
+      preset.suggested_models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        modelList.appendChild(opt);
+      });
+    }
+  }
+
+  providerSelect?.addEventListener('change', (e) => {
+    updateTeacherUI(e.target.value);
+  });
+
+  document.getElementById('btnToggleTeacherKey')?.addEventListener('click', () => {
+    const eye = document.getElementById('teacherKeyEye');
+    if (keyInput.type === 'password') {
+      keyInput.type = 'text';
+      eye.className = 'bi bi-eye-slash';
+    } else {
+      keyInput.type = 'password';
+      eye.className = 'bi bi-eye';
+    }
+  });
+
+  testBtn?.addEventListener('click', async () => {
+    testBtn.disabled = true;
+    testBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Testing...';
+    feedbackBox.className = 'd-none';
+
+    try {
+      const payload = {
+        provider: providerSelect.value,
+        base_url: urlInput.value.trim(),
+        api_key: keyInput.value.trim(),
+        model: modelInput.value.trim()
+      };
+
+      const res = await fetch('/api/v1/teacher/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      feedbackBox.classList.remove('d-none');
+      if (data.valid) {
+        feedbackBox.className = 'alert alert-success py-2 px-3 small mb-3';
+        feedbackBox.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> <strong>Connected!</strong> ${data.message} ` +
+          (data.models && data.models.length ? `<span class="badge bg-success-subtle text-success border ms-1">${data.models.length} model(s) discovered</span>` : '');
+
+        if (data.models && data.models.length) {
+          modelList.innerHTML = '';
+          data.models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            modelList.appendChild(opt);
+          });
+        }
+      } else {
+        feedbackBox.className = 'alert alert-danger py-2 px-3 small mb-3';
+        feedbackBox.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> <strong>Connection Failed:</strong> ${data.error || 'Unable to connect to endpoint'}`;
+      }
+    } catch (err) {
+      feedbackBox.classList.remove('d-none');
+      feedbackBox.className = 'alert alert-danger py-2 px-3 small mb-3';
+      feedbackBox.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> <strong>Network Error:</strong> ${err.message}`;
+    } finally {
+      testBtn.disabled = false;
+      testBtn.innerHTML = '<i class="bi bi-broadcast me-1"></i> Test Connection';
+    }
+  });
+
+  probeBtn?.addEventListener('click', async () => {
+    probeBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    try {
+      const q = new URLSearchParams({
+        provider: providerSelect.value,
+        base_url: urlInput.value.trim(),
+        api_key: keyInput.value.trim()
+      });
+      const res = await fetch(`/api/v1/teacher/models?${q.toString()}`);
+      const data = await res.json();
+      if (res.ok && data.models && data.models.length) {
+        modelList.innerHTML = '';
+        data.models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m;
+          modelList.appendChild(opt);
+        });
+        showToast(`Discovered ${data.models.length} models from endpoint`, 'success');
+      } else {
+        showToast('No models discovered or endpoint does not list models', 'warning');
+      }
+    } catch (e) {
+      showToast('Error probing models: ' + e.message, 'error');
+    } finally {
+      probeBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Probe';
+    }
+  });
 </script>
 {% endblock %}

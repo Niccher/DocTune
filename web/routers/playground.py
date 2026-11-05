@@ -42,7 +42,7 @@ async def playground_view(request: Request):
     )
 
 
-@router.post("/api/evaluate/run")
+@router.post("/api/v1/evaluate/run")
 async def run_evaluation_job(adapter_path: str = Form(...)):
     if state.active_job is not None:
         return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
@@ -57,10 +57,11 @@ async def run_evaluation_job(adapter_path: str = Form(...)):
         metadata={"adapter_path": adapter_path},
     )
 
-    return JSONResponse({"status": "started", "job_id": state.active_job.job_id})
+    job_id = state.active_job.job_id if state.active_job else "job_eval"
+    return JSONResponse({"status": "started", "job_id": job_id})
 
 
-@router.post("/api/playground/chat")
+@router.post("/api/v1/playground/chat")
 async def playground_chat(prompt: str = Form(...)):
     """
     Interactive prompt comparison between base pre-trained behavior

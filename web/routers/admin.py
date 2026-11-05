@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from pipeline.common import PROJECT_ROOT, CONFIG_FILE
 from web.services.config_service import config_service
 from web.services.system_service import get_hardware_bounds
+from web.services.teacher_service import teacher_service
 from web.templates_config import templates
 
 router = APIRouter(tags=["admin"])
@@ -24,6 +25,7 @@ async def admin_page(request: Request):
     """Render the System Administration page."""
     settings = config_service.get_settings()
     hardware_bounds = get_hardware_bounds()
+    presets = teacher_service.get_presets()
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
@@ -32,24 +34,25 @@ async def admin_page(request: Request):
             "page_title": "System Administration & Configuration",
             "settings": settings,
             "hardware_bounds": hardware_bounds,
+            "presets": presets,
         },
     )
 
 
-@router.get("/api/admin/hardware-bounds")
+
+@router.get("/api/v1/admin/hardware-bounds")
 async def get_hardware_bounds_api():
     """Return physical host boundaries and safe ceilings."""
     return get_hardware_bounds()
 
 
-@router.get("/api/admin/settings")
-
+@router.get("/api/v1/admin/settings")
 async def get_settings_api():
     """Return the active system configuration."""
     return config_service.get_settings()
 
 
-@router.post("/api/admin/settings")
+@router.post("/api/v1/admin/settings")
 async def save_settings_api(payload: Dict[str, Any]):
     """Update and persist system configuration."""
     success, message, updated = config_service.save_settings(payload)
@@ -58,7 +61,7 @@ async def save_settings_api(payload: Dict[str, Any]):
     return {"status": "success", "message": message, "settings": updated}
 
 
-@router.post("/api/admin/reset")
+@router.post("/api/v1/admin/reset")
 async def reset_settings_api():
     """Reset configuration to factory defaults."""
     restored = config_service.reset_to_defaults()
@@ -69,7 +72,7 @@ async def reset_settings_api():
     }
 
 
-@router.get("/api/admin/export")
+@router.get("/api/v1/admin/export")
 async def export_settings_api():
     """Download settings.json file."""
     if not CONFIG_FILE.exists():
@@ -81,7 +84,7 @@ async def export_settings_api():
     )
 
 
-@router.post("/api/admin/test-hf")
+@router.post("/api/v1/admin/test-hf")
 async def test_hf_token_api(payload: Dict[str, str]):
     """Validate a Hugging Face token."""
     token = payload.get("token", "")
@@ -89,7 +92,7 @@ async def test_hf_token_api(payload: Dict[str, str]):
     return res
 
 
-@router.post("/api/admin/check-paths")
+@router.post("/api/v1/admin/check-paths")
 async def check_paths_api(payload: Dict[str, Any] = None):
     """Verify and create storage directories."""
     storage_paths = payload.get("storage_paths") if payload else None
@@ -97,7 +100,7 @@ async def check_paths_api(payload: Dict[str, Any] = None):
     return res
 
 
-@router.post("/api/admin/test-webhook")
+@router.post("/api/v1/admin/test-webhook")
 async def test_webhook_api(payload: Dict[str, str]):
     """Send test alert to webhook."""
     url = payload.get("url", "")

@@ -5,7 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-11-05
+
+### Added
+- **Universal Teacher LLM Gateway (`web/services/teacher_service.py`)**:
+  - Unified adapter supporting both zero-cost local self-hosted models (Ollama on port 11434, llama.cpp / `llama-server` on port 8080, vLLM on port 8000) and commercial cloud foundation models behind paywalls (Google Gemini via Google AI Studio OpenAI-compatible endpoint, xAI Grok API, OpenAI GPT-4o / mini, and Custom OpenAI endpoints).
+  - Dynamic model discovery engine: probes `/api/tags` on Ollama and `/v1/models` on OpenAI-compatible runners to populate model lists dynamically.
+  - Live connection verification & latency benchmark endpoint (`POST /api/teacher/test`): pings target endpoints with model readiness checks and measures ping roundtrip latency in milliseconds.
+  - Automatic Docker host bridge resolution: maps `localhost` and `127.0.0.1` to `host.docker.internal` when executing inside containers.
+  - Added `extra_hosts: ["host.docker.internal:host-gateway"]` to `web` and `celery_worker` services in `docker-compose.yml`.
+- **Teacher UI Controls (`data_prep.html` & `admin.html`)**:
+  - Live Provider selector with presets, dynamic URL & model auto-filling, API key toggle, model probing button, and live "Test Connection" feedback.
+  - Added full provider presets and test endpoint button to System Administration Tab 4 (Data Prep & Synthetic QA).
+- **Canonical API Versioning & Breaking Architecture Modernization (`/api/v1/*`)**:
+  - Migrated all 18 domain REST endpoints across dashboard, data preparation, training, models, playground, and admin to `/api/v1/*`.
+  - Enforced strict non-backward-compatibility: unversioned `/api/*` routes are removed and strictly return HTTP 404 to avoid route duplication and legacy technical debt in early stages.
+  - Decoupled container healthchecks in `Dockerfile.web` and `docker-compose.yml` to probe lightweight `/health` directly instead of domain `/api/admin/hardware-bounds`.
+  - Updated all frontend AdminLTE v4 templates (`admin.html`, `data_prep.html`, `dashboard.html`, `training.html`, `models.html`, `playground.html`) to invoke `/api/v1/*`.
+  - Comprehensive unit test assertions in `tests/test_web.py` verifying both `/api/v1/*` contracts and confirming 404 status on legacy unversioned calls (`/api/telemetry`, `/api/teacher/presets`, `/api/admin/settings`, `/api/models/merge`, `/api/training/start`, `/api/data-prep/start`).
+- **Data Ingestion Pipeline Synchronization (`pipeline/prepare_data.py`)**:
+  - Automatically reads default teacher configuration from `config/settings.json` if CLI flags are omitted.
+  - Added resilient JSON extractor `extract_json_object()` that cleanly strips markdown fences and preamble.
+  - Added exponential backoff retry mechanism (handling HTTP 429 rate-limiting and quota exhaustion) during synthetic dataset generation.
+
 ## [1.1.0] - 2026-11-04
+
 
 ### Added
 - **Multi-Container Enterprise Orchestration (`docker-compose.yml`)**:

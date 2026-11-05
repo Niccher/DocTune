@@ -375,7 +375,7 @@
   async function abortJobFromDash() {
     if (!confirm('Are you sure you want to abort the currently running pipeline job?')) return;
     try {
-      const res = await fetch('/api/training/stop', { method: 'POST' });
+      const res = await fetch('/api/v1/training/stop', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         showToast('Job aborted successfully', 'success');

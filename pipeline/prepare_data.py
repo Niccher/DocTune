@@ -7,6 +7,7 @@ instruction-tuning JSONL file that can be used by the training scripts.
 
 import os
 import json
+import time
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -23,22 +24,67 @@ except ImportError:
     OpenAI = None
 
 try:
-    from pipeline.common import DATA_DIR, RAW_DOCS_DIR, DEFAULT_JSONL
+    from pipeline.common import DATA_DIR, RAW_DOCS_DIR, DEFAULT_JSONL, CONFIG_FILE
 except ImportError:
-    from common import DATA_DIR, RAW_DOCS_DIR, DEFAULT_JSONL
+    from common import DATA_DIR, RAW_DOCS_DIR, DEFAULT_JSONL, CONFIG_FILE
+
+
+def load_settings_defaults() -> dict:
+    """Read defaults from config/settings.json if available."""
+    defaults = {
+        "teacher_url": "http://localhost:8000/v1",
+        "teacher_model": "Qwen/Qwen2.5-72B-Instruct",
+        "teacher_api_key": "not-needed",
+        "max_chunks": 3,
+        "chunk_size": 1000,
+        "overlap": 150,
+        "workers": 12,
+    }
+    try:
+        cfg_path = Path(CONFIG_FILE)
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            dp = data.get("data_prep", {})
+            qa = dp.get("qa_generator", {})
+            if qa.get("base_url"):
+                defaults["teacher_url"] = qa["base_url"]
+            if qa.get("model"):
+                defaults["teacher_model"] = qa["model"]
+            if qa.get("api_key"):
+                defaults["teacher_api_key"] = qa["api_key"]
+            if dp.get("chunk_size"):
+                defaults["chunk_size"] = dp["chunk_size"]
+            if dp.get("chunk_overlap"):
+                defaults["overlap"] = dp["chunk_overlap"]
+    except Exception:
+        pass
+    return defaults
+
+
+def resolve_teacher_url(url: str) -> str:
+    """Map localhost/127.0.0.1 to host.docker.internal when executing inside Docker."""
+    if os.path.exists("/.dockerenv") or os.environ.get("IS_DOCKER"):
+        if "localhost" in url:
+            return url.replace("localhost", "host.docker.internal")
+        if "127.0.0.1" in url:
+            return url.replace("127.0.0.1", "host.docker.internal")
+    return url
 
 
 # ============================================================
 # DEFAULTS
 # ============================================================
-DEFAULT_TEACHER_BASE_URL = "http://localhost:8000/v1"
-DEFAULT_TEACHER_MODEL = "Qwen/Qwen2.5-72B-Instruct"
-DEFAULT_TEACHER_API_KEY = "not-needed"
+_INITIAL_DEFAULTS = load_settings_defaults()
+DEFAULT_TEACHER_BASE_URL = _INITIAL_DEFAULTS["teacher_url"]
+DEFAULT_TEACHER_MODEL = _INITIAL_DEFAULTS["teacher_model"]
+DEFAULT_TEACHER_API_KEY = _INITIAL_DEFAULTS["teacher_api_key"]
 
-DEFAULT_MAX_CHUNKS = 3
-DEFAULT_CHUNK_SIZE = 1000
-DEFAULT_CHUNK_OVERLAP = 150
-DEFAULT_MAX_WORKERS = 12
+DEFAULT_MAX_CHUNKS = _INITIAL_DEFAULTS["max_chunks"]
+DEFAULT_CHUNK_SIZE = _INITIAL_DEFAULTS["chunk_size"]
+DEFAULT_CHUNK_OVERLAP = _INITIAL_DEFAULTS["overlap"]
+DEFAULT_MAX_WORKERS = _INITIAL_DEFAULTS["workers"]
+
 
 
 # ============================================================
@@ -95,12 +141,37 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     return chunks
 
 
-# ============================================================
-# SYNTHETIC Q&A GENERATION
-# ============================================================
-def synthesize_qa(client: OpenAI, model: str, chunk: str) -> list[dict]:
+def extract_json_object(content: str) -> dict:
+    """Safely extract and parse JSON object even if wrapped in markdown code blocks or preamble."""
+    if not content:
+        return {}
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(cleaned[start : end + 1])
+            except Exception:
+                pass
+    return {}
+
+
+def synthesize_qa(client: OpenAI, model: str, chunk: str, max_retries: int = 3) -> list[dict]:
     """
     Ask the teacher model to create one grounded question-answer pair.
+    Includes exponential backoff retries for rate-limited cloud APIs (Gemini, Grok, OpenAI),
+    fallback for engines without json_object schema support, and resilient JSON extraction.
     """
     system_prompt = (
         "You are an internal company assistant. "
@@ -118,34 +189,62 @@ Document excerpt:
 \"\"\"{chunk}\"\"\"
 """
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": user_prompt}],
-            temperature=0.15,
-            response_format={"type": "json_object"},
-            max_tokens=512,
-        )
-        content = response.choices[0].message.content
-        data = json.loads(content)
+    for attempt in range(max_retries):
+        try:
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": user_prompt}],
+                    temperature=0.15,
+                    response_format={"type": "json_object"},
+                    max_tokens=512,
+                )
+            except Exception as param_err:
+                if "response_format" in str(param_err).lower():
+                    # Fallback for llama.cpp / engines that reject response_format parameter
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "user", "content": user_prompt}],
+                        temperature=0.15,
+                        max_tokens=512,
+                    )
+                else:
+                    raise
 
-        question = data.get("question", "").strip()
-        answer = data.get("answer", "").strip()
+            content = response.choices[0].message.content
+            data = extract_json_object(content)
 
-        if not question or not answer:
+            question = data.get("question", "").strip()
+            answer = data.get("answer", "").strip()
+
+            if not question or not answer:
+                return []
+
+            return [{
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": answer},
+                ]
+            }]
+
+        except Exception as e:
+            err_str = str(e).lower()
+            if attempt < max_retries - 1 and (
+                "rate_limit" in err_str
+                or "429" in err_str
+                or "resource_exhausted" in err_str
+                or "overloaded" in err_str
+            ):
+                sleep_sec = 2 ** (attempt + 1)
+                print(f"[WARN] Teacher API throttled/rate-limited ({e}). Retrying in {sleep_sec}s...")
+                time.sleep(sleep_sec)
+                continue
+            print(f"[WARN] QA generation failed on attempt {attempt + 1}: {e}")
             return []
 
-        return [{
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question},
-                {"role": "assistant", "content": answer},
-            ]
-        }]
 
-    except Exception as e:
-        print(f"[WARN] QA generation failed: {e}")
-        return []
+    return []
 
 
 # ============================================================
@@ -207,7 +306,12 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         print(f"No documents found. Put PDF / DOCX / CSV files into: {docs_dir}")
         return 0
 
-    client = OpenAI(base_url=teacher_url, api_key=teacher_api_key)
+    effective_url = resolve_teacher_url(teacher_url)
+    effective_key = teacher_api_key.strip() if teacher_api_key and teacher_api_key.strip() else "not-needed"
+    print(f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
+    client = OpenAI(base_url=effective_url, api_key=effective_key)
+
+
 
     total_pairs = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

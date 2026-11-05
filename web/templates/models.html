@@ -193,7 +193,7 @@ ollama run my-private-model</code></pre>
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Merging...';
 
     try {
-      const res = await fetch('/api/models/merge', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/models/merge', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         showToast('Adapter merge started!', 'success');

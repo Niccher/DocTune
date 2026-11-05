@@ -69,7 +69,7 @@ async def models_view(request: Request):
     )
 
 
-@router.post("/api/models/merge")
+@router.post("/api/v1/models/merge")
 async def trigger_merge(
     adapter_dir: str = Form(...),
     export_dir: str = Form(...),
@@ -96,4 +96,5 @@ async def trigger_merge(
         metadata={"adapter_dir": adapter_dir, "export_dir": export_dir},
     )
 
-    return JSONResponse({"status": "started", "job_id": state.active_job.job_id})
+    job_id = state.active_job.job_id if state.active_job else "job_merge"
+    return JSONResponse({"status": "started", "job_id": job_id})

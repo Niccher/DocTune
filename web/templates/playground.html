@@ -120,7 +120,7 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Running...';
 
     try {
-      const res = await fetch('/api/evaluate/run', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/evaluate/run', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         showToast('Benchmark run started!', 'success');
@@ -154,7 +154,7 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
       const formData = new FormData();
       formData.append('prompt', q);
 
-      const res = await fetch('/api/playground/chat', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/playground/chat', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         baseBox.innerText = data.base_response;

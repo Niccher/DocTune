@@ -33,6 +33,6 @@ RUN mkdir -p /app/.scratch /app/config
 EXPOSE 4444
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:4444/api/admin/hardware-bounds || exit 1
+  CMD curl -f http://localhost:4444/health || exit 1
 
 CMD ["python", "run_web.py", "--host", "0.0.0.0", "--port", "4444"]

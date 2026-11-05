@@ -33,7 +33,7 @@
 {% block header_actions %}
 <div class="d-flex gap-2 justify-content-sm-end align-items-center">
   <span class="text-muted me-2 d-none d-md-inline">Pipeline Root: <code>Fine Tuning</code></span>
-  <a href="/api/admin/export" class="btn btn-outline-secondary btn-sm" download="fine_tuning_settings.json">
+  <a href="/api/v1/admin/export" class="btn btn-outline-secondary btn-sm" download="fine_tuning_settings.json">
     <i class="bi bi-download me-1"></i> Export JSON
   </a>
   <button class="btn btn-outline-danger btn-sm" id="btnResetDefaults">
@@ -348,15 +348,19 @@
             <div class="col-md-4">
               <label class="form-label" for="qa_provider">LLM Provider</label>
               <select class="form-select" id="qa_provider" name="data_prep.qa_generator.provider">
-                <option value="ollama" {% if settings.data_prep.qa_generator.provider == 'ollama' %}selected{% endif %}>Ollama (Local)</option>
-                <option value="vllm" {% if settings.data_prep.qa_generator.provider == 'vllm' %}selected{% endif %}>vLLM / Local OpenAI-compatible API</option>
-                <option value="openai" {% if settings.data_prep.qa_generator.provider == 'openai' %}selected{% endif %}>OpenAI API</option>
+                <option value="ollama" {% if settings.data_prep.qa_generator.provider == 'ollama' %}selected{% endif %}>Ollama (Local / Free &amp; Private)</option>
+                <option value="llamacpp" {% if settings.data_prep.qa_generator.provider == 'llamacpp' %}selected{% endif %}>llama.cpp Server (llama-server / Free)</option>
+                <option value="vllm" {% if settings.data_prep.qa_generator.provider == 'vllm' %}selected{% endif %}>vLLM / High-Throughput Runner</option>
+                <option value="gemini" {% if settings.data_prep.qa_generator.provider == 'gemini' %}selected{% endif %}>Google Gemini (Google AI Studio)</option>
+                <option value="grok" {% if settings.data_prep.qa_generator.provider == 'grok' %}selected{% endif %}>xAI Grok (API Key Required)</option>
+                <option value="openai" {% if settings.data_prep.qa_generator.provider == 'openai' %}selected{% endif %}>OpenAI API (GPT-4o / mini)</option>
+                <option value="custom" {% if settings.data_prep.qa_generator.provider == 'custom' %}selected{% endif %}>Custom OpenAI-Compatible API</option>
               </select>
             </div>
             <div class="col-md-4">
               <label class="form-label" for="qa_model">QA Model Name</label>
-              <input type="text" class="form-control" id="qa_model" name="data_prep.qa_generator.model" value="{{ settings.data_prep.qa_generator.model }}">
-              <div class="form-text">e.g. <code>llama3:latest</code>, <code>gpt-4o-mini</code></div>
+              <input type="text" class="form-control font-monospace" id="qa_model" name="data_prep.qa_generator.model" value="{{ settings.data_prep.qa_generator.model }}">
+              <div class="form-text">e.g. <code>llama3.1:latest</code>, <code>gemini-1.5-flash</code>, <code>gpt-4o-mini</code></div>
             </div>
             <div class="col-md-4">
               <label class="form-label" for="qa_temperature">Temperature</label>
@@ -364,15 +368,25 @@
             </div>
             <div class="col-md-6">
               <label class="form-label" for="qa_base_url">API Base URL</label>
-              <input type="text" class="form-control" id="qa_base_url" name="data_prep.qa_generator.base_url" value="{{ settings.data_prep.qa_generator.base_url }}">
-              <div class="form-text">e.g. <code>http://localhost:11434/v1</code> for Ollama or <code>https://api.openai.com/v1</code></div>
+              <input type="text" class="form-control font-monospace" id="qa_base_url" name="data_prep.qa_generator.base_url" value="{{ settings.data_prep.qa_generator.base_url }}">
+              <div class="form-text">e.g. <code>http://localhost:11434/v1</code> for Ollama or <code>https://generativelanguage.googleapis.com/v1beta/openai/</code></div>
             </div>
             <div class="col-md-6">
-              <label class="form-label" for="qa_api_key">API Key (Optional for local Ollama)</label>
-              <input type="password" class="form-control font-monospace" id="qa_api_key" name="data_prep.qa_generator.api_key" value="{{ settings.data_prep.qa_generator.api_key }}">
+              <label class="form-label" for="qa_api_key">API Key</label>
+              <div class="input-group">
+                <input type="password" class="form-control font-monospace" id="qa_api_key" name="data_prep.qa_generator.api_key" value="{{ settings.data_prep.qa_generator.api_key }}" placeholder="not-needed">
+                <button class="btn btn-outline-info" type="button" id="btnTestQaTeacher">
+                  <i class="bi bi-broadcast me-1"></i> Test Endpoint
+                </button>
+              </div>
+              <div class="form-text" id="qaApiKeyHint">Required for Google Gemini, xAI Grok, or OpenAI; optional for local Ollama.</div>
+            </div>
+            <div class="col-12">
+              <div id="qaTeacherFeedback" class="mt-2 d-none"></div>
             </div>
           </div>
         </div>
+
 
         <!-- TAB 5: INTEGRATIONS & NOTIFICATIONS -->
         <div class="tab-pane fade" id="tab-integrations" role="tabpanel">
@@ -555,7 +569,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     try {
       const payload = getNestedFormData();
-      const res = await fetch("/api/admin/settings", {
+      const res = await fetch("/api/v1/admin/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -611,7 +625,7 @@ document.addEventListener("DOMContentLoaded", function () {
   resetBtn.addEventListener("click", async function () {
     if (!confirm("Are you sure you want to reset all configurations to factory defaults?")) return;
     try {
-      const res = await fetch("/api/admin/reset", { method: "POST" });
+      const res = await fetch("/api/v1/admin/reset", { method: "POST" });
       if (res.ok) {
         window.location.reload();
       } else {
@@ -637,7 +651,7 @@ document.addEventListener("DOMContentLoaded", function () {
     testHfBtn.disabled = true;
     testHfBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Testing...`;
     try {
-      const res = await fetch("/api/admin/test-hf", {
+      const res = await fetch("/api/v1/admin/test-hf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: token })
@@ -671,7 +685,7 @@ document.addEventListener("DOMContentLoaded", function () {
     checkPathsBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Checking...`;
 
     try {
-      const res = await fetch("/api/admin/check-paths", { method: "POST" });
+      const res = await fetch("/api/v1/admin/check-paths", { method: "POST" });
       const data = await res.json();
       pathResultsBox.classList.remove("d-none");
 
@@ -708,7 +722,7 @@ document.addEventListener("DOMContentLoaded", function () {
     testWebhookBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Pinging...`;
 
     try {
-      const res = await fetch("/api/admin/test-webhook", {
+      const res = await fetch("/api/v1/admin/test-webhook", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url })
@@ -730,6 +744,69 @@ document.addEventListener("DOMContentLoaded", function () {
     } finally {
       testWebhookBtn.disabled = false;
       testWebhookBtn.innerHTML = `<i class="bi bi-bell me-1"></i> Send Test Ping`;
+    }
+  });
+
+  // Teacher Presets & QA Testing
+  const teacherPresets = {{ presets | tojson | safe }};
+  const qaProviderSelect = document.getElementById("qa_provider");
+  const qaUrlInput = document.getElementById("qa_base_url");
+  const qaModelInput = document.getElementById("qa_model");
+  const qaKeyInput = document.getElementById("qa_api_key");
+  const qaHint = document.getElementById("qaApiKeyHint");
+  const qaTestBtn = document.getElementById("btnTestQaTeacher");
+  const qaFeedback = document.getElementById("qaTeacherFeedback");
+
+  qaProviderSelect?.addEventListener("change", function () {
+    const preset = teacherPresets[this.value] || teacherPresets["custom"] || {};
+    if (qaUrlInput && preset.effective_base_url) qaUrlInput.value = preset.effective_base_url;
+    if (qaModelInput && preset.default_model) qaModelInput.value = preset.default_model;
+
+    if (preset.auth_required) {
+      if (qaHint) qaHint.innerText = `Required for ${preset.name}. Please enter your valid API key.`;
+      if (qaKeyInput) qaKeyInput.placeholder = this.value === "gemini" ? "AIzaSy..." : (this.value === "grok" ? "xai-..." : "sk-...");
+    } else {
+      if (qaHint) qaHint.innerText = `Zero cost & private. Optional for ${preset.name}.`;
+      if (qaKeyInput) qaKeyInput.placeholder = "not-needed";
+    }
+  });
+
+  qaTestBtn?.addEventListener("click", async function () {
+    qaTestBtn.disabled = true;
+    qaTestBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Testing...`;
+    qaFeedback.className = "d-none";
+
+    try {
+      const payload = {
+        provider: qaProviderSelect.value,
+        base_url: qaUrlInput.value.trim(),
+        api_key: qaKeyInput.value.trim(),
+        model: qaModelInput.value.trim()
+      };
+
+      const res = await fetch("/api/v1/teacher/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      qaFeedback.classList.remove("d-none");
+
+      if (data.valid) {
+        qaFeedback.className = "alert alert-success py-2 small mt-2";
+        qaFeedback.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> <strong>Connected!</strong> ${data.message} ` +
+          (data.models && data.models.length ? `<span class="badge bg-success-subtle text-success border ms-1">${data.models.length} model(s) available</span>` : "");
+      } else {
+        qaFeedback.className = "alert alert-danger py-2 small mt-2";
+        qaFeedback.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> <strong>Connection Failed:</strong> ${data.error || "Unable to reach endpoint"}`;
+      }
+    } catch (err) {
+      qaFeedback.className = "alert alert-danger py-2 small mt-2";
+      qaFeedback.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> Error: ${err.message}`;
+      qaFeedback.classList.remove("d-none");
+    } finally {
+      qaTestBtn.disabled = false;
+      qaTestBtn.innerHTML = `<i class="bi bi-broadcast me-1"></i> Test Endpoint`;
     }
   });
 

@@ -12,7 +12,7 @@ DocTune Studio follows the **STRIDE** methodology to identify and mitigate poten
 | **Tampering** | Checkpoint weights corrupted in transit or replaced | MinIO S3 HMAC v4 signature verification on all uploaded `.safetensors` files; SHA-256 weight hash validation |
 | **Repudiation** | Operator deleting run history or untracked changes | Immutable PostgreSQL append-only `metric_points` log; audit log tracking IP and timestamps for every run initiation |
 | **Information Disclosure** | Proprietary document contents leaked through inference playground | Documents and JSONL files stored in isolated S3 buckets with time-limited (1-hour) presigned download URLs; no raw text exposed over unauthenticated public endpoints |
-| **Denial of Service** | Rogue request submitting 100,000 epochs or 256 batch size freezing host | Multi-Tier Boundary Clamping in `ConfigService` and `/api/training/start` constraining CPU, RAM, and batch sizes to safe physical ceilings |
+| **Denial of Service** | Rogue request submitting 100,000 epochs or 256 batch size freezing host | Multi-Tier Boundary Clamping in `ConfigService` and `/api/v1/training/start` constraining CPU, RAM, and batch sizes to safe physical ceilings |
 | **Elevation of Privilege** | Container breakout via PyTorch GPU drivers | Container processes run as non-root users (`doctune`); read-only filesystem mounts where appropriate; no host root volume mounts |
 
 ---

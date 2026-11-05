@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: DocTune Studio REST API
-  description: API specifications for DocTune Studio private document fine-tuning platform.
+  description: Canonical versioned API specifications for DocTune Studio private document fine-tuning platform.
   version: 1.0.0
 servers:
   - url: http://localhost:4444
@@ -32,7 +32,70 @@ paths:
                     type: boolean
                     example: true
 
-  /api/training/start:
+  /api/v1/telemetry:
+    get:
+      summary: Host and Pipeline Telemetry
+      description: Returns live CPU, RAM, GPU, Disk metrics and active job state.
+      responses:
+        '200':
+          description: Telemetry data retrieved successfully
+
+  /api/v1/teacher/presets:
+    get:
+      summary: Teacher LLM Presets
+      description: Lists preset configurations for local (Ollama, llama.cpp, vLLM) and commercial (Gemini, Grok, OpenAI) teachers.
+      responses:
+        '200':
+          description: Supported teacher providers and presets
+
+  /api/v1/teacher/models:
+    get:
+      summary: Discover Hosted Teacher Models
+      parameters:
+        - name: provider
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: base_url
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: api_key
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of models hosted on teacher instance
+
+  /api/v1/teacher/test:
+    post:
+      summary: Test Teacher Connectivity & Model Listing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, base_url]
+              properties:
+                provider:
+                  type: string
+                  enum: [ollama, llamacpp, vllm, gemini, grok, openai, custom]
+                base_url:
+                  type: string
+                api_key:
+                  type: string
+                model:
+                  type: string
+      responses:
+        '200':
+          description: Connection verification results and latency
+
+  /api/v1/training/start:
     post:
       summary: Start Fine-Tuning Job
       requestBody:
@@ -79,7 +142,7 @@ paths:
         '409':
           description: Another job is currently active
 
-  /api/training/stop:
+  /api/v1/training/stop:
     post:
       summary: Abort Active Training Job
       responses:
@@ -88,7 +151,7 @@ paths:
         '400':
           description: No active process running
 
-  /api/admin/hardware-bounds:
+  /api/v1/admin/hardware-bounds:
     get:
       summary: Physical Host Limits & Bounds
       responses:

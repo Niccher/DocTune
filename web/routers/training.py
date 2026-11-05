@@ -38,7 +38,7 @@ async def training_view(request: Request):
     )
 
 
-@router.post("/api/training/start")
+@router.post("/api/v1/training/start")
 async def start_training(
     method: str = Form("qlora"),
     model_id: str = Form("meta-llama/Meta-Llama-3-8B-Instruct"),
@@ -99,10 +99,11 @@ async def start_training(
         metadata={"method": method, "model_id": model_id, "config_file": str(run_cfg_path)},
     )
 
-    return JSONResponse({"status": "started", "job_id": state.active_job.job_id})
+    job_id = state.active_job.job_id if state.active_job else "job_training"
+    return JSONResponse({"status": "started", "job_id": job_id})
 
 
-@router.post("/api/training/stop")
+@router.post("/api/v1/training/stop")
 async def stop_training():
     aborted = await process_mgr.abort_current_job()
     if aborted:

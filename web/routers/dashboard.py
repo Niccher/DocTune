@@ -110,7 +110,7 @@ async def dashboard_view(request: Request):
     )
 
 
-@router.get("/api/telemetry", response_class=JSONResponse)
+@router.get("/api/v1/telemetry", response_class=JSONResponse)
 async def telemetry_api():
     telemetry = get_system_telemetry()
     pipeline_data = get_pipeline_details()
