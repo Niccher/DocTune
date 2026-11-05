@@ -107,13 +107,17 @@ class ProcessManager:
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
 
                 # Check for structured metric tag
+                # Check for structured metric tag
+                parsed_metric = False
+                step_val, loss_val, epoch_val = 0, 0.0, 0.0
                 if line.startswith("[METRIC_JSON]"):
                     try:
                         metric_data = json.loads(line.replace("[METRIC_JSON]", "").strip())
-                        step = int(metric_data.get("step", 0))
-                        loss = float(metric_data.get("loss", 0.0))
-                        epoch = float(metric_data.get("epoch", 0.0))
-                        await state.add_loss_point(step, loss, epoch)
+                        step_val = int(metric_data.get("step", 0))
+                        loss_val = float(metric_data.get("loss", 0.0))
+                        epoch_val = float(metric_data.get("epoch", 0.0))
+                        await state.add_loss_point(step_val, loss_val, epoch_val)
+                        parsed_metric = True
                     except Exception as e:
                         print(f"Error parsing [METRIC_JSON]: {e}")
                 else:
@@ -121,16 +125,91 @@ class ProcessManager:
                     loss_match = metric_pattern.search(line)
                     if loss_match:
                         try:
-                            loss = float(loss_match.group(1))
-                            step = int(step_match.group(1)) if (step_match := step_pattern.search(line)) else len(state.loss_history) + 1
-                            epoch = float(epoch_match.group(1)) if (epoch_match := epoch_pattern.search(line)) else 0.0
-                            await state.add_loss_point(step, loss, epoch)
+                            loss_val = float(loss_match.group(1))
+                            step_val = int(step_match.group(1)) if (step_match := step_pattern.search(line)) else len(state.loss_history) + 1
+                            epoch_val = float(epoch_match.group(1)) if (epoch_match := epoch_pattern.search(line)) else 0.0
+                            await state.add_loss_point(step_val, loss_val, epoch_val)
+                            parsed_metric = True
+                        except Exception:
+                            pass
+
+                # Persist MetricPoint to database
+                if parsed_metric and state.active_job:
+                    run_id = state.active_job.metadata.get("run_id")
+                    if run_id:
+                        try:
+                            from web.db.session import SessionLocal
+                            from web.db.models import MetricPoint
+                            if SessionLocal:
+                                db_m = SessionLocal()
+                                db_m.add(MetricPoint(run_id=run_id, step=step_val, epoch=epoch_val, loss=loss_val))
+                                db_m.commit()
+                                db_m.close()
                         except Exception:
                             pass
 
                 await state.add_log(line)
 
             returncode = await process.wait()
+
+            # Update Run status and register Checkpoint in PostgreSQL
+            run_id = state.active_job.metadata.get("run_id") if state.active_job else None
+            if run_id:
+                try:
+                    from datetime import datetime
+                    from web.db.session import SessionLocal
+                    from web.db.models import Run, Checkpoint
+                    if SessionLocal:
+                        db_r = SessionLocal()
+                        run_rec = db_r.query(Run).filter(Run.id == run_id).first()
+                        if run_rec:
+                            run_rec.completed_at = datetime.utcnow()
+                            if run_rec.started_at:
+                                run_rec.duration_sec = round((run_rec.completed_at - run_rec.started_at).total_seconds(), 1)
+                            if state.loss_history:
+                                run_rec.final_loss = state.loss_history[-1]["loss"]
+
+                            if returncode == 0:
+                                run_rec.status = "COMPLETED"
+                                method = state.active_job.metadata.get("method")
+                                if method:
+                                    out_dir = PROJECT_ROOT / f"output_{method.lower()}"
+                                    if out_dir.exists():
+                                        sz = round(sum(f.stat().st_size for f in out_dir.glob("*") if f.is_file()) / (1024 * 1024), 2)
+                                        db_r.add(Checkpoint(
+                                            id=f"ckpt_{run_id}",
+                                            run_id=run_id,
+                                            name=f"{run_rec.model_id.split('/')[-1]}-{method.upper()}",
+                                            adapter_type=method.lower(),
+                                            base_model=run_rec.model_id,
+                                            disk_path=str(out_dir),
+                                            size_mb=sz,
+                                        ))
+                                elif state.active_job.job_type == JobType.MERGING:
+                                    export_dir_str = state.active_job.metadata.get("export_dir", "output_merged")
+                                    export_path = Path(export_dir_str)
+                                    if not export_path.is_absolute():
+                                        export_path = PROJECT_ROOT / export_dir_str
+                                    sz = round(sum(f.stat().st_size for f in export_path.glob("*") if f.is_file()) / (1024 * 1024), 2) if export_path.exists() else 0.0
+                                    db_r.add(Checkpoint(
+                                        id=f"ckpt_{run_id}",
+                                        run_id=run_id,
+                                        name=f"merged-{export_path.name}",
+                                        adapter_type="merged",
+                                        base_model=run_rec.model_id if run_rec else "base",
+                                        disk_path=str(export_path),
+                                        size_mb=sz,
+                                    ))
+
+                            elif returncode == -signal.SIGINT or returncode == -signal.SIGTERM:
+                                run_rec.status = "ABORTED"
+                            else:
+                                run_rec.status = "FAILED"
+                                run_rec.error_message = f"Process exited with code {returncode}"
+                            db_r.commit()
+                        db_r.close()
+                except Exception:
+                    pass
 
             if returncode == 0:
                 await state.add_log("--- [COMPLETED] Process finished successfully ---")

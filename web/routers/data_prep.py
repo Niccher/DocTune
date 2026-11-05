@@ -8,7 +8,8 @@ import os
 import time
 import json
 import shutil
-from typing import List
+import hashlib
+from typing import List, Optional
 from pathlib import Path
 from fastapi import APIRouter, Request, UploadFile, File, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -20,6 +21,9 @@ from web.services.config_service import config_service
 from web.services.teacher_service import teacher_service
 from web.templates_config import templates
 from web.celery_app import is_celery_available, app as celery_app
+from web.db.session import SessionLocal
+from web.db.models import UploadedDocument, DatasetSample
+from web.services.storage_service import storage_service
 from pydantic import BaseModel
 
 
@@ -29,6 +33,30 @@ router = APIRouter()
 
 def list_raw_documents():
     RAW_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    # 1. Try PostgreSQL / SQLite query
+    try:
+        if SessionLocal:
+            db = SessionLocal()
+            try:
+                docs = db.query(UploadedDocument).order_by(UploadedDocument.uploaded_at.desc()).all()
+                if docs:
+                    return [
+                        {
+                            "name": d.filename,
+                            "size_kb": round((d.size_bytes or 0) / 1024, 1),
+                            "modified": d.uploaded_at.timestamp() if d.uploaded_at else time.time(),
+                            "extension": d.file_format or Path(d.filename).suffix.lower(),
+                            "status": d.status,
+                            "hash": d.file_hash,
+                        }
+                        for d in docs
+                    ]
+            finally:
+                db.close()
+    except Exception:
+        pass
+
+    # 2. Disk scan fallback
     files = []
     patterns = ["*.pdf", "*.docx", "*.csv", "*.PDF", "*.DOCX", "*.CSV"]
     found = []
@@ -42,25 +70,86 @@ def list_raw_documents():
             "size_kb": round(stat.st_size / 1024, 1),
             "modified": stat.st_mtime,
             "extension": p.suffix.lower(),
+            "status": "READY",
         })
     return files
 
 
-def load_dataset_samples(offset: int = 0, limit: int = 25):
+def load_dataset_samples(offset: int = 0, limit: int = 25, status: Optional[str] = None):
+    # 1. Try DB query
+    try:
+        if SessionLocal:
+            db = SessionLocal()
+            try:
+                query = db.query(DatasetSample)
+                if status:
+                    query = query.filter(DatasetSample.status == status)
+                total = query.count()
+                if total > 0:
+                    samples_orm = query.order_by(DatasetSample.created_at.asc()).offset(offset).limit(limit).all()
+                    samples = [
+                        {
+                            "id": s.id,
+                            "status": s.status,
+                            "quality_score": s.quality_score,
+                            "messages": [
+                                {"role": "system", "content": s.system_prompt or ""},
+                                {"role": "user", "content": s.user_instruction},
+                                {"role": "assistant", "content": s.assistant_response},
+                            ],
+                        }
+                        for s in samples_orm
+                    ]
+                    return {"total": total, "samples": samples, "offset": offset, "limit": limit}
+            finally:
+                db.close()
+    except Exception:
+        pass
+
+    # 2. Disk fallback & seed DB
     if not DEFAULT_JSONL.exists():
         return {"total": 0, "samples": []}
 
     samples = []
     total = 0
+    all_raw = []
     with open(DEFAULT_JSONL, "r", encoding="utf-8") as f:
         for idx, line in enumerate(f):
             total += 1
-            if offset <= idx < offset + limit:
-                try:
-                    data = json.loads(line.strip())
+            try:
+                data = json.loads(line.strip())
+                all_raw.append(data)
+                if offset <= idx < offset + limit:
                     samples.append(data)
-                except Exception:
-                    pass
+            except Exception:
+                pass
+
+    # Seed DB if empty
+    if total > 0 and SessionLocal:
+        try:
+            db = SessionLocal()
+            try:
+                if db.query(DatasetSample).count() == 0:
+                    for i, item in enumerate(all_raw):
+                        msgs = item.get("messages", [])
+                        sys_p = next((m.get("content", "") for m in msgs if m.get("role") == "system"), None)
+                        usr_p = next((m.get("content", "") for m in msgs if m.get("role") == "user"), "")
+                        ast_p = next((m.get("content", "") for m in msgs if m.get("role") == "assistant"), "")
+                        if usr_p:
+                            sample_obj = DatasetSample(
+                                id=f"sample_{i+1:05d}",
+                                system_prompt=sys_p,
+                                user_instruction=usr_p,
+                                assistant_response=ast_p,
+                                status="APPROVED",
+                            )
+                            db.add(sample_obj)
+                    db.commit()
+            finally:
+                db.close()
+        except Exception:
+            pass
+
     return {"total": total, "samples": samples, "offset": offset, "limit": limit}
 
 
@@ -97,6 +186,18 @@ async def data_prep_view(request: Request, page: int = Query(1, ge=1)):
 async def dataset_preview_api(offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100)):
     """API endpoint to fetch paginated JSONL dataset samples."""
     return load_dataset_samples(offset=offset, limit=limit)
+
+
+@router.get("/api/v1/dataset/samples", response_class=JSONResponse)
+async def get_dataset_samples_api(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(25, ge=1, le=100),
+    status: Optional[str] = Query(None),
+):
+    """API endpoint to query dataset samples with status filter and pagination."""
+    data = load_dataset_samples(offset=offset, limit=limit, status=status)
+    return JSONResponse({"status": "success", **data})
+
 
 
 @router.get("/api/v1/teacher/presets", response_class=JSONResponse)
@@ -154,13 +255,55 @@ async def upload_documents(files: List[UploadFile] = File(...)):
     uploaded = []
     allowed_exts = {".pdf", ".docx", ".csv"}
 
-    for f in files:
-        ext = Path(f.filename).suffix.lower()
-        if ext in allowed_exts:
-            dest = RAW_DOCS_DIR / f.filename
-            with open(dest, "wb") as out:
-                shutil.copyfileobj(f.file, out)
-            uploaded.append(f.filename)
+    db = SessionLocal() if SessionLocal else None
+    try:
+        for f in files:
+            ext = Path(f.filename).suffix.lower()
+            if ext in allowed_exts:
+                dest = RAW_DOCS_DIR / f.filename
+                hasher = hashlib.sha256()
+                with open(dest, "wb") as out:
+                    while chunk := f.file.read(65536):
+                        hasher.update(chunk)
+                        out.write(chunk)
+                file_hash = hasher.hexdigest()
+                file_size = dest.stat().st_size
+                uploaded.append(f.filename)
+
+                # MinIO upload if configured
+                s3_bucket = None
+                s3_key = None
+                if storage_service.is_s3_enabled():
+                    s3_bucket = storage_service.bucket_docs
+                    s3_key = f.filename
+                    storage_service.upload_file(dest, s3_bucket, s3_key)
+
+                # PostgreSQL metadata record
+                if db:
+                    doc_id = f"doc_{file_hash[:16]}"
+                    existing = db.query(UploadedDocument).filter(UploadedDocument.id == doc_id).first()
+                    if existing:
+                        existing.filename = f.filename
+                        existing.disk_path = str(dest)
+                        existing.size_bytes = file_size
+                        existing.status = "READY"
+                    else:
+                        doc_rec = UploadedDocument(
+                            id=doc_id,
+                            filename=f.filename,
+                            disk_path=str(dest),
+                            file_hash=file_hash,
+                            file_format=ext,
+                            status="READY",
+                            size_bytes=file_size,
+                            s3_bucket=s3_bucket,
+                            s3_key=s3_key,
+                        )
+                        db.add(doc_rec)
+                    db.commit()
+    finally:
+        if db:
+            db.close()
 
     return JSONResponse({"status": "success", "uploaded": uploaded})
 
@@ -171,8 +314,121 @@ async def delete_document(filename: str = Form(...)):
     # Prevent directory traversal
     if str(target).startswith(str(RAW_DOCS_DIR.resolve())) and target.exists():
         target.unlink()
+
+        # Delete from MinIO if configured
+        if storage_service.is_s3_enabled():
+            storage_service.delete_file(storage_service.bucket_docs, filename)
+
+        # Delete from PostgreSQL
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                db.query(UploadedDocument).filter(UploadedDocument.filename == filename).delete()
+                db.commit()
+                db.close()
+            except Exception:
+                pass
+
         return JSONResponse({"status": "deleted", "filename": filename})
     return JSONResponse({"status": "error", "message": "File not found or invalid path"}, status_code=400)
+
+
+class SampleEditPayload(BaseModel):
+    user_instruction: Optional[str] = None
+    assistant_response: Optional[str] = None
+    status: Optional[str] = None
+
+
+@router.put("/api/v1/dataset/samples/{sample_id}")
+async def edit_dataset_sample(sample_id: str, payload: SampleEditPayload):
+    """Edit instruction, assistant response, or status in PostgreSQL."""
+    if not SessionLocal:
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+    db = SessionLocal()
+    try:
+        sample = db.query(DatasetSample).filter(DatasetSample.id == sample_id).first()
+        if not sample:
+            return JSONResponse({"status": "error", "message": "Sample not found"}, status_code=404)
+        if payload.user_instruction is not None:
+            sample.user_instruction = payload.user_instruction
+            sample.status = "EDITED"
+        if payload.assistant_response is not None:
+            sample.assistant_response = payload.assistant_response
+            sample.status = "EDITED"
+        if payload.status is not None:
+            sample.status = payload.status
+        db.commit()
+        return JSONResponse({
+            "status": "success",
+            "sample_id": sample_id,
+            "sample": {
+                "id": sample.id,
+                "user_instruction": sample.user_instruction,
+                "assistant_response": sample.assistant_response,
+                "status": sample.status,
+            },
+        })
+    finally:
+        db.close()
+
+
+@router.post("/api/v1/dataset/samples/{sample_id}/status")
+async def update_sample_status(request: Request, sample_id: str):
+    """Approve or reject a synthetic instruction sample."""
+    if not SessionLocal:
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+
+    status_val = ""
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+        status_val = body.get("status", "")
+    else:
+        form = await request.form()
+        status_val = form.get("status", "")
+
+    if not status_val:
+        return JSONResponse({"status": "error", "message": "Missing status parameter"}, status_code=400)
+
+    db = SessionLocal()
+    try:
+        sample = db.query(DatasetSample).filter(DatasetSample.id == sample_id).first()
+        if not sample:
+            return JSONResponse({"status": "error", "message": "Sample not found"}, status_code=404)
+        sample.status = status_val.upper()
+        db.commit()
+        return JSONResponse({"status": "success", "sample_id": sample_id, "sample_status": sample.status})
+
+    finally:
+        db.close()
+
+
+
+@router.post("/api/v1/dataset/export-jsonl")
+async def export_curated_dataset():
+    """Export all approved and edited samples from PostgreSQL to private_docs.jsonl."""
+    if not SessionLocal:
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+    db = SessionLocal()
+    try:
+        samples = db.query(DatasetSample).filter(DatasetSample.status != "REJECTED").order_by(DatasetSample.created_at.asc()).all()
+        if not samples:
+            return JSONResponse({"status": "error", "message": "No approved samples to export"}, status_code=400)
+
+        DEFAULT_JSONL.parent.mkdir(parents=True, exist_ok=True)
+        count = 0
+        with open(DEFAULT_JSONL, "w", encoding="utf-8") as f:
+            for s in samples:
+                msgs = []
+                if s.system_prompt:
+                    msgs.append({"role": "system", "content": s.system_prompt})
+                msgs.append({"role": "user", "content": s.user_instruction})
+                msgs.append({"role": "assistant", "content": s.assistant_response})
+                f.write(json.dumps({"messages": msgs}) + "\n")
+                count += 1
+        return JSONResponse({"status": "success", "exported_count": count, "path": str(DEFAULT_JSONL)})
+    finally:
+        db.close()
 
 
 @router.post("/api/v1/data-prep/start")

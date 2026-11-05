@@ -395,6 +395,179 @@ def test_admin_settings_port_80():
     assert updated["server"]["port"] == 80
 
 
+def test_rehydrate_from_db():
+    from web.db.session import SessionLocal, init_db
+    from web.db.models import Run, MetricPoint
+    init_db()
+    with SessionLocal() as db:
+        test_run = Run(
+            id="test_rehydrate_run",
+            job_type="TRAINING_QLORA",
+            method="qlora",
+            model_id="test/model",
+            status="COMPLETED",
+            final_loss=1.234,
+        )
+        db.merge(test_run)
+        test_metric = MetricPoint(
+            run_id="test_rehydrate_run",
+            step=10,
+            loss=1.234,
+            learning_rate=0.0002,
+        )
+        db.add(test_metric)
+        db.commit()
+
+    state.rehydrate_from_db()
+    assert any(j.get("run_id") == "test_rehydrate_run" for j in state.recent_jobs)
+    assert any(pt.get("step") == 10 and pt.get("loss") == 1.234 for pt in state.loss_history)
+
+
+def test_system_settings_db_persistence():
+    from web.services.config_service import config_service
+    from web.db.session import SessionLocal
+    from web.db.models import SystemSetting
+
+    ok, msg, updated = config_service.save_settings({"server": {"app_name": "DocTune DB Test"}})
+    assert ok is True
+    assert updated["server"]["app_name"] == "DocTune DB Test"
+
+    # Verify presence in SystemSetting table
+    with SessionLocal() as db:
+        setting = db.query(SystemSetting).filter(SystemSetting.key == "server").first()
+        assert setting is not None
+        assert setting.value_json["app_name"] == "DocTune DB Test"
+
+
+    # Reset
+    config_service.save_settings({"server": {"app_name": "DocTune Studio"}})
+
+
+def test_dataset_curation_endpoints():
+    from web.db.session import SessionLocal, init_db
+    from web.db.models import DatasetSample
+    init_db()
+
+    # Create a sample
+    with SessionLocal() as db:
+        sample = DatasetSample(
+            id="test_sample_1",
+            system_prompt="You are a helpful assistant.",
+            user_instruction="What is test?",
+            assistant_response="This is a test response.",
+            status="pending",
+        )
+        db.merge(sample)
+        db.commit()
+
+    # GET samples
+    resp = client.get("/api/v1/dataset/samples?status=pending")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert any(s["id"] == "test_sample_1" for s in data["samples"])
+
+    # PUT update sample
+    resp = client.put("/api/v1/dataset/samples/test_sample_1", json={
+        "user_instruction": "Updated instruction?",
+        "assistant_response": "Updated response.",
+        "quality_score": 5,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["sample"]["user_instruction"] == "Updated instruction?"
+
+    # POST status change
+    resp = client.post("/api/v1/dataset/samples/test_sample_1/status", json={"status": "approved"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+
+    # POST export jsonl (preserve original file content for clean git tree)
+    from pipeline.prepare_data import DEFAULT_JSONL
+    orig_content = DEFAULT_JSONL.read_text(encoding="utf-8") if DEFAULT_JSONL.exists() else None
+    try:
+        resp = client.post("/api/v1/dataset/export-jsonl")
+        assert resp.status_code == 200
+        export_data = resp.json()
+        assert export_data["status"] == "success"
+        assert "exported_count" in export_data
+    finally:
+        if orig_content is not None:
+            DEFAULT_JSONL.write_text(orig_content, encoding="utf-8")
+
+
+
+def test_playground_feedback_and_history():
+    from web.db.session import SessionLocal, init_db
+    from web.db.models import PlaygroundLog
+    init_db()
+
+    with SessionLocal() as db:
+        log = PlaygroundLog(
+            id="test_play_log_1",
+            prompt="Test prompt",
+            base_model_response="Base ans",
+            tuned_model_response="Tuned ans",
+            model_name="test-model",
+        )
+        db.merge(log)
+        db.commit()
+
+    # Feedback rating
+    resp = client.post("/api/v1/playground/feedback", json={
+        "log_id": "test_play_log_1",
+        "rating": 5,
+        "notes": "Excellent accuracy",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+
+    # History API
+    resp = client.get("/api/v1/playground/history")
+    assert resp.status_code == 200
+    history = resp.json()
+    assert history["status"] == "success"
+    assert any(h["id"] == "test_play_log_1" for h in history["history"])
+
+
+def test_benchmarks_and_checkpoints_api():
+    from web.db.session import SessionLocal, init_db
+    from web.db.models import EvaluationBenchmark, Checkpoint
+    init_db()
+
+    with SessionLocal() as db:
+        bench = EvaluationBenchmark(
+            id="test_bench_1",
+            test_suite_name="Unit Benchmark",
+            bleu_score=42.5,
+            rouge_l=58.2,
+            perplexity=3.14,
+        )
+        db.merge(bench)
+        ckpt = Checkpoint(
+            id="test_ckpt_1",
+            name="test-ckpt-model",
+            adapter_type="qlora",
+            step=500,
+            val_loss=0.85,
+        )
+        db.merge(ckpt)
+        db.commit()
+
+    # Benchmarks API
+    resp = client.get("/api/v1/benchmarks")
+    assert resp.status_code == 200
+    b_data = resp.json()
+    assert b_data["status"] == "success"
+    assert any(b["id"] == "test_bench_1" for b in b_data["benchmarks"])
+
+    # Checkpoints API
+    resp = client.get("/api/v1/models/checkpoints")
+    assert resp.status_code == 200
+    c_data = resp.json()
+    assert c_data["status"] == "success"
+    assert any(c["id"] == "test_ckpt_1" for c in c_data["checkpoints"])
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
@@ -425,7 +598,13 @@ if __name__ == "__main__":
     test_extract_json_object_resilience()
     test_storage_service_ensure_buckets()
     test_admin_settings_port_80()
+    test_rehydrate_from_db()
+    test_system_settings_db_persistence()
+    test_dataset_curation_endpoints()
+    test_playground_feedback_and_history()
+    test_benchmarks_and_checkpoints_api()
     print("All tests passed successfully!")
+
 
 
 

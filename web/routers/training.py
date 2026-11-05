@@ -99,13 +99,16 @@ async def start_training(
             db = SessionLocal()
             new_run = Run(
                 id=run_id,
-                model_name=model_id,
+                job_type=job_type.value,
+                model_id=model_id,
                 method=method.upper(),
                 dataset_path=str(cfg.dataset_path),
                 epochs=epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
                 status="PENDING",
+                config_json=cfg.to_dict(),
+                mode="celery",
             )
             db.add(new_run)
             db.commit()
@@ -128,6 +131,30 @@ async def start_training(
         return JSONResponse({"status": "started", "job_id": run_id})
 
     # Subprocess execution fallback
+    run_id = f"run_{method.lower()}_{int(time.time())}"
+    try:
+        from web.db.session import SessionLocal
+        from web.db.models import Run
+        db = SessionLocal()
+        new_run = Run(
+            id=run_id,
+            job_type=job_type.value,
+            model_id=model_id,
+            method=method.upper(),
+            dataset_path=str(cfg.dataset_path),
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            status="PENDING",
+            config_json=cfg.to_dict(),
+            mode="subprocess",
+        )
+        db.add(new_run)
+        db.commit()
+        db.close()
+    except Exception:
+        pass
+
     args = ["--config-json", str(run_cfg_path)]
 
     await process_mgr.run_pipeline_script(
@@ -135,7 +162,7 @@ async def start_training(
         script_module=script_module,
         args=args,
         cwd=PROJECT_ROOT,
-        metadata={"method": method, "model_id": model_id, "config_file": str(run_cfg_path)},
+        metadata={"method": method, "model_id": model_id, "run_id": run_id, "mode": "subprocess", "config_file": str(run_cfg_path)},
     )
 
     job_id = state.active_job.job_id if state.active_job else "job_training"

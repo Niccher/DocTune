@@ -8,7 +8,7 @@ Hugging Face token validation, directory checks, and webhook alerts.
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 import urllib.request
 import urllib.error
 
@@ -104,12 +104,66 @@ FACTORY_DEFAULTS: Dict[str, Any] = {
 }
 
 
+def _load_settings_from_db() -> Optional[Dict[str, Any]]:
+    try:
+        from web.db.session import SessionLocal
+        from web.db.models import SystemSetting
+        if not SessionLocal:
+            return None
+        db = SessionLocal()
+        try:
+            records = db.query(SystemSetting).all()
+            if not records:
+                return None
+            result = {}
+            for r in records:
+                result[r.key] = r.value_json
+            return result
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
+def _save_settings_to_db(settings_dict: Dict[str, Any]):
+    try:
+        from web.db.session import SessionLocal
+        from web.db.models import SystemSetting
+        if not SessionLocal:
+            return
+        db = SessionLocal()
+        try:
+            for key, val in settings_dict.items():
+                existing = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+                if existing:
+                    existing.value_json = val
+                    existing.version = (existing.version or 1) + 1
+                else:
+                    new_item = SystemSetting(key=key, value_json=val, version=1)
+                    db.add(new_item)
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("Failed writing settings to DB (using file storage): %s", e)
+
+
 class ConfigService:
     def __init__(self, config_file: Path = CONFIG_FILE):
         self.config_file = config_file
 
     def get_settings(self) -> Dict[str, Any]:
-        """Read and return current settings, falling back to factory defaults."""
+        """Read and return current settings from PostgreSQL with disk/defaults fallback."""
+        db_settings = _load_settings_from_db()
+        if db_settings:
+            merged = FACTORY_DEFAULTS.copy()
+            for key, val in db_settings.items():
+                if isinstance(val, dict) and key in merged and isinstance(merged[key], dict):
+                    merged[key] = {**merged[key], **val}
+                else:
+                    merged[key] = val
+            return merged
+
         if not self.config_file.exists():
             self.reset_to_defaults()
             return FACTORY_DEFAULTS.copy()
@@ -117,13 +171,13 @@ class ConfigService:
         try:
             with open(self.config_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # Merge with defaults to ensure any newly added top-level keys exist
             merged = FACTORY_DEFAULTS.copy()
             for key, val in data.items():
                 if isinstance(val, dict) and key in merged and isinstance(merged[key], dict):
                     merged[key] = {**merged[key], **val}
                 else:
                     merged[key] = val
+            _save_settings_to_db(merged)
             return merged
         except Exception as e:
             logger.error("Error reading config file %s: %s", self.config_file, e)
@@ -219,6 +273,9 @@ class ConfigService:
                 json.dump(current, f, indent=2)
             temp_file.replace(self.config_file)
 
+            # Persist to database
+            _save_settings_to_db(current)
+
             msg = "Configuration saved successfully"
             if clamped_notices:
                 msg += f" (Note: {', '.join(clamped_notices)})"
@@ -230,10 +287,11 @@ class ConfigService:
 
 
     def reset_to_defaults(self) -> Dict[str, Any]:
-        """Reset settings.json back to factory defaults."""
+        """Reset settings back to factory defaults in DB and disk."""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(FACTORY_DEFAULTS, f, indent=2)
+        _save_settings_to_db(FACTORY_DEFAULTS)
         return FACTORY_DEFAULTS.copy()
 
     def get_app_name(self) -> str:

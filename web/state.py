@@ -120,10 +120,69 @@ class AppState:
         self.log_buffer.append(line)
         await self.broadcast_ws({"type": "log", "line": line})
 
-    async def add_loss_point(self, step: int, loss: float, epoch: float):
-        point = {"step": step, "loss": round(loss, 4), "epoch": epoch}
-        self.loss_history.append(point)
-        await self.broadcast_ws({"type": "metric", "data": point})
+    def rehydrate_from_db(self):
+        """Rehydrate recent_jobs and loss_history from PostgreSQL/SQLite on startup."""
+        try:
+            from datetime import datetime
+            from web.db.session import SessionLocal
+            from web.db.models import Run, MetricPoint
+            if not SessionLocal:
+                return
+
+            db = SessionLocal()
+            try:
+                # 1. Clean up stale zombie jobs left RUNNING across restart
+                stale_runs = db.query(Run).filter(Run.status.in_(["RUNNING", "PENDING"])).all()
+                for r in stale_runs:
+                    r.status = "ABORTED"
+                    r.error_message = "Server rebooted while task was active."
+                    r.completed_at = datetime.utcnow()
+                if stale_runs:
+                    db.commit()
+
+                # 2. Rehydrate recent_jobs
+                runs = db.query(Run).order_by(Run.created_at.desc()).limit(20).all()
+                rehydrated = []
+                for r in runs:
+                    start_ts = r.started_at.timestamp() if r.started_at else (r.created_at.timestamp() if r.created_at else time.time())
+                    end_ts = r.completed_at.timestamp() if r.completed_at else None
+                    duration = r.duration_sec if r.duration_sec is not None else ((end_ts or time.time()) - start_ts)
+                    rehydrated.append({
+                        "job_id": r.id,
+                        "run_id": r.id,
+                        "job_type": r.job_type,
+                        "status": r.status,
+                        "start_time": start_ts,
+                        "end_time": end_ts,
+                        "duration_sec": round(duration, 1),
+                        "pid": r.pid,
+                        "metadata": {
+                            "method": r.method,
+                            "model_id": r.model_id,
+                            "error_message": r.error_message,
+                            "mode": r.mode,
+                        },
+                    })
+                self.recent_jobs = rehydrated
+
+                # 3. Rehydrate loss_history for latest training run
+                latest_training = db.query(Run).filter(
+                    Run.job_type.in_(["TRAINING_QLORA", "TRAINING_LORA", "TRAINING_FFT"])
+                ).order_by(Run.created_at.desc()).first()
+
+                if latest_training:
+                    metrics = db.query(MetricPoint).filter(
+                        MetricPoint.run_id == latest_training.id
+                    ).order_by(MetricPoint.step.asc()).all()
+                    self.loss_history = [
+                        {"step": m.step, "loss": round(m.loss, 4), "epoch": round(m.epoch or 0.0, 4)}
+                        for m in metrics
+                    ]
+            finally:
+                db.close()
+        except Exception:
+            # Rehydration notice or table absent on initial cold boot
+            pass
 
 
 # Global singleton instance

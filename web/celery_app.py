@@ -77,7 +77,7 @@ if HAS_CELERY and app:
         """Execute QLoRA / LoRA / FFT training inside distributed worker."""
         from pipeline.common import Config, PROJECT_ROOT
         from web.db.session import SessionLocal
-        from web.db.models import Run, MetricPoint
+        from web.db.models import Run, MetricPoint, Checkpoint
         from web.services.storage_service import storage_service
 
         db = SessionLocal()
@@ -152,6 +152,23 @@ if HAS_CELERY and app:
             if run:
                 run.status = "COMPLETED"
                 run.completed_at = datetime.utcnow()
+                if run.started_at:
+                    run.duration_sec = round((run.completed_at - run.started_at).total_seconds(), 1)
+
+                if output_dir.exists():
+                    sz = round(sum(f.stat().st_size for f in output_dir.glob("*") if f.is_file()) / (1024 * 1024), 2)
+                    ckpt = Checkpoint(
+                        id=f"ckpt_{run_id}",
+                        run_id=run_id,
+                        name=f"{model_id.split('/')[-1]}-{method.upper()}",
+                        adapter_type=method.lower(),
+                        base_model=model_id,
+                        disk_path=str(output_dir),
+                        s3_bucket=storage_service.bucket_checkpoints if storage_service.is_s3_enabled() else None,
+                        s3_key=run_id if storage_service.is_s3_enabled() else None,
+                        size_mb=sz,
+                    )
+                    db.add(ckpt)
                 db.commit()
 
             done_msg = "--- [COMPLETED] Training completed successfully ---"
@@ -240,6 +257,18 @@ if HAS_CELERY and app:
         """Execute adapter merge into base model inside distributed worker."""
         from pipeline.merge_adapters import run_merge
         from pathlib import Path
+        from datetime import datetime
+        from web.db.session import SessionLocal
+        from web.db.models import Run, Checkpoint
+        from web.services.storage_service import storage_service
+
+        db = SessionLocal() if SessionLocal else None
+        run = db.query(Run).filter(Run.id == run_id).first() if db else None
+        if run:
+            run.status = "RUNNING"
+            run.started_at = datetime.utcnow()
+            db.commit()
+
         start_msg = f"--- [CELERY WORKER] Merging adapters from {adapter_dir} to {export_dir} ---"
         publish_redis_event(f"run:{run_id}:stream", {
             "type": "log",
@@ -249,6 +278,30 @@ if HAS_CELERY and app:
         try:
             run_merge(Path(adapter_dir), Path(export_dir), model_id)
             done_msg = f"--- [COMPLETED] Adapters merged successfully to {export_dir} ---"
+
+            if db:
+                if run:
+                    run.status = "COMPLETED"
+                    run.completed_at = datetime.utcnow()
+                    if run.started_at:
+                        run.duration_sec = round((run.completed_at - run.started_at).total_seconds(), 1)
+
+                exp_path = Path(export_dir)
+                sz = round(sum(f.stat().st_size for f in exp_path.glob("*") if f.is_file()) / (1024 * 1024), 2) if exp_path.exists() else 0.0
+                ckpt = Checkpoint(
+                    id=f"ckpt_{run_id}",
+                    run_id=run_id,
+                    name=f"merged-{exp_path.name}",
+                    adapter_type="merged",
+                    base_model=model_id,
+                    disk_path=str(export_dir),
+                    s3_bucket=storage_service.bucket_checkpoints if storage_service.is_s3_enabled() else None,
+                    s3_key=run_id if storage_service.is_s3_enabled() else None,
+                    size_mb=sz,
+                )
+                db.add(ckpt)
+                db.commit()
+
             publish_redis_event(f"run:{run_id}:stream", {
                 "type": "status",
                 "status": "COMPLETED",
@@ -258,6 +311,12 @@ if HAS_CELERY and app:
             return {"status": "success", "run_id": run_id, "export_dir": export_dir}
         except Exception as e:
             logger.error("Merge task failed: %s", e)
+            if db and run:
+                run.status = "FAILED"
+                run.error_message = str(e)
+                run.completed_at = datetime.utcnow()
+                db.commit()
+
             err_msg = f"--- [FAILED] Adapter merge error: {str(e)} ---"
             publish_redis_event(f"run:{run_id}:stream", {
                 "type": "status",
@@ -266,3 +325,7 @@ if HAS_CELERY and app:
                 "message": err_msg,
             })
             raise e
+        finally:
+            if db:
+                db.close()
+

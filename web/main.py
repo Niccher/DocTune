@@ -39,9 +39,10 @@ from web.services.redis_subscriber import start_redis_subscriber, stop_redis_sub
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database tables, storage buckets, and telemetry bridge on application start."""
+    """Initialize database tables, rehydrate historical state, and start telemetry bridge."""
     init_db()
     storage_service.ensure_buckets_exist()
+    state.rehydrate_from_db()
     start_redis_subscriber()
 
 

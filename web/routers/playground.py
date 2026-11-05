@@ -1,9 +1,5 @@
-"""
-web/routers/playground.py
--------------------------
-Evaluation benchmark runner and side-by-side prompt testing playground.
-"""
-
+import time
+from typing import Optional
 from pathlib import Path
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -13,6 +9,8 @@ from pipeline.evaluate import TEST_CASES
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
 from web.templates_config import templates
+from web.db.session import SessionLocal
+from web.db.models import PlaygroundLog, EvaluationBenchmark, Checkpoint
 
 router = APIRouter()
 
@@ -47,6 +45,7 @@ async def run_evaluation_job(adapter_path: str = Form(...)):
     if state.active_job is not None:
         return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
 
+    run_id = f"eval_{int(time.time())}"
     args = ["--adapter-path", adapter_path]
 
     await process_mgr.run_pipeline_script(
@@ -54,7 +53,7 @@ async def run_evaluation_job(adapter_path: str = Form(...)):
         script_module="pipeline.evaluate",
         args=args,
         cwd=PROJECT_ROOT,
-        metadata={"adapter_path": adapter_path},
+        metadata={"adapter_path": adapter_path, "run_id": run_id},
     )
 
     job_id = state.active_job.job_id if state.active_job else "job_eval"
@@ -65,8 +64,9 @@ async def run_evaluation_job(adapter_path: str = Form(...)):
 async def playground_chat(prompt: str = Form(...)):
     """
     Interactive prompt comparison between base pre-trained behavior
-    and grounded fine-tuned private knowledge.
+    and grounded fine-tuned private knowledge with PostgreSQL logging.
     """
+    start_t = time.time()
     clean_p = prompt.strip().lower()
 
     # Search private_docs.jsonl for grounded answers if available
@@ -101,9 +101,131 @@ async def playground_chat(prompt: str = Form(...)):
         base_resp = "Base model response based on general pre-training weights (zero-shot)."
         tuned_resp = f"Grounded response: Verified against your private documents in data/private_docs.jsonl for: \"{prompt}\"."
 
+    latency_ms = round((time.time() - start_t) * 1000, 1)
+    log_id = f"play_{int(time.time()*1000)}"
+
+    # Save prompt interaction to PostgreSQL if available
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            log_entry = PlaygroundLog(
+                id=log_id,
+                prompt=prompt,
+                base_model_response=base_resp,
+                tuned_model_response=tuned_resp,
+                latency_ms=latency_ms,
+            )
+            db.add(log_entry)
+            db.commit()
+            db.close()
+        except Exception:
+            pass
+
     return JSONResponse({
         "status": "success",
+        "log_id": log_id,
         "prompt": prompt,
         "base_response": base_resp,
         "tuned_response": tuned_resp,
+        "latency_ms": latency_ms,
     })
+
+
+@router.post("/api/v1/playground/feedback")
+async def playground_feedback(request: Request):
+    """Save human review rating and notes for a playground prompt comparison."""
+    if not SessionLocal:
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+
+    log_id = ""
+    rating = ""
+    notes = ""
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+        log_id = str(body.get("log_id", ""))
+        rating = str(body.get("rating", ""))
+        notes = str(body.get("notes", ""))
+    else:
+        form = await request.form()
+        log_id = str(form.get("log_id", ""))
+        rating = str(form.get("rating", ""))
+        notes = str(form.get("notes", ""))
+
+    if not log_id or not rating:
+        return JSONResponse({"status": "error", "message": "log_id and rating are required"}, status_code=400)
+
+    db = SessionLocal()
+    try:
+        entry = db.query(PlaygroundLog).filter(PlaygroundLog.id == log_id).first()
+        if not entry:
+            return JSONResponse({"status": "error", "message": "Log entry not found"}, status_code=404)
+        entry.rating = rating.lower().strip()
+        if notes:
+            entry.notes = notes.strip()
+        db.commit()
+        return JSONResponse({"status": "success", "log_id": log_id, "rating": entry.rating})
+    finally:
+        db.close()
+
+
+@router.get("/api/v1/playground/history")
+async def playground_history(limit: int = 20):
+    """Retrieve recent prompt evaluation comparisons and human feedback."""
+    if not SessionLocal:
+        return JSONResponse({"status": "success", "total": 0, "history": []})
+    db = SessionLocal()
+    try:
+        logs = db.query(PlaygroundLog).order_by(PlaygroundLog.created_at.desc()).limit(limit).all()
+        return JSONResponse({
+            "status": "success",
+            "total": len(logs),
+            "history": [
+
+                {
+                    "id": l.id,
+                    "prompt": l.prompt,
+                    "base_response": l.base_model_response,
+                    "tuned_response": l.tuned_model_response,
+                    "rating": l.rating,
+                    "notes": l.notes,
+                    "latency_ms": l.latency_ms,
+                    "created_at": l.created_at.isoformat() if l.created_at else None,
+                }
+                for l in logs
+            ],
+        })
+    finally:
+        db.close()
+
+
+@router.get("/api/v1/benchmarks")
+async def get_benchmarks_api():
+    """Return model evaluation benchmarks leaderboard."""
+    if not SessionLocal:
+        return JSONResponse({"status": "success", "benchmarks": []})
+    db = SessionLocal()
+    try:
+        results = db.query(EvaluationBenchmark).order_by(EvaluationBenchmark.evaluated_at.desc()).all()
+        return JSONResponse({
+            "status": "success",
+            "benchmarks": [
+
+                {
+                    "id": b.id,
+                    "checkpoint_id": b.checkpoint_id,
+                    "run_id": b.run_id,
+                    "test_suite": b.test_suite_name,
+                    "bleu": b.bleu_score,
+                    "rouge_1": b.rouge_1,
+                    "rouge_2": b.rouge_2,
+                    "rouge_l": b.rouge_l,
+                    "perplexity": b.perplexity,
+                    "avg_latency_ms": b.avg_latency_ms,
+                    "evaluated_at": b.evaluated_at.isoformat() if b.evaluated_at else None,
+                }
+                for b in results
+            ]
+        })
+    finally:
+        db.close()
