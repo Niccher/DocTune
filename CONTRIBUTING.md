@@ -48,8 +48,8 @@ pip install -r requirements.txt
 # 4. Copy configuration
 cp .env.example .env
 
-# 5. Launch local Web Studio on port 4444
-python run_web.py --port 4444
+# 5. Launch local Web Studio (default port 80, auto-falls back to 8080 if unprivileged)
+python run_web.py
 ```
 
 ### Docker Compose Mode

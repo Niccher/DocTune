@@ -34,12 +34,13 @@ Run `docker compose ps` to inspect running services:
 
 ```bash
 $ docker compose ps
-NAME                     IMAGE                      COMMAND                  SERVICE          CREATED         STATUS                   PORTS
-doctune-postgres         postgres:16-alpine         "docker-entrypoint.s…"   postgres         2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:5432->5432/tcp
-doctune-redis            redis:7-alpine             "docker-entrypoint.s…"   redis            2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:6379->6379/tcp
-doctune-minio            minio/minio:latest         "/opt/bin/minio serv…"   minio            2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:9000->9000/tcp, 0.0.0.0:9001->9001/tcp
-doctune-web              fine-tuning-web            "python run_web.py -…"   web              2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:4444->4444/tcp
-doctune-celery-worker    fine-tuning-celery_worker  "celery -A web.celer…"   celery_worker    2 minutes ago   Up 2 minutes             
+NAME                     IMAGE                              COMMAND                  SERVICE          CREATED         STATUS                   PORTS
+doctune-postgres         postgres:16-alpine                 "docker-entrypoint.s…"   postgres         2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:5432->5432/tcp
+doctune-redis            redis:7-alpine                     "docker-entrypoint.s…"   redis            2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:6379->6379/tcp
+doctune-minio            cgr.dev/chainguard/minio:latest    "/opt/bin/minio serv…"   minio            2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:9000->9000/tcp, 0.0.0.0:9001->9001/tcp
+doctune-web              doctune-web                        "python run_web.py -…"   web              2 minutes ago   Up 2 minutes (healthy)   0.0.0.0:80->80/tcp
+doctune-celery-worker    doctune-celery-worker              "celery -A web.celer…"   celery_worker    2 minutes ago   Up 2 minutes             
+doctune-dozzle           amir20/dozzle:latest               "/dozzle"                dozzle           2 minutes ago   Up 2 minutes             0.0.0.0:8888->8080/tcp
 ```
 
 ---

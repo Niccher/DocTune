@@ -376,6 +376,25 @@ def test_extract_json_object_resilience():
     assert res3 == {"question": "Q3", "answer": "A3"}
 
 
+def test_storage_service_ensure_buckets():
+    from web.services.storage_service import storage_service
+    buckets = storage_service.ensure_buckets_exist()
+    assert len(buckets) == 4
+    assert storage_service.bucket_docs in buckets
+    assert storage_service.bucket_datasets in buckets
+    assert storage_service.bucket_checkpoints in buckets
+    assert storage_service.bucket_merged in buckets
+
+
+def test_admin_settings_port_80():
+    from web.services.config_service import config_service
+    settings = config_service.get_settings()
+    assert settings["server"]["port"] == 80
+    ok, msg, updated = config_service.save_settings({"server": {"port": 80}})
+    assert ok is True
+    assert updated["server"]["port"] == 80
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
@@ -404,6 +423,8 @@ if __name__ == "__main__":
     test_data_prep_start_cli_args()
     test_normalize_base_url()
     test_extract_json_object_resilience()
+    test_storage_service_ensure_buckets()
+    test_admin_settings_port_80()
     print("All tests passed successfully!")
 
 

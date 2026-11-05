@@ -55,6 +55,36 @@ class StorageService:
         """Check if MinIO/S3 object storage is active."""
         return self.s3_client is not None
 
+    def ensure_buckets_exist(self) -> List[str]:
+        """Ensure all required DocTune buckets exist in S3/MinIO or local filesystem."""
+        required_buckets = [
+            self.bucket_docs,
+            self.bucket_datasets,
+            self.bucket_checkpoints,
+            self.bucket_merged,
+        ]
+        ensured = []
+        if self.is_s3_enabled():
+            try:
+                resp = self.s3_client.list_buckets()
+                existing = [b["Name"] for b in resp.get("Buckets", [])]
+                for bucket in required_buckets:
+                    if bucket not in existing:
+                        try:
+                            self.s3_client.create_bucket(Bucket=bucket)
+                            logger.info("Created MinIO S3 bucket: %s", bucket)
+                        except Exception as e:
+                            logger.warning("Bucket %s already exists or conflict: %s", bucket, e)
+                    ensured.append(bucket)
+            except Exception as e:
+                logger.error("Failed to list/create S3 buckets: %s", e)
+        else:
+            for bucket in required_buckets:
+                target_dir = PROJECT_ROOT / ".storage" / bucket
+                target_dir.mkdir(parents=True, exist_ok=True)
+                ensured.append(bucket)
+        return ensured
+
     def upload_file(self, local_path: Path, bucket: str, s3_key: str) -> bool:
         """Upload a local file to MinIO/S3, or copy to local folder fallback."""
         if not local_path.exists():

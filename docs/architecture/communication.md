@@ -25,7 +25,7 @@ Details of inter-container communication, protocol schemas, and end-to-end task 
 sequenceDiagram
     autonumber
     actor User as Operator / Browser
-    participant Web as FastAPI Studio (:4444)
+    participant Web as FastAPI Studio (:80)
     participant DB as PostgreSQL (:5432)
     participant Redis as Redis Pub/Sub (:6379)
     participant Worker as Celery ML Worker

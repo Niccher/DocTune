@@ -22,7 +22,7 @@ FACTORY_DEFAULTS: Dict[str, Any] = {
     "server": {
         "app_name": "DocTune Studio",
         "host": "0.0.0.0",
-        "port": 4444,
+        "port": 80,
         "log_level": "INFO",
         "max_concurrent_jobs": 1,
         "max_log_buffer_lines": 1000,
@@ -144,7 +144,7 @@ class ConfigService:
                             if k == "app_name":
                                 v = str(v).strip() or "DocTune Studio"
                             elif k == "port":
-                                v = max(1024, min(int(v), 65535))
+                                v = max(1, min(int(v), 65535))
                             elif k == "max_concurrent_jobs":
                                 v = max(1, min(int(v), 4))
                             elif k == "max_log_buffer_lines":

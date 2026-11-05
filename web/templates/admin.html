@@ -101,7 +101,7 @@
             <div class="col-md-4">
               <label class="form-label" for="srv_port">Port</label>
               <input type="number" class="form-control" id="srv_port" name="server.port" value="{{ settings.server.port }}">
-              <div class="form-text">Default port <code>4444</code> avoids collisions with local LLM runners.</div>
+              <div class="form-text">Standard HTTP port <code>80</code> (or custom port).</div>
             </div>
             <div class="col-md-4">
               <label class="form-label" for="srv_loglevel">Log Verbosity</label>
@@ -489,7 +489,7 @@ document.addEventListener("DOMContentLoaded", function () {
       server: {
         app_name: document.getElementById("srv_app_name").value.trim() || "DocTune Studio",
         host: document.getElementById("srv_host").value.trim(),
-        port: parseInt(document.getElementById("srv_port").value) || 4444,
+        port: parseInt(document.getElementById("srv_port").value) || 80,
         log_level: document.getElementById("srv_loglevel").value,
         max_concurrent_jobs: parseInt(document.getElementById("srv_max_jobs").value) || 1,
         max_log_buffer_lines: parseInt(document.getElementById("srv_log_buffer").value) || 1000

@@ -7,11 +7,12 @@
 #         (run from the repository root)
 #
 # Production Standard Ports:
-#   - Web Studio & Dashboard   : Port 4444
+#   - Web Studio & Dashboard   : Port 80 (standard HTTP)
 #   - PostgreSQL Database      : Port 5432
 #   - Redis Message Broker     : Port 6379
 #   - MinIO S3 API Endpoint    : Port 9000
 #   - MinIO S3 Web Console     : Port 9001
+#   - Dozzle Log Monitor       : Port 8888
 #
 # 13-Step Automated Pipeline:
 #   1. Detect Dynamic IP (Public / LAN Fallback)
@@ -19,13 +20,13 @@
 #   3. Git Working Tree Sanity Check & Pull
 #   4. Write / Patch .env Configuration
 #   5. Stop Old Containers & Clear Name Conflicts
-#   6. Build & Start All Containers (Postgres, Redis, MinIO, Web, Celery Worker)
+#   6. Build & Start All Containers (Postgres, Redis, MinIO, Web, Celery Worker, Dozzle)
 #   7. Wait for Database Health (:5432)
 #      7b. Wait for Redis Health (:6379)
 #      7c. Wait for MinIO Health (:9000 / :9001)
 #   8. Initialize Database Tables & Schema
-#   9. Verify MinIO S3 Bucket Provisioning
-#  10. Wait for WebApp Studio Readiness (:4444)
+#   9. Verify MinIO S3 Bucket Provisioning (Native Python S3 API)
+#  10. Wait for WebApp Studio Readiness (:80)
 #  11. Container Permissions & Scratch Directory Enforcement
 #  12. Housekeeping, Docker Storage & Cache Clearing
 #  13. Deployment Timeline Summary & Live Endpoints
@@ -210,15 +211,19 @@ set_env() {
     fi
 }
 
-WEB_PORT=$(grep "^WEB_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "4444")
-[ -z "$WEB_PORT" ] && WEB_PORT="4444"
+WEB_PORT=$(grep "^WEB_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "80")
+[ -z "$WEB_PORT" ] && WEB_PORT="80"
 POSTGRES_PORT=$(grep "^POSTGRES_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "5432")
 REDIS_PORT=$(grep "^REDIS_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "6379")
 MINIO_PORT=$(grep "^MINIO_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "9000")
 MINIO_CONSOLE_PORT=$(grep "^MINIO_CONSOLE_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "9001")
 DOZZLE_PORT=$(grep "^DOZZLE_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "8888")
 
-BASE_URL="http://${DETECTED_IP}:${WEB_PORT}/"
+if [ "$WEB_PORT" = "80" ]; then
+    BASE_URL="http://${DETECTED_IP}/"
+else
+    BASE_URL="http://${DETECTED_IP}:${WEB_PORT}/"
+fi
 
 set_env "WEB_PORT" "$WEB_PORT"
 set_env "POSTGRES_PORT" "$POSTGRES_PORT"
@@ -245,7 +250,7 @@ log "Old containers stopped and naming collisions cleared"
 # ── 6. Build & Start All Containers ───────────────────────────
 section "6. Building & Starting All Containers"
 docker compose up --build -d 2>&1 | tail -25
-log "Containers created and started (postgres, redis, minio, minio_init, web, celery_worker)"
+log "Containers created and started (postgres, redis, minio, web, celery_worker, dozzle)"
 
 echo ""
 echo -e "   ${BOLD}Docker Image Sizes:${RESET}"
@@ -314,11 +319,10 @@ fi
 
 # ── 9. Verify MinIO S3 Bucket Provisioning ─────────────────────
 section "9. Verifying MinIO S3 Bucket Provisioning"
-sleep 2
-docker compose logs minio_init 2>&1 | tail -5 | sed 's/^/   /' || true
+docker compose exec -T web python -c "from web.services.storage_service import storage_service; storage_service.ensure_buckets_exist()" 2>&1 | sed 's/^/   /' || true
 log "MinIO storage buckets verified (doc-tune-raw-docs, doc-tune-datasets, doc-tune-checkpoints, doc-tune-merged-models)"
 
-# ── 10. Wait for WebApp Studio Readiness (:4444) ──────────────
+# ── 10. Wait for WebApp Studio Readiness (:80) ────────────────
 section "10. Waiting for WebApp Studio Readiness (:${WEB_PORT})"
 printf "   Checking Web Studio /health endpoint"
 WEB_READY=false

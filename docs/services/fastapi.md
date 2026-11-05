@@ -37,6 +37,6 @@ web/
 # Activate virtual environment
 source .venv/bin/activate
 
-# Run with auto-reload enabled on port 4444
-uvicorn web.main:app --reload --host 0.0.0.0 --port 4444
+# Run with auto-reload enabled (default port 80, or 8080 for unprivileged local dev)
+python run_web.py --reload
 ```

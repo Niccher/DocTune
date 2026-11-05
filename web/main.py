@@ -38,8 +38,9 @@ from web.services.storage_service import storage_service
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database tables on application start."""
+    """Initialize database tables and storage buckets on application start."""
     init_db()
+    storage_service.ensure_buckets_exist()
 
 
 @app.get("/health")

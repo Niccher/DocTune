@@ -11,11 +11,11 @@ Software engineers and contributors: see [docs/README.md](docs/README.md).
 
 | Component | URL / Endpoint | Purpose |
 | :--- | :--- | :--- |
-| **Web Studio UI** | `http://localhost:4444` | Interactive pipeline dashboard, loss curves, model playground |
+| **Web Studio UI** | `http://localhost` | Interactive pipeline dashboard, loss curves, model playground |
 | **MinIO S3 Console** | `http://localhost:9001` | Object storage browser (User: `minioadmin`, Pass: `minioadmin_secure_password_2026`) |
-| **FastAPI Swagger** | `http://localhost:4444/docs` | Interactive REST API documentation |
+| **FastAPI Swagger** | `http://localhost/docs` | Interactive REST API documentation |
 | **Dozzle Log Monitor**| `http://localhost:8888` | Real-time container log monitoring & streaming |
-| **Health Probe** | `GET http://localhost:4444/health` | Container readiness verification (HTTP 200) |
+| **Health Probe** | `GET http://localhost/health` | Container readiness verification (HTTP 200) |
 | **Redis Broker** | `redis://localhost:6379` | In-memory message broker & Pub/Sub telemetry stream |
 | **PostgreSQL DB** | `postgresql://localhost:5432` | Relational storage for runs, metrics, and checkpoints |
 
@@ -63,7 +63,7 @@ docker compose down
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-web.txt -r requirements.txt
 
-# 2. Launch local web studio (port 4444)
+# 2. Launch local web studio (port 80 / fallback 8080)
 python run_web.py
 ```
 
@@ -73,7 +73,7 @@ Edit `.env` before running `bash scripts/deploy.sh`:
 
 | Variable | Service | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `WEB_PORT` | `web` | `4444` | Web Studio host port |
+| `WEB_PORT` | `web` | `80` | Web Studio host port (standard HTTP) |
 | `HF_TOKEN` | `celery_worker` | *(empty)* | Hugging Face access token for gated models (e.g. Llama 3) |
 | `MAX_CPU_THREADS` | `celery_worker` | `7` | Maximum CPU thread pool (leaving 1 thread for OS) |
 | `MAX_RAM_GB` | `celery_worker` | `13` | RAM allocation budget ceiling in GB |
@@ -84,7 +84,7 @@ Full environment specification: [docs/user/configuration.md](docs/user/configura
 
 ## Something Went Wrong?
 
-- **Port 4444 or 5432 in use**: Update `WEB_PORT` or `POSTGRES_PORT` in `.env` and re-run `bash scripts/deploy.sh`.
+- **Port 80 or 5432 in use**: Update `WEB_PORT` or `POSTGRES_PORT` in `.env` and re-run `bash scripts/deploy.sh`.
 - **Low disk space error**: DocTune requires $\ge 15\text{ GB}$ free disk for checkpoints. Run `docker system prune -af` to reclaim space.
 - **Out of Memory during training**: Lower `per_device_train_batch_size` to 1 or 2, and switch method to `QLoRA (4-bit)`.
 - Full troubleshooting guide: [docs/user/troubleshooting.md](docs/user/troubleshooting.md).

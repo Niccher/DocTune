@@ -29,7 +29,7 @@ flowchart TB
         end
 
         GCS[("Google Cloud Storage (GCS Bucket)\n'gs://doctune-checkpoints-prod'")]
-        CloudDNS["Cloud DNS / Load Balancer (:4444)"]
+        CloudDNS["Cloud DNS / Load Balancer (:80)"]
     end
 
     CloudDNS --> GCE
@@ -59,12 +59,17 @@ gcloud compute instances create doctune-studio-prod \
     --tags="http-server,https-server,doctune-studio"
 ```
 
-### Step 2: Open Firewall for DocTune Studio Port 4444
+### Step 2: Open Firewall for DocTune Studio Port 80 & Auxiliary Services
 ```bash
-gcloud compute firewall-rules create allow-doctune-studio \
-    --allow=tcp:4444,tcp:9001 \
-    --target-tags="doctune-studio" \
-    --description="Allow traffic to DocTune Web Studio and MinIO Console"
+gcloud compute firewall-rules create allow-doctune \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:80,tcp:443,tcp:9001,tcp:8888 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags="doctune-studio,http-server" \
+    --description="Allow HTTP (80), HTTPS (443), MinIO Console (9001), and Dozzle (8888)"
 ```
 
 ### Step 3: Connect and Run One-Click Deployment
@@ -73,8 +78,8 @@ gcloud compute firewall-rules create allow-doctune-studio \
 gcloud compute ssh doctune-studio-prod --zone="us-central1-a"
 
 # Clone repository
-git clone https://github.com/Niccher/Fine-Tuning.git
-cd Fine-Tuning
+git clone https://github.com/Niccher/DocTune.git
+cd DocTune
 
 # Run automated deployment
 bash scripts/deploy.sh

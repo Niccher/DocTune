@@ -5,9 +5,9 @@
 #   1. postgres      : PostgreSQL 16 relational database (runs, metrics, metadata)
 #   2. redis         : Redis 7 broker & real-time telemetry Pub/Sub
 #   3. minio         : MinIO S3-compatible object store (raw docs, datasets, weights)
-#   4. minio_init    : S3 buckets auto-provisioner (ephemeral)
-#   5. web           : FastAPI Studio & AdminLTE v4 UI (port 4444)
-#   6. celery_worker : PyTorch distributed training & data preparation worker
+#   4. web           : FastAPI Studio & AdminLTE v4 UI (port 80)
+#   5. celery_worker : PyTorch distributed training & data preparation worker
+#   6. dozzle        : Real-time container log viewer & monitoring (port 8888)
 # ==============================================================================
 
 services:
@@ -75,27 +75,7 @@ services:
     networks:
       - doctune-net
 
-  # ── 4. MinIO S3 Bucket Provisioner (Ephemeral) ──────────────────────────────
-  minio_init:
-    image: minio/mc:latest
-    container_name: doctune-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin_secure_password_2026};
-      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_DOCS:-doc-tune-raw-docs};
-      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_DATASETS:-doc-tune-datasets};
-      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_CHECKPOINTS:-doc-tune-checkpoints};
-      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET_MERGED:-doc-tune-merged-models};
-      echo 'MinIO buckets successfully provisioned and verified.';
-      exit 0;
-      "
-    networks:
-      - doctune-net
-
-  # ── 5. Web Studio & FastAPI Application ─────────────────────────────────────
+  # ── 4. Web Studio & FastAPI Application ─────────────────────────────────────
   web:
     build:
       context: .
@@ -103,7 +83,7 @@ services:
     container_name: doctune-web
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-4444}:4444"
+      - "${WEB_PORT:-80}:80"
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,7 +94,7 @@ services:
     env_file:
       - .env
     environment:
-      - PORT=4444
+      - PORT=80
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
       - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
       - REDIS_URL=redis://redis:6379/0
@@ -125,7 +105,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:4444/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -133,7 +113,7 @@ services:
     networks:
       - doctune-net
 
-  # ── 6. Celery ML Fine-Tuning Worker ─────────────────────────────────────────
+  # ── 5. Celery ML Fine-Tuning Worker ─────────────────────────────────────────
   celery_worker:
     build:
       context: .
@@ -165,7 +145,7 @@ services:
     networks:
       - doctune-net
 
-  # ── 7. Dozzle Real-Time Container Log Viewer & Monitoring ─────────────────
+  # ── 6. Dozzle Real-Time Container Log Viewer & Monitoring ─────────────────
   dozzle:
     image: amir20/dozzle:latest
     container_name: doctune-dozzle

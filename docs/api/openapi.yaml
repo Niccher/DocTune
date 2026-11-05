@@ -4,8 +4,8 @@ info:
   description: Canonical versioned API specifications for DocTune Studio private document fine-tuning platform.
   version: 1.0.0
 servers:
-  - url: http://localhost:4444
-    description: Local Docker & Native Web Studio
+  - url: http://localhost
+    description: Production & Local Web Studio (Port 80)
 paths:
   /health:
     get:
