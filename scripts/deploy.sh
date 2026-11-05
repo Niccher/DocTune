@@ -213,6 +213,10 @@ set_env() {
 
 WEB_PORT=$(grep "^WEB_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "80")
 [ -z "$WEB_PORT" ] && WEB_PORT="80"
+if [ "$WEB_PORT" = "4444" ]; then
+    log "Migrating legacy WEB_PORT=4444 to standard HTTP port 80..."
+    WEB_PORT="80"
+fi
 POSTGRES_PORT=$(grep "^POSTGRES_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "5432")
 REDIS_PORT=$(grep "^REDIS_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "6379")
 MINIO_PORT=$(grep "^MINIO_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "9000")
