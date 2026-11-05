@@ -27,6 +27,19 @@ async def playground_view(request: Request):
     if (cfg.output_merged / "config.json").exists():
         available_adapters.append({"name": "Merged Standalone Model", "path": str(cfg.output_merged)})
 
+    # Also include any checkpoints registered in PostgreSQL that exist on disk
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            ckpts = db.query(Checkpoint).all()
+            for c in ckpts:
+                p = Path(c.disk_path) if c.disk_path else None
+                if p and p.exists() and not any(a["path"] == str(p) for a in available_adapters):
+                    available_adapters.append({"name": c.name, "path": str(p)})
+            db.close()
+        except Exception:
+            pass
+
     return templates.TemplateResponse(
         request=request,
         name="playground.html",

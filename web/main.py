@@ -36,6 +36,7 @@ app.include_router(admin.router)
 from web.db.session import init_db
 from web.services.storage_service import storage_service
 from web.services.redis_subscriber import start_redis_subscriber, stop_redis_subscriber
+from web.state import state
 
 @app.on_event("startup")
 async def startup_event():

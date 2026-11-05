@@ -241,6 +241,13 @@ def test_healthcheck_api():
     assert data["version"] == "1.0.0"
 
 
+def test_app_lifespan_startup_and_shutdown():
+    with TestClient(app) as test_client:
+        res = test_client.get("/health")
+        assert res.status_code == 200
+        assert res.json()["status"] == "healthy"
+
+
 def test_teacher_presets_api():
     res = client.get("/api/v1/teacher/presets")
     assert res.status_code == 200
@@ -568,9 +575,242 @@ def test_benchmarks_and_checkpoints_api():
     assert any(c["id"] == "test_ckpt_1" for c in c_data["checkpoints"])
 
 
+def test_storage_service_directory_and_crud():
+    import tempfile
+    from web.services.storage_service import storage_service
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        # Create dummy directory structure
+        sub_dir = tmp_path / "nested"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "adapter_config.json").write_text('{"r": 16}', encoding="utf-8")
+        (sub_dir / "weights.safetensors").write_bytes(b"dummy_weights_12345")
+
+        # 1. Test upload_dir
+        prefix = "unit_test_run_001"
+        ok = storage_service.upload_dir(tmp_path, storage_service.bucket_checkpoints, s3_prefix=prefix)
+        assert ok is True
+
+        # 2. Test list_objects with prefix
+        objs = storage_service.list_objects(storage_service.bucket_checkpoints, prefix=prefix)
+        keys = [o["key"] for o in objs]
+        assert any("adapter_config.json" in k for k in keys)
+        assert any("weights.safetensors" in k for k in keys)
+
+        # 3. Test download_dir
+        download_target = tmp_path / "downloaded"
+        ok = storage_service.download_dir(storage_service.bucket_checkpoints, prefix, download_target)
+        assert ok is True
+        assert (download_target / "adapter_config.json").exists()
+        assert (download_target / "nested" / "weights.safetensors").exists()
+        assert (download_target / "nested" / "weights.safetensors").read_bytes() == b"dummy_weights_12345"
+
+        # 4. Test sync_bucket_to_dir
+        sync_target = tmp_path / "synced"
+        synced_count = storage_service.sync_bucket_to_dir(storage_service.bucket_checkpoints, sync_target, prefix=prefix)
+        assert synced_count >= 2
+
+        # 5. Test delete_dir
+        ok = storage_service.delete_dir(storage_service.bucket_checkpoints, prefix=prefix)
+        assert ok is True
+        objs_after = storage_service.list_objects(storage_service.bucket_checkpoints, prefix=prefix)
+        assert len(objs_after) == 0
+
+
+def test_storage_service_s3_mocked():
+    from unittest.mock import MagicMock
+    from web.services.storage_service import storage_service
+    import tempfile
+
+    old_client = storage_service.s3_client
+    mock_s3 = MagicMock()
+    storage_service.s3_client = mock_s3
+
+    try:
+        assert storage_service.is_s3_enabled() is True
+
+        # 1. ensure_buckets_exist
+        mock_s3.list_buckets.return_value = {"Buckets": [{"Name": "doc-tune-raw-docs"}]}
+        ensured = storage_service.ensure_buckets_exist()
+        assert len(ensured) == 4
+        assert mock_s3.create_bucket.call_count >= 3
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            f1 = tmp_path / "model.safetensors"
+            f1.write_bytes(b"mock_weights")
+
+            # 2. upload_file & download_file
+            assert storage_service.upload_file(f1, "b", "k") is True
+            mock_s3.upload_file.assert_called_with(str(f1), "b", "k")
+
+            dl_file = tmp_path / "downloaded.safetensors"
+            assert storage_service.download_file("b", "k", dl_file) is True
+            mock_s3.download_file.assert_called_with("b", "k", str(dl_file))
+
+            # 3. generate_presigned_download_url
+            mock_s3.generate_presigned_url.return_value = "https://s3.example.com/presigned"
+            url = storage_service.generate_presigned_download_url("b", "k")
+            assert url == "https://s3.example.com/presigned"
+
+            # 4. list_objects with paginator
+            mock_paginator = MagicMock()
+            mock_paginator.paginate.return_value = [
+                {"Contents": [{"Key": "run1/weights.safetensors", "Size": 1024, "LastModified": MagicMock(isoformat=lambda: "2026-11-05T00:00:00")}]}
+            ]
+            mock_s3.get_paginator.return_value = mock_paginator
+            objs = storage_service.list_objects("b", prefix="run1")
+            assert len(objs) == 1
+            assert objs[0]["key"] == "run1/weights.safetensors"
+
+            # 5. delete_file & delete_dir
+            assert storage_service.delete_file("b", "k") is True
+            mock_s3.delete_object.assert_called_with(Bucket="b", Key="k")
+
+            assert storage_service.delete_dir("b", prefix="run1") is True
+            mock_s3.delete_objects.assert_called_once()
+
+            # 6. upload_dir & download_dir
+            assert storage_service.upload_dir(tmp_path, "b", s3_prefix="prefix") is True
+            assert storage_service.download_dir("b", "run1", tmp_path / "out") is True
+    finally:
+        storage_service.s3_client = old_client
+
+
+def test_document_storage_upload_delete_and_download():
+    from io import BytesIO
+    from web.db.session import SessionLocal
+    from web.db.models import UploadedDocument
+    from web.services.storage_service import storage_service
+
+    test_filename = "test_upload_doc.csv"
+    file_content = b"col1,col2\nval1,val2\n"
+
+    # 1. Upload via API
+    resp = client.post(
+        "/api/v1/documents/upload",
+        files=[("files", (test_filename, BytesIO(file_content), "text/csv"))],
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert test_filename in data["uploaded"]
+
+    # 2. Check Database record has s3_bucket & s3_key
+    with SessionLocal() as db:
+        doc = db.query(UploadedDocument).filter(UploadedDocument.filename == test_filename).first()
+        assert doc is not None
+        assert doc.s3_bucket == storage_service.bucket_docs
+        assert doc.s3_key == test_filename
+
+    # 3. Download URL endpoint
+    resp = client.get(f"/api/v1/documents/{test_filename}/download-url")
+    assert resp.status_code == 200
+    d_data = resp.json()
+    assert d_data["status"] in ["success", "local"]
+    assert d_data["filename"] == test_filename
+
+    # 4. Delete endpoint
+    resp = client.post("/api/v1/documents/delete", data={"filename": test_filename})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+
+    # Verify deleted from DB
+    with SessionLocal() as db:
+        doc = db.query(UploadedDocument).filter(UploadedDocument.filename == test_filename).first()
+        assert doc is None
+
+
+def test_dataset_storage_export_and_download():
+    from pipeline.common import DEFAULT_JSONL
+    from web.db.session import SessionLocal
+    from web.db.models import DatasetSample
+
+    orig_content = DEFAULT_JSONL.read_text(encoding="utf-8") if DEFAULT_JSONL.exists() else None
+    try:
+        with SessionLocal() as db:
+            sample = DatasetSample(
+                id="test_export_sample_1",
+                system_prompt="sys",
+                user_instruction="What is QLoRA?",
+                assistant_response="Quantized Low-Rank Adaptation.",
+                status="APPROVED",
+            )
+            db.merge(sample)
+            db.commit()
+
+        # 1. Export JSONL
+        resp = client.post("/api/v1/dataset/export-jsonl")
+        assert resp.status_code == 200
+        exp_data = resp.json()
+        assert exp_data["status"] == "success"
+        assert exp_data["exported_count"] >= 1
+        assert "s3_bucket" in exp_data
+        assert exp_data["s3_key"] == "private_docs.jsonl"
+
+        # 2. Download URL endpoint
+        resp = client.get("/api/v1/dataset/download-url")
+        assert resp.status_code == 200
+        dl_data = resp.json()
+        assert dl_data["status"] in ["success", "local"]
+        assert dl_data["filename"] == "private_docs.jsonl"
+    finally:
+        if orig_content is not None:
+            DEFAULT_JSONL.write_text(orig_content, encoding="utf-8")
+
+
+def test_checkpoint_s3_endpoints():
+    from web.db.session import SessionLocal
+    from web.db.models import Checkpoint
+    from web.services.storage_service import storage_service
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        (tmp_path / "adapter_config.json").write_text('{"base_model_name_or_path": "meta-llama/Llama-3-8B"}')
+
+        run_id = "test_s3_run_999"
+        storage_service.upload_dir(tmp_path, storage_service.bucket_checkpoints, s3_prefix=run_id)
+
+        with SessionLocal() as db:
+            ckpt = Checkpoint(
+                id=f"ckpt_{run_id}",
+                run_id=run_id,
+                name="Llama-3-8B-QLORA",
+                adapter_type="qlora",
+                disk_path=str(tmp_path),
+                s3_bucket=storage_service.bucket_checkpoints,
+                s3_key=run_id,
+                size_mb=12.5,
+            )
+            db.merge(ckpt)
+            db.commit()
+
+        # Test download-url endpoint
+        resp = client.get(f"/api/v1/models/checkpoints/ckpt_{run_id}/download-url")
+        assert resp.status_code == 200
+        d_data = resp.json()
+        assert d_data["status"] == "success"
+        assert d_data["checkpoint_id"] == f"ckpt_{run_id}"
+        assert len(d_data["files"]) >= 1
+
+        # Test pull endpoint
+        pull_target = tmp_path / "pulled_local"
+        with SessionLocal() as db:
+            ckpt_rec = db.query(Checkpoint).filter(Checkpoint.id == f"ckpt_{run_id}").first()
+            ckpt_rec.disk_path = str(pull_target)
+            db.commit()
+
+        resp = client.post(f"/api/v1/models/checkpoints/ckpt_{run_id}/pull")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
+        assert (pull_target / "adapter_config.json").exists()
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
+    test_app_lifespan_startup_and_shutdown()
     test_dashboard_route()
     test_data_prep_route()
     test_training_route()
@@ -597,6 +837,11 @@ if __name__ == "__main__":
     test_normalize_base_url()
     test_extract_json_object_resilience()
     test_storage_service_ensure_buckets()
+    test_storage_service_directory_and_crud()
+    test_storage_service_s3_mocked()
+    test_document_storage_upload_delete_and_download()
+    test_dataset_storage_export_and_download()
+    test_checkpoint_s3_endpoints()
     test_admin_settings_port_80()
     test_rehydrate_from_db()
     test_system_settings_db_persistence()

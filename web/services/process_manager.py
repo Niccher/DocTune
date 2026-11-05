@@ -175,6 +175,8 @@ class ProcessManager:
                                 if method:
                                     out_dir = PROJECT_ROOT / f"output_{method.lower()}"
                                     if out_dir.exists():
+                                        from web.services.storage_service import storage_service
+                                        storage_service.upload_dir(out_dir, storage_service.bucket_checkpoints, s3_prefix=run_id)
                                         sz = round(sum(f.stat().st_size for f in out_dir.glob("*") if f.is_file()) / (1024 * 1024), 2)
                                         db_r.add(Checkpoint(
                                             id=f"ckpt_{run_id}",
@@ -183,6 +185,8 @@ class ProcessManager:
                                             adapter_type=method.lower(),
                                             base_model=run_rec.model_id,
                                             disk_path=str(out_dir),
+                                            s3_bucket=storage_service.bucket_checkpoints,
+                                            s3_key=run_id,
                                             size_mb=sz,
                                         ))
                                 elif state.active_job.job_type == JobType.MERGING:
@@ -190,6 +194,9 @@ class ProcessManager:
                                     export_path = Path(export_dir_str)
                                     if not export_path.is_absolute():
                                         export_path = PROJECT_ROOT / export_dir_str
+                                    if export_path.exists():
+                                        from web.services.storage_service import storage_service
+                                        storage_service.upload_dir(export_path, storage_service.bucket_merged, s3_prefix=f"merged_{run_id}")
                                     sz = round(sum(f.stat().st_size for f in export_path.glob("*") if f.is_file()) / (1024 * 1024), 2) if export_path.exists() else 0.0
                                     db_r.add(Checkpoint(
                                         id=f"ckpt_{run_id}",
@@ -198,8 +205,15 @@ class ProcessManager:
                                         adapter_type="merged",
                                         base_model=run_rec.model_id if run_rec else "base",
                                         disk_path=str(export_path),
+                                        s3_bucket=storage_service.bucket_merged,
+                                        s3_key=f"merged_{run_id}",
                                         size_mb=sz,
                                     ))
+                                elif state.active_job.job_type == JobType.DATA_PREP:
+                                    from pipeline.common import DEFAULT_JSONL
+                                    from web.services.storage_service import storage_service
+                                    if DEFAULT_JSONL.exists():
+                                        storage_service.upload_file(DEFAULT_JSONL, storage_service.bucket_datasets, "private_docs.jsonl")
 
                             elif returncode == -signal.SIGINT or returncode == -signal.SIGTERM:
                                 run_rec.status = "ABORTED"

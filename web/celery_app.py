@@ -132,22 +132,30 @@ if HAS_CELERY and app:
             except Exception:
                 pass
 
+            # Ensure training dataset is present (pull from MinIO/S3 if needed)
+            ds_path = Path(cfg.dataset_path)
+            if not ds_path.exists():
+                sync_msg = f"--- [STORAGE] Dataset not found on worker disk, downloading from S3: {storage_service.bucket_datasets}/private_docs.jsonl ---"
+                publish_redis_event(f"run:{run_id}:stream", {
+                    "type": "log",
+                    "line": sync_msg,
+                    "message": sync_msg,
+                })
+                storage_service.download_file(storage_service.bucket_datasets, "private_docs.jsonl", ds_path)
+
             # Execute pipeline
             output_dir = getattr(cfg, f"output_{method.lower()}", cfg.output_qlora)
             trainer.train(cfg, callbacks=cb_list)
 
-            # Upload artifacts to MinIO
-            if storage_service.is_s3_enabled() and output_dir.exists():
-                upload_msg = f"--- [MINIO] Streaming trained weights to S3 bucket: {storage_service.bucket_checkpoints} ---"
+            # Upload artifacts to MinIO / S3 object storage
+            if output_dir.exists():
+                upload_msg = f"--- [STORAGE] Uploading trained weights to S3 bucket: {storage_service.bucket_checkpoints}/{run_id} ---"
                 publish_redis_event(f"run:{run_id}:stream", {
                     "type": "log",
                     "line": upload_msg,
                     "message": upload_msg,
                 })
-                for f in output_dir.glob("*"):
-                    if f.is_file():
-                        s3_key = f"{run_id}/{f.name}"
-                        storage_service.upload_file(f, storage_service.bucket_checkpoints, s3_key)
+                storage_service.upload_dir(output_dir, storage_service.bucket_checkpoints, s3_prefix=run_id)
 
             if run:
                 run.status = "COMPLETED"
@@ -164,8 +172,8 @@ if HAS_CELERY and app:
                         adapter_type=method.lower(),
                         base_model=model_id,
                         disk_path=str(output_dir),
-                        s3_bucket=storage_service.bucket_checkpoints if storage_service.is_s3_enabled() else None,
-                        s3_key=run_id if storage_service.is_s3_enabled() else None,
+                        s3_bucket=storage_service.bucket_checkpoints,
+                        s3_key=run_id,
                         size_mb=sz,
                     )
                     db.add(ckpt)
@@ -276,8 +284,28 @@ if HAS_CELERY and app:
             "message": start_msg,
         })
         try:
-            run_merge(Path(adapter_dir), Path(export_dir), model_id)
+            ad_path = Path(adapter_dir)
+            if not (ad_path / "adapter_config.json").exists():
+                sync_msg = f"--- [STORAGE] Pulling adapter weights from S3: {storage_service.bucket_checkpoints}/{ad_path.name} ---"
+                publish_redis_event(f"run:{run_id}:stream", {
+                    "type": "log",
+                    "line": sync_msg,
+                    "message": sync_msg,
+                })
+                storage_service.download_dir(storage_service.bucket_checkpoints, ad_path.name, ad_path)
+
+            run_merge(ad_path, Path(export_dir), model_id)
             done_msg = f"--- [COMPLETED] Adapters merged successfully to {export_dir} ---"
+
+            exp_path = Path(export_dir)
+            if exp_path.exists():
+                upload_msg = f"--- [STORAGE] Uploading merged model to S3 bucket: {storage_service.bucket_merged}/merged_{run_id} ---"
+                publish_redis_event(f"run:{run_id}:stream", {
+                    "type": "log",
+                    "line": upload_msg,
+                    "message": upload_msg,
+                })
+                storage_service.upload_dir(exp_path, storage_service.bucket_merged, s3_prefix=f"merged_{run_id}")
 
             if db:
                 if run:
@@ -286,7 +314,6 @@ if HAS_CELERY and app:
                     if run.started_at:
                         run.duration_sec = round((run.completed_at - run.started_at).total_seconds(), 1)
 
-                exp_path = Path(export_dir)
                 sz = round(sum(f.stat().st_size for f in exp_path.glob("*") if f.is_file()) / (1024 * 1024), 2) if exp_path.exists() else 0.0
                 ckpt = Checkpoint(
                     id=f"ckpt_{run_id}",
@@ -295,8 +322,8 @@ if HAS_CELERY and app:
                     adapter_type="merged",
                     base_model=model_id,
                     disk_path=str(export_dir),
-                    s3_bucket=storage_service.bucket_checkpoints if storage_service.is_s3_enabled() else None,
-                    s3_key=run_id if storage_service.is_s3_enabled() else None,
+                    s3_bucket=storage_service.bucket_merged,
+                    s3_key=f"merged_{run_id}",
                     size_mb=sz,
                 )
                 db.add(ckpt)

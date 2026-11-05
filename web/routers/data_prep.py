@@ -108,6 +108,9 @@ def load_dataset_samples(offset: int = 0, limit: int = 25, status: Optional[str]
 
     # 2. Disk fallback & seed DB
     if not DEFAULT_JSONL.exists():
+        storage_service.download_file(storage_service.bucket_datasets, "private_docs.jsonl", DEFAULT_JSONL)
+
+    if not DEFAULT_JSONL.exists():
         return {"total": 0, "samples": []}
 
     samples = []
@@ -270,13 +273,10 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                 file_size = dest.stat().st_size
                 uploaded.append(f.filename)
 
-                # MinIO upload if configured
-                s3_bucket = None
-                s3_key = None
-                if storage_service.is_s3_enabled():
-                    s3_bucket = storage_service.bucket_docs
-                    s3_key = f.filename
-                    storage_service.upload_file(dest, s3_bucket, s3_key)
+                # Object storage upload (MinIO S3 or transparent .storage fallback)
+                s3_bucket = storage_service.bucket_docs
+                s3_key = f.filename
+                storage_service.upload_file(dest, s3_bucket, s3_key)
 
                 # PostgreSQL metadata record
                 if db:
@@ -287,6 +287,8 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                         existing.disk_path = str(dest)
                         existing.size_bytes = file_size
                         existing.status = "READY"
+                        existing.s3_bucket = s3_bucket
+                        existing.s3_key = s3_key
                     else:
                         doc_rec = UploadedDocument(
                             id=doc_id,
@@ -315,9 +317,8 @@ async def delete_document(filename: str = Form(...)):
     if str(target).startswith(str(RAW_DOCS_DIR.resolve())) and target.exists():
         target.unlink()
 
-        # Delete from MinIO if configured
-        if storage_service.is_s3_enabled():
-            storage_service.delete_file(storage_service.bucket_docs, filename)
+        # Delete from MinIO/S3 or local fallback
+        storage_service.delete_file(storage_service.bucket_docs, filename)
 
         # Delete from PostgreSQL
         if SessionLocal:
@@ -331,6 +332,23 @@ async def delete_document(filename: str = Form(...)):
 
         return JSONResponse({"status": "deleted", "filename": filename})
     return JSONResponse({"status": "error", "message": "File not found or invalid path"}, status_code=400)
+
+
+@router.get("/api/v1/documents/{filename}/download-url")
+async def get_document_download_url(filename: str):
+    """Generate a presigned download URL for a raw document or serve file."""
+    if storage_service.is_s3_enabled():
+        url = storage_service.generate_presigned_download_url(
+            bucket=storage_service.bucket_docs,
+            s3_key=filename,
+            expires_in=3600,
+        )
+        if url:
+            return JSONResponse({"status": "success", "url": url, "filename": filename})
+    dest = RAW_DOCS_DIR / filename
+    if dest.exists():
+        return JSONResponse({"status": "local", "path": str(dest), "filename": filename})
+    return JSONResponse({"status": "error", "message": "Document not found"}, status_code=404)
 
 
 class SampleEditPayload(BaseModel):
@@ -426,9 +444,35 @@ async def export_curated_dataset():
                 msgs.append({"role": "assistant", "content": s.assistant_response})
                 f.write(json.dumps({"messages": msgs}) + "\n")
                 count += 1
-        return JSONResponse({"status": "success", "exported_count": count, "path": str(DEFAULT_JSONL)})
+
+        # Upload to MinIO/S3 datasets bucket
+        storage_service.upload_file(DEFAULT_JSONL, storage_service.bucket_datasets, "private_docs.jsonl")
+
+        return JSONResponse({
+            "status": "success",
+            "exported_count": count,
+            "path": str(DEFAULT_JSONL),
+            "s3_bucket": storage_service.bucket_datasets,
+            "s3_key": "private_docs.jsonl",
+        })
     finally:
         db.close()
+
+
+@router.get("/api/v1/dataset/download-url")
+async def get_dataset_download_url():
+    """Generate a presigned download URL for the instruction dataset."""
+    if storage_service.is_s3_enabled():
+        url = storage_service.generate_presigned_download_url(
+            bucket=storage_service.bucket_datasets,
+            s3_key="private_docs.jsonl",
+            expires_in=3600,
+        )
+        if url:
+            return JSONResponse({"status": "success", "url": url, "filename": "private_docs.jsonl"})
+    if DEFAULT_JSONL.exists():
+        return JSONResponse({"status": "local", "path": str(DEFAULT_JSONL), "filename": "private_docs.jsonl"})
+    return JSONResponse({"status": "error", "message": "Dataset not found"}, status_code=404)
 
 
 @router.post("/api/v1/data-prep/start")

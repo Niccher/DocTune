@@ -74,6 +74,9 @@ async def models_view(request: Request):
                     "step": r.step,
                     "val_loss": r.val_loss,
                     "disk_path": r.disk_path,
+                    "s3_bucket": r.s3_bucket,
+                    "s3_key": r.s3_key,
+                    "size_mb": r.size_mb,
                     "base_model": r.base_model,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                 })
@@ -113,6 +116,9 @@ async def list_checkpoints():
                     "step": r.step,
                     "val_loss": r.val_loss,
                     "disk_path": r.disk_path,
+                    "s3_bucket": r.s3_bucket,
+                    "s3_key": r.s3_key,
+                    "size_mb": r.size_mb,
                     "base_model": r.base_model,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                 })
@@ -120,6 +126,87 @@ async def list_checkpoints():
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
     return JSONResponse({"status": "success", "checkpoints": checkpoints})
+
+
+@router.get("/api/v1/models/checkpoints/{checkpoint_id}/download-url")
+async def get_checkpoint_download_url(checkpoint_id: str):
+    """Generate presigned S3 download URLs for checkpoint files."""
+    from web.services.storage_service import storage_service
+    from web.db.session import SessionLocal
+    from web.db.models import Checkpoint
+
+    if not SessionLocal:
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+
+    db = SessionLocal()
+    try:
+        ckpt = db.query(Checkpoint).filter(Checkpoint.id == checkpoint_id).first()
+        if not ckpt:
+            return JSONResponse({"status": "error", "message": "Checkpoint not found"}, status_code=404)
+
+        if not ckpt.s3_bucket or not ckpt.s3_key:
+            return JSONResponse({
+                "status": "local_only",
+                "disk_path": ckpt.disk_path,
+                "message": "Checkpoint is stored only on local disk.",
+            })
+
+        objs = storage_service.list_objects(ckpt.s3_bucket, prefix=ckpt.s3_key)
+        files = []
+        for o in objs:
+            url = storage_service.generate_presigned_download_url(
+                bucket=ckpt.s3_bucket,
+                s3_key=o["key"],
+                expires_in=3600,
+            )
+            files.append({
+                "key": o["key"],
+                "filename": Path(o["key"]).name,
+                "size": o["size"],
+                "download_url": url,
+            })
+
+        return JSONResponse({
+            "status": "success",
+            "checkpoint_id": checkpoint_id,
+            "bucket": ckpt.s3_bucket,
+            "prefix": ckpt.s3_key,
+            "files": files,
+        })
+    finally:
+        db.close()
+
+
+@router.post("/api/v1/models/checkpoints/{checkpoint_id}/pull")
+async def pull_checkpoint_local(checkpoint_id: str):
+    """Download checkpoint files from MinIO/S3 down to the local worker/web node."""
+    from web.services.storage_service import storage_service
+    from web.db.session import SessionLocal
+    from web.db.models import Checkpoint
+
+    if not SessionLocal:
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+
+    db = SessionLocal()
+    try:
+        ckpt = db.query(Checkpoint).filter(Checkpoint.id == checkpoint_id).first()
+        if not ckpt:
+            return JSONResponse({"status": "error", "message": "Checkpoint not found"}, status_code=404)
+
+        if not ckpt.s3_bucket or not ckpt.s3_key:
+            return JSONResponse({"status": "error", "message": "Checkpoint has no S3 storage location"}, status_code=400)
+
+        target_dir = Path(ckpt.disk_path) if ckpt.disk_path else PROJECT_ROOT / f"checkpoints/{ckpt.id}"
+        success = storage_service.download_dir(ckpt.s3_bucket, ckpt.s3_key, target_dir)
+        if success:
+            return JSONResponse({
+                "status": "success",
+                "message": f"Checkpoint pulled successfully to {target_dir}",
+                "local_path": str(target_dir),
+            })
+        return JSONResponse({"status": "error", "message": "Failed to pull files from object storage"}, status_code=500)
+    finally:
+        db.close()
 
 
 @router.post("/api/v1/models/merge")

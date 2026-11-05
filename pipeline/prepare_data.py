@@ -294,6 +294,15 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         output_file.unlink()
         print(f"Removed previous {output_file}")
 
+    # 1. Sync documents from MinIO/S3 object storage if configured
+    try:
+        from web.services.storage_service import storage_service
+        synced_count = storage_service.sync_bucket_to_dir(storage_service.bucket_docs, docs_dir)
+        if synced_count > 0:
+            print(f"[STORAGE] Synchronized {synced_count} documents from S3 bucket: {storage_service.bucket_docs}")
+    except Exception:
+        pass
+
     patterns = ["*.pdf", "*.docx", "*.csv", "*.PDF", "*.DOCX", "*.CSV"]
     all_files = []
     for pattern in patterns:
@@ -311,8 +320,6 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
     print(f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
     client = OpenAI(base_url=effective_url, api_key=effective_key)
 
-
-
     total_pairs = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
@@ -325,6 +332,15 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
             pairs = future.result()
             total_pairs += pairs
             print(f"  +{pairs} pairs  (running total: {total_pairs})")
+
+    # 2. Upload generated JSONL to MinIO/S3 datasets bucket
+    if output_file.exists():
+        try:
+            from web.services.storage_service import storage_service
+            storage_service.upload_file(output_file, storage_service.bucket_datasets, output_file.name)
+            print(f"[STORAGE] Uploaded dataset artifact {output_file.name} to S3 bucket: {storage_service.bucket_datasets}")
+        except Exception:
+            pass
 
     print("\n" + "=" * 60)
     print(f"Finished. Wrote {total_pairs} instruction pairs → {output_file}")
