@@ -239,17 +239,22 @@ log "Redis Port                -> ${REDIS_PORT}"
 log "MinIO S3 API / Console    -> ${MINIO_PORT} / ${MINIO_CONSOLE_PORT}"
 log "Dozzle Log Monitor        -> http://${DETECTED_IP}:${DOZZLE_PORT}"
 
-# ── 5. Stop Old Containers & Clear Conflicts ──────────────────
-section "5. Stopping Old Containers & Clearing Name Conflicts"
-docker compose down --remove-orphans 2>&1 | tail -3 || true
-
-# Explicitly clean container name conflicts
-docker rm -f doctune-web doctune-celery-worker doctune-postgres doctune-redis doctune-minio doctune-minio-init doctune-dozzle 2>/dev/null || true
-log "Old containers stopped and naming collisions cleared"
+# ── 5. Preparing Container Environment ────────────────────────
+section "5. Preparing Container Environment"
+if [[ "${1:-}" =~ ^(--hard-reset|--clean|-f)$ ]]; then
+    warn "Hard reset requested: stopping and removing all containers..."
+    docker compose down --remove-orphans 2>&1 | tail -3 || true
+    docker rm -f doctune-web doctune-celery-worker doctune-postgres doctune-redis doctune-minio doctune-minio-init doctune-dozzle 2>/dev/null || true
+    log "Old containers stopped and removed"
+else
+    # Non-destructive: remove any transient init containers to avoid collisions
+    docker rm -f doctune-minio-init 2>/dev/null || true
+    log "Performing fast rolling update (stateful databases preserved)"
+fi
 
 # ── 6. Build & Start All Containers ───────────────────────────
 section "6. Building & Starting All Containers"
-docker compose up --build -d 2>&1 | tail -25
+DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose up --build -d 2>&1 | tail -25
 log "Containers created and started (postgres, redis, minio, web, celery_worker, dozzle)"
 
 echo ""
@@ -346,8 +351,16 @@ docker compose exec -T web sh -c "mkdir -p /app/.scratch /app/config && chmod -R
 
 # ── 12. Housekeeping, Docker Storage & Cache Clearing ─────────
 section "12. Housekeeping & Docker Cache Pruning"
-docker builder prune -af >/dev/null 2>&1 && log "BuildKit build cache pruned" || true
+# Only prune dangling untagged layers; preserve BuildKit layer cache for fast subsequent deployments
 docker image prune -f >/dev/null 2>&1 && log "Dangling Docker build layers pruned" || true
+
+# Only prune build cache if disk space is constrained (<15GB)
+if [ "$DISK_FREE_MB" -lt 15360 ]; then
+    warn "Disk space is constrained (${DISK_FREE_GB} free). Pruning BuildKit cache..."
+    docker builder prune -f >/dev/null 2>&1 || true
+else
+    log "Docker BuildKit cache preserved for fast sub-minute redeployments"
+fi
 
 echo ""
 echo -e "   ${BOLD}Docker Storage Footprint:${RESET}"
