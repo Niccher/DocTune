@@ -35,12 +35,14 @@ app.include_router(admin.router)
 
 from web.db.session import init_db
 from web.services.storage_service import storage_service
+from web.services.redis_subscriber import start_redis_subscriber, stop_redis_subscriber
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database tables and storage buckets on application start."""
+    """Initialize database tables, storage buckets, and telemetry bridge on application start."""
     init_db()
     storage_service.ensure_buckets_exist()
+    start_redis_subscriber()
 
 
 @app.get("/health")
@@ -56,5 +58,6 @@ async def health_check():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Ensure any running background processes are cleanly terminated."""
+    """Ensure any running background processes and subscribers are cleanly terminated."""
+    await stop_redis_subscriber()
     await process_mgr.abort_current_job()

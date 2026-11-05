@@ -5,6 +5,7 @@ Document ingestion, file manager, and synthetic Q&A dataset generation studio.
 """
 
 import os
+import time
 import json
 import shutil
 from typing import List
@@ -18,6 +19,7 @@ from web.services.process_manager import process_mgr
 from web.services.config_service import config_service
 from web.services.teacher_service import teacher_service
 from web.templates_config import templates
+from web.celery_app import is_celery_available, app as celery_app
 from pydantic import BaseModel
 
 
@@ -209,6 +211,21 @@ async def start_data_prep(
         "--workers", str(workers),
     ]
 
+    if is_celery_available() and celery_app:
+        run_id = f"prep_{int(time.time())}"
+        job = state.set_job(
+            job_type=JobType.DATA_PREP,
+            metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "run_id": run_id, "mode": "celery"},
+        )
+        await state.add_log(f"--- [DISPATCH] Data preparation job {run_id} dispatched to Celery cluster ---")
+        celery_task = celery_app.send_task(
+            "web.celery_app.task_prepare_data",
+            args=[run_id, final_url, final_model, final_api_key, max_chunks, chunk_size, overlap, workers],
+            queue="data_prep_queue",
+        )
+        job.metadata["celery_task_id"] = celery_task.id
+        return JSONResponse({"status": "started", "job_id": run_id})
+
     await process_mgr.run_pipeline_script(
         job_type=JobType.DATA_PREP,
         script_module="pipeline.prepare_data",
@@ -219,4 +236,5 @@ async def start_data_prep(
 
     job_id = state.active_job.job_id if state.active_job else "job_data_prep"
     return JSONResponse({"status": "started", "job_id": job_id})
+
 

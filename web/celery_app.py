@@ -49,6 +49,18 @@ else:
     app = None
 
 
+def is_celery_available() -> bool:
+    """Check if Celery app is initialized and Redis broker is reachable."""
+    if not HAS_CELERY or not app:
+        return False
+    try:
+        import redis
+        r = redis.Redis.from_url(REDIS_URL, socket_timeout=1.0)
+        return bool(r.ping())
+    except Exception:
+        return False
+
+
 def publish_redis_event(channel: str, event_data: Dict[str, Any]):
     """Publish a real-time event to a Redis Pub/Sub channel."""
     try:
@@ -75,9 +87,11 @@ if HAS_CELERY and app:
             run.started_at = datetime.utcnow()
             db.commit()
 
+        start_msg = f"--- [CELERY WORKER] Job {run_id} started on worker: {method.upper()} with base {model_id} ---"
         publish_redis_event(f"run:{run_id}:stream", {
             "type": "log",
-            "message": f"--- [CELERY WORKER] Job {run_id} started on worker: {method.upper()} with base {model_id} ---",
+            "line": start_msg,
+            "message": start_msg,
         })
 
         try:
@@ -92,15 +106,43 @@ if HAS_CELERY and app:
             else:
                 import pipeline.train_fft as trainer
 
+            # Define callback to publish metrics and write to DB
+            cb_list = []
+            try:
+                from transformers import TrainerCallback
+
+                class CeleryMetricCallback(TrainerCallback):
+                    def on_log(self, args, state_hf, control, logs=None, **kwargs):
+                        if logs and "loss" in logs:
+                            try:
+                                step = int(state_hf.global_step)
+                                loss = float(logs["loss"])
+                                epoch = float(state_hf.epoch or 0.0)
+                                publish_redis_event(f"run:{run_id}:stream", {
+                                    "type": "metric",
+                                    "data": {"step": step, "loss": round(loss, 4), "epoch": round(epoch, 4)},
+                                })
+                                mp = MetricPoint(run_id=run_id, step=step, epoch=epoch, loss=loss)
+                                db.add(mp)
+                                db.commit()
+                            except Exception as ex:
+                                logger.debug("Failed saving metric point: %s", ex)
+
+                cb_list.append(CeleryMetricCallback())
+            except Exception:
+                pass
+
             # Execute pipeline
             output_dir = getattr(cfg, f"output_{method.lower()}", cfg.output_qlora)
-            trainer.train(cfg)
+            trainer.train(cfg, callbacks=cb_list)
 
             # Upload artifacts to MinIO
             if storage_service.is_s3_enabled() and output_dir.exists():
+                upload_msg = f"--- [MINIO] Streaming trained weights to S3 bucket: {storage_service.bucket_checkpoints} ---"
                 publish_redis_event(f"run:{run_id}:stream", {
                     "type": "log",
-                    "message": f"--- [MINIO] Streaming trained weights to S3 bucket: {storage_service.bucket_checkpoints} ---",
+                    "line": upload_msg,
+                    "message": upload_msg,
                 })
                 for f in output_dir.glob("*"):
                     if f.is_file():
@@ -112,10 +154,12 @@ if HAS_CELERY and app:
                 run.completed_at = datetime.utcnow()
                 db.commit()
 
+            done_msg = "--- [COMPLETED] Training completed successfully ---"
             publish_redis_event(f"run:{run_id}:stream", {
                 "type": "status",
                 "status": "COMPLETED",
-                "message": "--- [COMPLETED] Training completed successfully ---",
+                "line": done_msg,
+                "message": done_msg,
             })
             return {"status": "success", "run_id": run_id}
 
@@ -127,10 +171,12 @@ if HAS_CELERY and app:
                 run.completed_at = datetime.utcnow()
                 db.commit()
 
+            err_msg = f"--- [FAILED] Error during execution: {str(e)} ---"
             publish_redis_event(f"run:{run_id}:stream", {
                 "type": "status",
                 "status": "FAILED",
-                "message": f"--- [FAILED] Error during execution: {str(e)} ---",
+                "line": err_msg,
+                "message": err_msg,
             })
             raise e
         finally:
@@ -138,11 +184,85 @@ if HAS_CELERY and app:
 
 
     @app.task(bind=True, name="web.celery_app.task_prepare_data")
-    def task_prepare_data(self, run_id: str, doc_name: str, chunk_size: int, chunk_overlap: int):
-        """Execute document chunking and teacher LLM dataset generation."""
-        from pipeline.prepare_data import chunk_text
+    def task_prepare_data(
+        self,
+        run_id: str,
+        teacher_url: str = "",
+        teacher_model: str = "",
+        teacher_api_key: str = "",
+        max_chunks: int = 3,
+        chunk_size: int = 1000,
+        overlap: int = 150,
+        workers: int = 12,
+    ):
+        """Execute document chunking and teacher LLM dataset generation inside distributed worker."""
+        from pipeline.prepare_data import run_preparation, RAW_DOCS_DIR, DEFAULT_JSONL
+        start_msg = f"--- [CELERY WORKER] Document processing started for job {run_id} ---"
         publish_redis_event(f"run:{run_id}:stream", {
             "type": "log",
-            "message": f"--- [CELERY WORKER] Document processing started for {doc_name} ---",
+            "line": start_msg,
+            "message": start_msg,
         })
-        return {"status": "success", "doc_name": doc_name}
+        try:
+            total_pairs = run_preparation(
+                docs_dir=RAW_DOCS_DIR,
+                output_file=DEFAULT_JSONL,
+                teacher_url=teacher_url,
+                teacher_model=teacher_model,
+                teacher_api_key=teacher_api_key,
+                max_chunks=max_chunks,
+                chunk_size=chunk_size,
+                overlap=overlap,
+                max_workers=workers,
+            )
+            done_msg = f"--- [COMPLETED] Wrote {total_pairs} instruction pairs ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "COMPLETED",
+                "line": done_msg,
+                "message": done_msg,
+            })
+            return {"status": "success", "run_id": run_id, "total_pairs": total_pairs}
+        except Exception as e:
+            logger.error("Data prep task failed: %s", e)
+            err_msg = f"--- [FAILED] Data preparation error: {str(e)} ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "FAILED",
+                "line": err_msg,
+                "message": err_msg,
+            })
+            raise e
+
+
+    @app.task(bind=True, name="web.celery_app.task_merge_adapters")
+    def task_merge_adapters(self, run_id: str, adapter_dir: str, export_dir: str, model_id: str):
+        """Execute adapter merge into base model inside distributed worker."""
+        from pipeline.merge_adapters import run_merge
+        from pathlib import Path
+        start_msg = f"--- [CELERY WORKER] Merging adapters from {adapter_dir} to {export_dir} ---"
+        publish_redis_event(f"run:{run_id}:stream", {
+            "type": "log",
+            "line": start_msg,
+            "message": start_msg,
+        })
+        try:
+            run_merge(Path(adapter_dir), Path(export_dir), model_id)
+            done_msg = f"--- [COMPLETED] Adapters merged successfully to {export_dir} ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "COMPLETED",
+                "line": done_msg,
+                "message": done_msg,
+            })
+            return {"status": "success", "run_id": run_id, "export_dir": export_dir}
+        except Exception as e:
+            logger.error("Merge task failed: %s", e)
+            err_msg = f"--- [FAILED] Adapter merge error: {str(e)} ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "FAILED",
+                "line": err_msg,
+                "message": err_msg,
+            })
+            raise e

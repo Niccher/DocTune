@@ -5,6 +5,7 @@ Model checkpoints manager and adapter merging utility.
 """
 
 import json
+import time
 from pathlib import Path
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -13,6 +14,7 @@ from pipeline.common import PROJECT_ROOT, Config
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
 from web.templates_config import templates
+from web.celery_app import is_celery_available, app as celery_app
 
 router = APIRouter()
 
@@ -81,6 +83,22 @@ async def trigger_merge(
     src_path = Path(adapter_dir)
     if not (src_path / "adapter_config.json").exists():
         return JSONResponse({"status": "error", "message": f"No adapter_config.json in {adapter_dir}"}, status_code=400)
+
+    # Dual execution: Use Celery if worker cluster & Redis are available, else fallback to local subprocess
+    if is_celery_available() and celery_app:
+        run_id = f"merge_{int(time.time())}"
+        job = state.set_job(
+            job_type=JobType.MERGING,
+            metadata={"adapter_dir": adapter_dir, "export_dir": export_dir, "run_id": run_id, "mode": "celery"},
+        )
+        await state.add_log(f"--- [DISPATCH] Model adapter merge {run_id} dispatched to Celery cluster ---")
+        celery_task = celery_app.send_task(
+            "web.celery_app.task_merge_adapters",
+            args=[run_id, adapter_dir, export_dir, model_id],
+            queue="training_queue",
+        )
+        job.metadata["celery_task_id"] = celery_task.id
+        return JSONResponse({"status": "started", "job_id": run_id})
 
     args = [
         "--adapter-dir", adapter_dir,

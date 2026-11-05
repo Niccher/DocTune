@@ -7,6 +7,8 @@ with transparent SQLite fallback (local standalone development).
 
 import os
 import logging
+from pipeline.common import PROJECT_ROOT
+
 HAS_SQLALCHEMY = False
 try:
     from sqlalchemy import create_engine
@@ -25,18 +27,27 @@ engine = None
 SessionLocal = None
 
 if HAS_SQLALCHEMY:
-    if DATABASE_URL_SYNC and "asyncpg" in DATABASE_URL_SYNC:
-        DATABASE_URL_SYNC = DATABASE_URL_SYNC.replace("postgresql+asyncpg://", "postgresql://")
+    # Normalize sync PostgreSQL URL to explicit psycopg2 driver
+    if DATABASE_URL_SYNC:
+        if "asyncpg" in DATABASE_URL_SYNC:
+            DATABASE_URL_SYNC = DATABASE_URL_SYNC.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        elif DATABASE_URL_SYNC.startswith("postgresql://"):
+            DATABASE_URL_SYNC = DATABASE_URL_SYNC.replace("postgresql://", "postgresql+psycopg2://")
 
-    if not DATABASE_URL_SYNC:
-        # Local fallback to SQLite
+    try:
+        if DATABASE_URL_SYNC and not DATABASE_URL_SYNC.startswith("sqlite"):
+            engine = create_engine(DATABASE_URL_SYNC, pool_pre_ping=True, pool_size=10, max_overflow=20)
+            SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            logger.info("Initialized PostgreSQL database engine: %s", DATABASE_URL_SYNC.split("@")[-1])
+        else:
+            raise ValueError("No PostgreSQL URL configured, using local SQLite")
+    except Exception as e:
+        logger.warning("PostgreSQL engine initialization notice: %s. Using SQLite fallback.", e)
         SQLITE_PATH = PROJECT_ROOT / "config" / "studio.db"
-        DATABASE_URL_SYNC = f"sqlite:///{SQLITE_PATH}"
-        engine = create_engine(DATABASE_URL_SYNC, connect_args={"check_same_thread": False})
-    else:
-        engine = create_engine(DATABASE_URL_SYNC, pool_pre_ping=True, pool_size=10, max_overflow=20)
-
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        sqlite_url = f"sqlite:///{SQLITE_PATH}"
+        engine = create_engine(sqlite_url, connect_args={"check_same_thread": False})
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():

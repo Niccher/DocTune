@@ -10,10 +10,18 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-import torch
-from datasets import load_dataset
-from transformers import AutoModelForCausalLM, TrainerCallback
-from trl import SFTTrainer, SFTConfig
+try:
+    import torch
+    from datasets import load_dataset
+    from transformers import AutoModelForCausalLM, TrainerCallback
+    from trl import SFTTrainer, SFTConfig
+except ImportError:
+    torch = None
+    load_dataset = None
+    AutoModelForCausalLM = None
+    TrainerCallback = object
+    SFTTrainer = None
+    SFTConfig = None
 
 try:
     from pipeline.common import Config, get_tokenizer, print_trainable_parameters
@@ -29,12 +37,9 @@ class MetricLoggingCallback(TrainerCallback):
             print(f"[METRIC_JSON] {json.dumps(payload)}", flush=True)
 
 
-def main(config_path: Optional[str] = None):
-    if config_path and Path(config_path).exists():
-        with open(config_path, "r", encoding="utf-8") as f:
-            cfg = Config.from_dict(json.load(f))
-    else:
-        cfg = Config()
+def train(cfg: Config, callbacks: Optional[list] = None) -> Path:
+    if torch is None or SFTTrainer is None:
+        raise ImportError("Core ML stack (torch, transformers, peft, trl) is not installed. Run: pip install -r requirements.txt")
 
     print("=" * 70, flush=True)
     print("FULL FINE-TUNING (FFT)", flush=True)
@@ -81,12 +86,16 @@ def main(config_path: Optional[str] = None):
         seed=cfg.seed,
     )
 
+    cb_list = [MetricLoggingCallback()]
+    if callbacks:
+        cb_list.extend(callbacks)
+
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
         processing_class=tokenizer,
-        callbacks=[MetricLoggingCallback()],
+        callbacks=cb_list,
     )
 
     print("\nStarting FFT training...", flush=True)
@@ -102,6 +111,16 @@ def main(config_path: Optional[str] = None):
 
     print(f"Model saved to: {cfg.output_fft}", flush=True)
     print("Done.", flush=True)
+    return cfg.output_fft
+
+
+def main(config_path: Optional[str] = None):
+    if config_path and Path(config_path).exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = Config.from_dict(json.load(f))
+    else:
+        cfg = Config()
+    train(cfg)
 
 
 if __name__ == "__main__":

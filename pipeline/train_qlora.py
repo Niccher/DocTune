@@ -42,13 +42,7 @@ class MetricLoggingCallback(TrainerCallback):
             print(f"[METRIC_JSON] {json.dumps(payload)}", flush=True)
 
 
-def main(config_path: Optional[str] = None):
-    if config_path and Path(config_path).exists():
-        with open(config_path, "r", encoding="utf-8") as f:
-            cfg = Config.from_dict(json.load(f))
-    else:
-        cfg = Config()
-
+def train(cfg: Config, callbacks: Optional[list] = None) -> Path:
     if torch is None or SFTTrainer is None:
         raise ImportError("Core ML stack (torch, transformers, peft, trl) is not installed. Run: pip install -r requirements.txt")
 
@@ -127,13 +121,17 @@ def main(config_path: Optional[str] = None):
     )
 
     # 8. Trainer
+    cb_list = [MetricLoggingCallback()]
+    if callbacks:
+        cb_list.extend(callbacks)
+
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
         processing_class=tokenizer,
         peft_config=peft_config,
-        callbacks=[MetricLoggingCallback()],
+        callbacks=cb_list,
     )
 
     # 9. Train
@@ -151,6 +149,16 @@ def main(config_path: Optional[str] = None):
 
     print(f"Adapters saved to: {cfg.output_qlora}", flush=True)
     print("Done.", flush=True)
+    return cfg.output_qlora
+
+
+def main(config_path: Optional[str] = None):
+    if config_path and Path(config_path).exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = Config.from_dict(json.load(f))
+    else:
+        cfg = Config()
+    train(cfg)
 
 
 if __name__ == "__main__":

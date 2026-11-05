@@ -96,11 +96,17 @@ services:
     environment:
       - PORT=80
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
-      - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
+      - DATABASE_URL_SYNC=postgresql+psycopg2://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
       - REDIS_URL=redis://redis:6379/0
       - S3_ENDPOINT_URL=http://minio:9000
     volumes:
       - ./config:/app/config
+      - ./raw_documents:/app/raw_documents
+      - ./data:/app/data
+      - ./output_qlora:/app/output_qlora
+      - ./output_lora:/app/output_lora
+      - ./output_fft:/app/output_fft
+      - ./output_merged:/app/output_merged
       - scratch_data:/app/.scratch
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -132,12 +138,18 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
-      - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
+      - DATABASE_URL_SYNC=postgresql+psycopg2://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
       - REDIS_URL=redis://redis:6379/0
       - S3_ENDPOINT_URL=http://minio:9000
       - PYTHONUNBUFFERED=1
     volumes:
       - ./config:/app/config
+      - ./raw_documents:/app/raw_documents
+      - ./data:/app/data
+      - ./output_qlora:/app/output_qlora
+      - ./output_lora:/app/output_lora
+      - ./output_fft:/app/output_fft
+      - ./output_merged:/app/output_merged
       - scratch_data:/app/.scratch
       - hf_cache:/root/.cache/huggingface
     extra_hosts:

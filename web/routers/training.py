@@ -12,9 +12,10 @@ from fastapi import APIRouter, Request, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from pipeline.common import PROJECT_ROOT, Config
-from web.state import state, JobType
+from web.state import state, JobType, JobStatus
 from web.services.process_manager import process_mgr
 from web.templates_config import templates
+from web.celery_app import is_celery_available, HAS_CELERY, app as celery_app
 
 router = APIRouter()
 
@@ -43,8 +44,8 @@ async def start_training(
     method: str = Form("qlora"),
     model_id: str = Form("meta-llama/Meta-Llama-3-8B-Instruct"),
     epochs: int = Form(3),
-    batch_size: int = Form(4),
-    grad_accum: int = Form(4),
+    batch_size: int = Form(2),
+    grad_accum: int = Form(8),
     lora_r: int = Form(16),
     lora_alpha: int = Form(32),
     lora_dropout: float = Form(0.05),
@@ -89,6 +90,44 @@ async def start_training(
 
     job_type, script_module = method_map.get(method.lower(), (JobType.TRAINING_QLORA, "pipeline.train_qlora"))
 
+    # Dual execution: Use Celery if worker cluster & Redis are available, else fallback to local subprocess
+    if is_celery_available() and celery_app:
+        run_id = f"run_{method.lower()}_{int(time.time())}"
+        try:
+            from web.db.session import SessionLocal
+            from web.db.models import Run
+            db = SessionLocal()
+            new_run = Run(
+                id=run_id,
+                model_name=model_id,
+                method=method.upper(),
+                dataset_path=str(cfg.dataset_path),
+                epochs=epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                status="PENDING",
+            )
+            db.add(new_run)
+            db.commit()
+            db.close()
+        except Exception:
+            pass
+
+        job = state.set_job(
+            job_type=job_type,
+            metadata={"method": method, "model_id": model_id, "run_id": run_id, "mode": "celery", "config_file": str(run_cfg_path)},
+        )
+        await state.add_log(f"--- [DISPATCH] Job {run_id} ({job_type.value}) dispatched to Celery worker cluster ---")
+
+        celery_task = celery_app.send_task(
+            "web.celery_app.task_train_model",
+            args=[run_id, method, model_id, cfg.to_dict()],
+            queue="training_queue",
+        )
+        job.metadata["celery_task_id"] = celery_task.id
+        return JSONResponse({"status": "started", "job_id": run_id})
+
+    # Subprocess execution fallback
     args = ["--config-json", str(run_cfg_path)]
 
     await process_mgr.run_pipeline_script(
@@ -105,6 +144,17 @@ async def start_training(
 
 @router.post("/api/v1/training/stop")
 async def stop_training():
+    if state.active_job and state.active_job.metadata.get("mode") == "celery":
+        celery_id = state.active_job.metadata.get("celery_task_id")
+        if celery_id and celery_app:
+            try:
+                celery_app.control.revoke(celery_id, terminate=True, signal="SIGTERM")
+            except Exception:
+                pass
+        state.finish_job(JobStatus.ABORTED)
+        await state.add_log("--- [ABORTED] Celery task aborted by user ---")
+        return JSONResponse({"status": "success", "message": "Celery job revoked"})
+
     aborted = await process_mgr.abort_current_job()
     if aborted:
         return JSONResponse({"status": "success", "message": "Job abort signal sent"})
