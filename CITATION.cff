@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use DocTune Studio in your research, benchmarks, or enterprise applications, please cite it as below."
+authors:
+  - family-names: "Niccher"
+    given-names: "Dominic"
+title: "DocTune Studio: Private Enterprise Document Fine-Tuning Platform for 8B LLMs"
+version: 1.2.0
+date-released: 2026-11-05
+url: "https://github.com/Niccher/DocTune"
+repository-code: "https://github.com/Niccher/DocTune"
+keywords:
+  - "fine-tuning"
+  - "qlora"
+  - "lora"
+  - "peft"
+  - "llama3"
+  - "mistral"
+  - "pytorch"
+  - "fastapi"
+  - "synthetic-data"
+  - "teacher-llm"
+  - "enterprise-ai"
+license: "Apache-2.0"

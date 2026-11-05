@@ -1,0 +1,59 @@
+# ==============================================================================
+# .dockerignore
+# Excludes unnecessary files and secrets from Docker build contexts.
+# Dramatically speeds up image builds and prevents leaking local credentials.
+# ==============================================================================
+
+# Git internals
+.git/
+.gitignore
+.github/
+
+# Python virtual environments & interpreters
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Secrets and environment configurations
+.env
+*.key
+*.pem
+*.secret
+
+# Training outputs, model weights, checkpoints
+output_fft/
+output_lora/
+output_qlora/
+output_merged/
+checkpoint-*/
+runs/
+.runs/
+wandb/
+
+# Raw proprietary documents & uploaded buffers
+raw_documents/
+data/private_docs.jsonl
+.scratch/
+.storage/
+*.db
+*.sqlite3
+
+# Test suites & artifacts
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and OS clutter
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+walkthrough.md
