@@ -32,8 +32,8 @@ async def _subscriber_loop(redis_url: str):
         try:
             client = aioredis.from_url(redis_url, decode_responses=True, socket_connect_timeout=3.0)
             pubsub = client.pubsub()
-            await pubsub.psubscribe("run:*:stream")
-            logger.info("Successfully subscribed to Redis telemetry pattern: run:*:stream")
+            await pubsub.psubscribe("run:*:stream", "download:*")
+            logger.info("Successfully subscribed to Redis patterns: run:*:stream, download:*")
 
             async for message in pubsub.listen():
                 if message.get("type") == "pmessage":
@@ -42,6 +42,15 @@ async def _subscriber_loop(redis_url: str):
                         continue
                     try:
                         payload = json.loads(raw_data)
+                        channel = str(message.get("channel", ""))
+
+                        # Handle background model download events
+                        if channel.startswith("download:"):
+                            dl_model_id = channel.split("download:", 1)[1]
+                            from web.services.hf_model_service import hf_model_service
+                            hf_model_service.update_download_task(dl_model_id, payload)
+                            continue
+
                         msg_type = payload.get("type")
 
                         if msg_type == "log":

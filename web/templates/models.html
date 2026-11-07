@@ -1,6 +1,90 @@
 {% extends "base.html" %}
 
 {% block content %}
+<!-- Hugging Face Base Models Hub Explorer -->
+<div class="card shadow-sm border-0 mb-4" id="hub-models">
+  <div class="card-header bg-body border-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <h5 class="card-title mb-0 fw-bold"><i class="bi bi-cloud-arrow-down-fill me-2 text-primary"></i>Hugging Face Base Models Hub</h5>
+      <small class="text-muted">Explore, download, and configure foundation models for fine-tuning</small>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <div class="btn-group btn-group-sm" role="group" id="modelFilterGroup">
+        <button type="button" class="btn btn-outline-primary active" onclick="filterModelCards('all', this)">All</button>
+        <button type="button" class="btn btn-outline-success" onclick="filterModelCards('free', this)">🟢 Free / No Token</button>
+        <button type="button" class="btn btn-outline-warning" onclick="filterModelCards('gated', this)">🔒 Gated (Token)</button>
+        <button type="button" class="btn btn-outline-secondary" onclick="filterModelCards('cached', this)">💾 Cached on Disk</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card-body">
+    <!-- Search Bar -->
+    <div class="input-group mb-3">
+      <span class="input-group-text bg-body-tertiary"><i class="bi bi-search"></i></span>
+      <input type="text" id="hfSearchInput" class="form-control" placeholder="Search any model on Hugging Face Hub (e.g. Qwen, SmolLM2, Llama-3.2, Mistral)..." oninput="onHfSearchInput()">
+      <button class="btn btn-outline-secondary" type="button" onclick="clearHfSearch()" id="clearSearchBtn" style="display:none;">Clear</button>
+    </div>
+
+    <!-- Models Grid -->
+    <div class="row g-3" id="hubCardsContainer">
+      {% for m in hub_models %}
+      <div class="col-12 col-md-6 col-xl-3 model-card-item"
+           data-token="{{ 'gated' if m.requires_token else 'free' }}"
+           data-cached="{{ 'cached' if m.cached else 'not_cached' }}"
+           data-search="{{ m.id }} {{ m.name }}">
+        <div class="p-3 border rounded bg-body-tertiary h-100 d-flex flex-column justify-content-between shadow-sm">
+          <div>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="badge {{ 'bg-success' if not m.requires_token else 'bg-warning text-dark' }}">
+                {{ '🟢 Free (No Token)' if not m.requires_token else '🔒 Gated (Token)' }}
+              </span>
+              {% if m.cached %}
+                <span class="badge bg-primary" title="{{ m.path }}"><i class="bi bi-hdd-fill me-1"></i>{{ m.size_gb }} GB</span>
+              {% else %}
+                <span class="badge bg-secondary">Not Cached</span>
+              {% endif %}
+            </div>
+
+            <h6 class="fw-bold mb-0 text-truncate" title="{{ m.name }}">{{ m.name }}</h6>
+            <code class="d-block small text-muted mb-2 text-truncate" style="font-size: 0.75rem;">{{ m.id }}</code>
+            <p class="small text-muted mb-2" style="font-size: 0.8rem; min-height: 40px;">{{ m.description }}</p>
+
+            <div class="d-flex justify-content-between small text-muted mb-3 pt-2 border-top">
+              <span><strong>Params:</strong> {{ m.params }}</span>
+              <span><strong>Min RAM:</strong> {{ m.min_ram_gb }} GB</span>
+            </div>
+          </div>
+
+          <div class="pt-2 border-top">
+            {% if m.is_default %}
+              <button class="btn btn-sm btn-outline-success w-100 mb-2 btn-default-indicator" disabled>
+                <i class="bi bi-check-circle-fill me-1"></i> Active Base Model
+              </button>
+            {% else %}
+              <button class="btn btn-sm btn-outline-primary w-100 mb-2 btn-set-default" onclick="setDefaultModel('{{ m.id }}', this)">
+                <i class="bi bi-bookmark-check me-1"></i> Set as Base Model
+              </button>
+            {% endif %}
+
+            <div class="d-flex gap-1">
+              {% if not m.cached %}
+                <button class="btn btn-sm btn-secondary w-50 btn-download" onclick="downloadModel('{{ m.id }}', this)">
+                  <i class="bi bi-download me-1"></i> Download
+                </button>
+              {% endif %}
+              <a href="/training?model_id={{ m.id }}" class="btn btn-sm btn-success {{ 'w-100' if m.cached else 'w-50' }}">
+                <i class="bi bi-play-fill me-1"></i> Train
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
   <!-- Checkpoints List -->
   <div class="col-12 col-lg-7">
@@ -219,5 +303,231 @@ ollama run my-private-model</code></pre>
       }
     }
   };
+  // ── Hugging Face Hub Interactive Handlers ───────────────────────
+  let searchDebounceTimer = null;
+  let activeFilter = 'all';
+
+  function filterModelCards(filterType, btn) {
+    activeFilter = filterType;
+    document.querySelectorAll('#modelFilterGroup .btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    const cards = document.querySelectorAll('.model-card-item');
+    cards.forEach(card => {
+      const tokenType = card.getAttribute('data-token');
+      const cachedState = card.getAttribute('data-cached');
+      let show = true;
+
+      if (filterType === 'free' && tokenType !== 'free') show = false;
+      if (filterType === 'gated' && tokenType !== 'gated') show = false;
+      if (filterType === 'cached' && cachedState !== 'cached') show = false;
+
+      card.style.display = show ? '' : 'none';
+    });
+  }
+
+  function onHfSearchInput() {
+    clearTimeout(searchDebounceTimer);
+    const q = document.getElementById('hfSearchInput').value.trim();
+    const clearBtn = document.getElementById('clearSearchBtn');
+    if (clearBtn) clearBtn.style.display = q ? '' : 'none';
+
+    searchDebounceTimer = setTimeout(async () => {
+      if (q.length === 0) {
+        fetchHubModels();
+        return;
+      }
+      if (q.length < 2) return;
+
+      const container = document.getElementById('hubCardsContainer');
+      container.innerHTML = `
+        <div class="col-12 text-center py-4 text-muted">
+          <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+          Searching Hugging Face Hub for "${q}"...
+        </div>
+      `;
+
+      try {
+        const res = await fetch(`/api/v1/models/hub/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        if (data.status === 'success' && data.models.length > 0) {
+          renderModelCards(data.models, data.active_default);
+        } else {
+          container.innerHTML = `
+            <div class="col-12 text-center py-4 text-muted">
+              <i class="bi bi-search me-1"></i> No text-generation models found matching "${q}".
+            </div>
+          `;
+        }
+      } catch (err) {
+        container.innerHTML = `<div class="col-12 text-center py-4 text-danger">Search error: ${err}</div>`;
+      }
+    }, 400);
+  }
+
+  function clearHfSearch() {
+    document.getElementById('hfSearchInput').value = '';
+    document.getElementById('clearSearchBtn').style.display = 'none';
+    fetchHubModels();
+  }
+
+  async function fetchHubModels() {
+    try {
+      const res = await fetch('/api/v1/models/hub');
+      const data = await res.json();
+      if (data.status === 'success') {
+        renderModelCards(data.models, data.active_default);
+        const activeBtn = document.querySelector(`#modelFilterGroup .btn.active`);
+        if (activeBtn) filterModelCards(activeFilter, activeBtn);
+      }
+    } catch (e) {
+      console.error('Failed refreshing hub models:', e);
+    }
+  }
+
+  function renderModelCards(models, defaultModel) {
+    const container = document.getElementById('hubCardsContainer');
+    container.innerHTML = models.map(m => {
+      const isDefault = (m.id === defaultModel);
+      const isFree = !m.requires_token;
+      const isCached = m.cached;
+      return `
+        <div class="col-12 col-md-6 col-xl-3 model-card-item"
+             data-token="${isFree ? 'free' : 'gated'}"
+             data-cached="${isCached ? 'cached' : 'not_cached'}"
+             data-search="${m.id} ${m.name}">
+          <div class="p-3 border rounded bg-body-tertiary h-100 d-flex flex-column justify-content-between shadow-sm">
+            <div>
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="badge ${isFree ? 'bg-success' : 'bg-warning text-dark'}">
+                  ${isFree ? '🟢 Free (No Token)' : '🔒 Gated (Token)'}
+                </span>
+                ${isCached
+                  ? `<span class="badge bg-primary"><i class="bi bi-hdd-fill me-1"></i>${m.size_gb || 0} GB</span>`
+                  : `<span class="badge bg-secondary">Not Cached</span>`
+                }
+              </div>
+
+              <h6 class="fw-bold mb-0 text-truncate" title="${m.name}">${m.name}</h6>
+              <code class="d-block small text-muted mb-2 text-truncate" style="font-size: 0.75rem;">${m.id}</code>
+              <p class="small text-muted mb-2" style="font-size: 0.8rem; min-height: 40px;">${m.description || ''}</p>
+
+              <div class="d-flex justify-content-between small text-muted mb-3 pt-2 border-top">
+                <span><strong>Params:</strong> ${m.params || 'N/A'}</span>
+                <span><strong>Min RAM:</strong> ${m.min_ram_gb ? m.min_ram_gb + ' GB' : 'N/A'}</span>
+              </div>
+            </div>
+
+            <div class="pt-2 border-top">
+              ${isDefault
+                ? `<button class="btn btn-sm btn-outline-success w-100 mb-2" disabled>
+                     <i class="bi bi-check-circle-fill me-1"></i> Active Base Model
+                   </button>`
+                : `<button class="btn btn-sm btn-outline-primary w-100 mb-2 btn-set-default" onclick="setDefaultModel('${m.id}', this)">
+                     <i class="bi bi-bookmark-check me-1"></i> Set as Base Model
+                   </button>`
+              }
+
+              <div class="d-flex gap-1">
+                ${!isCached
+                  ? `<button class="btn btn-sm btn-secondary w-50 btn-download" onclick="downloadModel('${m.id}', this)">
+                       <i class="bi bi-download me-1"></i> Download
+                     </button>`
+                  : ''
+                }
+                <a href="/training?model_id=${encodeURIComponent(m.id)}" class="btn btn-sm btn-success ${isCached ? 'w-100' : 'w-50'}">
+                  <i class="bi bi-play-fill me-1"></i> Train
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function setDefaultModel(modelId, btn) {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Setting...';
+    }
+    try {
+      const formData = new FormData();
+      formData.append('model_id', modelId);
+      const res = await fetch('/api/v1/models/hub/set-default', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Set ${modelId} as the active base model!`, 'success');
+        fetchHubModels();
+      } else {
+        showToast(data.message || 'Failed setting default model', 'error');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="bi bi-bookmark-check me-1"></i> Set as Base Model';
+        }
+      }
+    } catch (err) {
+      showToast('Error: ' + err, 'error');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-bookmark-check me-1"></i> Set as Base Model';
+      }
+    }
+  }
+
+  async function downloadModel(modelId, btn) {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Starting...';
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('model_id', modelId);
+      const res = await fetch('/api/v1/models/hub/download', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Started downloading ${modelId}...`, 'info');
+        pollDownloadStatus(modelId, btn);
+      } else {
+        showToast(data.message || 'Failed to trigger download', 'error');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="bi bi-download me-1"></i> Download';
+        }
+      }
+    } catch (err) {
+      showToast('Download error: ' + err, 'error');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-download me-1"></i> Download';
+      }
+    }
+  }
+
+  function pollDownloadStatus(modelId, btn) {
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/v1/models/hub/download-status?model_id=${encodeURIComponent(modelId)}`);
+        const data = await res.json();
+        if (data.download_status === 'COMPLETED' || data.cached) {
+          clearInterval(timer);
+          showToast(`${modelId} is ready and cached on disk!`, 'success');
+          fetchHubModels();
+        } else if (data.download_status === 'FAILED') {
+          clearInterval(timer);
+          showToast(`Download failed: ${data.error || 'Unknown error'}`, 'error');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-download me-1"></i> Download';
+          }
+        } else if (btn) {
+          btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> ${data.progress || 30}%`;
+        }
+      } catch (e) {
+        clearInterval(timer);
+      }
+    }, 2500);
+  }
 </script>
 {% endblock %}

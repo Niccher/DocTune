@@ -1,0 +1,19 @@
+# Alembic Database Migrations
+
+This directory contains the database migration environment and version scripts for DocTune Studio.
+
+## Usage
+
+```bash
+# Run all pending migrations
+alembic upgrade head
+
+# Check current revision status
+alembic current
+
+# Generate a new migration automatically from model changes
+alembic revision --autogenerate -m "description_of_changes"
+
+# Rollback one migration
+alembic downgrade -1
+```

@@ -8,7 +8,7 @@ dataset chunking, adapter merging, and Redis Pub/Sub metric streaming.
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -43,6 +43,7 @@ if HAS_CELERY:
             "web.celery_app.task_train_model": {"queue": "training_queue"},
             "web.celery_app.task_merge_adapters": {"queue": "training_queue"},
             "web.celery_app.task_prepare_data": {"queue": "data_prep_queue"},
+            "web.celery_app.task_download_model": {"queue": "data_prep_queue"},
         },
     )
 else:
@@ -77,14 +78,14 @@ if HAS_CELERY and app:
         """Execute QLoRA / LoRA / FFT training inside distributed worker."""
         from pipeline.common import Config, PROJECT_ROOT
         from web.db.session import SessionLocal
-        from web.db.models import Run, MetricPoint, Checkpoint
+        from web.db.models import Run, MetricPoint, Checkpoint, now_utc
         from web.services.storage_service import storage_service
 
         db = SessionLocal()
         run = db.query(Run).filter(Run.id == run_id).first()
         if run:
             run.status = "RUNNING"
-            run.started_at = datetime.utcnow()
+            run.started_at = now_utc()
             db.commit()
 
         start_msg = f"--- [CELERY WORKER] Job {run_id} started on worker: {method.upper()} with base {model_id} ---"
@@ -159,9 +160,15 @@ if HAS_CELERY and app:
 
             if run:
                 run.status = "COMPLETED"
-                run.completed_at = datetime.utcnow()
+                run.completed_at = now_utc()
                 if run.started_at:
-                    run.duration_sec = round((run.completed_at - run.started_at).total_seconds(), 1)
+                    st = run.started_at
+                    ct = run.completed_at
+                    if st.tzinfo is None and ct.tzinfo is not None:
+                        st = st.replace(tzinfo=timezone.utc)
+                    elif st.tzinfo is not None and ct.tzinfo is None:
+                        ct = ct.replace(tzinfo=timezone.utc)
+                    run.duration_sec = round((ct - st).total_seconds(), 1)
 
                 if output_dir.exists():
                     sz = round(sum(f.stat().st_size for f in output_dir.glob("*") if f.is_file()) / (1024 * 1024), 2)
@@ -193,7 +200,7 @@ if HAS_CELERY and app:
             if run:
                 run.status = "FAILED"
                 run.error_message = str(e)
-                run.completed_at = datetime.utcnow()
+                run.completed_at = now_utc()
                 db.commit()
 
             err_msg = f"--- [FAILED] Error during execution: {str(e)} ---"
@@ -265,16 +272,16 @@ if HAS_CELERY and app:
         """Execute adapter merge into base model inside distributed worker."""
         from pipeline.merge_adapters import run_merge
         from pathlib import Path
-        from datetime import datetime
+        from datetime import datetime, timezone
         from web.db.session import SessionLocal
-        from web.db.models import Run, Checkpoint
+        from web.db.models import Run, Checkpoint, now_utc
         from web.services.storage_service import storage_service
 
         db = SessionLocal() if SessionLocal else None
         run = db.query(Run).filter(Run.id == run_id).first() if db else None
         if run:
             run.status = "RUNNING"
-            run.started_at = datetime.utcnow()
+            run.started_at = now_utc()
             db.commit()
 
         start_msg = f"--- [CELERY WORKER] Merging adapters from {adapter_dir} to {export_dir} ---"
@@ -310,9 +317,15 @@ if HAS_CELERY and app:
             if db:
                 if run:
                     run.status = "COMPLETED"
-                    run.completed_at = datetime.utcnow()
+                    run.completed_at = now_utc()
                     if run.started_at:
-                        run.duration_sec = round((run.completed_at - run.started_at).total_seconds(), 1)
+                        st = run.started_at
+                        ct = run.completed_at
+                        if st.tzinfo is None and ct.tzinfo is not None:
+                            st = st.replace(tzinfo=timezone.utc)
+                        elif st.tzinfo is not None and ct.tzinfo is None:
+                            ct = ct.replace(tzinfo=timezone.utc)
+                        run.duration_sec = round((ct - st).total_seconds(), 1)
 
                 sz = round(sum(f.stat().st_size for f in exp_path.glob("*") if f.is_file()) / (1024 * 1024), 2) if exp_path.exists() else 0.0
                 ckpt = Checkpoint(
@@ -341,7 +354,7 @@ if HAS_CELERY and app:
             if db and run:
                 run.status = "FAILED"
                 run.error_message = str(e)
-                run.completed_at = datetime.utcnow()
+                run.completed_at = now_utc()
                 db.commit()
 
             err_msg = f"--- [FAILED] Adapter merge error: {str(e)} ---"
@@ -355,4 +368,75 @@ if HAS_CELERY and app:
         finally:
             if db:
                 db.close()
+
+
+    @app.task(bind=True, name="web.celery_app.task_download_model")
+    def task_download_model(self, model_id: str):
+        """Pre-download model weights and tokenizer into the shared Hugging Face cache."""
+        import os
+        from web.services.config_service import config_service
+
+        settings = config_service.get_settings()
+        token = settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN")
+
+        start_msg = f"--- [CELERY WORKER] Initiating pre-download of base model: {model_id} ---"
+        publish_redis_event(f"download:{model_id}", {
+            "type": "log",
+            "status": "DOWNLOADING",
+            "progress": 20,
+            "line": start_msg,
+            "message": start_msg,
+        })
+
+        try:
+            try:
+                from huggingface_hub import snapshot_download
+                publish_redis_event(f"download:{model_id}", {
+                    "type": "log",
+                    "status": "DOWNLOADING",
+                    "progress": 40,
+                    "line": f"Downloading full snapshot of {model_id} via huggingface_hub...",
+                    "message": f"Downloading full snapshot of {model_id} via huggingface_hub...",
+                })
+                snapshot_download(repo_id=model_id, token=token)
+            except ImportError:
+                from transformers import AutoTokenizer, AutoModelForCausalLM
+                tok = AutoTokenizer.from_pretrained(model_id, token=token, trust_remote_code=True)
+                publish_redis_event(f"download:{model_id}", {
+                    "type": "log",
+                    "status": "DOWNLOADING",
+                    "progress": 60,
+                    "line": "Tokenizer cached successfully. Downloading model weights...",
+                    "message": "Tokenizer cached successfully. Downloading model weights...",
+                })
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    token=token,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True,
+                )
+                del model
+                import gc; gc.collect()
+
+            done_msg = f"--- [COMPLETED] Model {model_id} downloaded and cached on disk ---"
+            publish_redis_event(f"download:{model_id}", {
+                "type": "status",
+                "status": "COMPLETED",
+                "progress": 100,
+                "line": done_msg,
+                "message": done_msg,
+            })
+            return {"status": "success", "model_id": model_id}
+        except Exception as e:
+            logger.error("Model download task failed for %s: %s", model_id, e)
+            err_msg = f"--- [FAILED] Model download failed: {str(e)} ---"
+            publish_redis_event(f"download:{model_id}", {
+                "type": "status",
+                "status": "FAILED",
+                "progress": 0,
+                "error": str(e),
+                "line": err_msg,
+            })
+            raise e
+
 

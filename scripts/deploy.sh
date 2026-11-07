@@ -315,9 +315,13 @@ $MINIO_HEALTHY || { echo ""; warn "MinIO did not report healthy within timeout. 
 # ── 8. Initialize Database Tables & Schema ────────────────────
 section "8. Initializing Database Schema"
 if $PG_HEALTHY; then
-    docker compose exec -T web python -c "from web.db.session import init_db; init_db()" 2>&1 \
-        && log "Database schema verified and tables created (runs, metric_points, checkpoints, uploaded_documents)" \
-        || warn "Database schema init completed with notices"
+    docker compose exec -T web alembic upgrade head 2>&1 \
+        && log "Database schema migrated to head via Alembic (versioned migrations applied)" \
+        || {
+            warn "Alembic upgrade notice; attempting init_db declarative fallback..."
+            docker compose exec -T web python -c "from web.db.session import init_db; init_db()" 2>&1 \
+                && log "Database schema verified and tables created" || warn "Database init completed with notices"
+        }
 else
     warn "Skipping database schema init because PostgreSQL container is not yet healthy"
 fi

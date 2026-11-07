@@ -11,8 +11,9 @@ import shutil
 import hashlib
 from typing import List, Optional
 from pathlib import Path
-from fastapi import APIRouter, Request, UploadFile, File, Form, Query
+from fastapi import APIRouter, Request, UploadFile, File, Form, Query, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy.orm import Session
 
 from pipeline.common import PROJECT_ROOT, RAW_DOCS_DIR, DEFAULT_JSONL
 from web.state import state, JobType
@@ -21,7 +22,7 @@ from web.services.config_service import config_service
 from web.services.teacher_service import teacher_service
 from web.templates_config import templates
 from web.celery_app import is_celery_available, app as celery_app
-from web.db.session import SessionLocal
+from web.db.session import SessionLocal, get_db, resolve_session
 from web.db.models import UploadedDocument, DatasetSample
 from web.services.storage_service import storage_service
 from pydantic import BaseModel
@@ -358,13 +359,14 @@ class SampleEditPayload(BaseModel):
 
 
 @router.put("/api/v1/dataset/samples/{sample_id}")
-async def edit_dataset_sample(sample_id: str, payload: SampleEditPayload):
+async def edit_dataset_sample(sample_id: str, payload: SampleEditPayload, db: Session = Depends(get_db)):
     """Edit instruction, assistant response, or status in PostgreSQL."""
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
-    db = SessionLocal()
+
     try:
-        sample = db.query(DatasetSample).filter(DatasetSample.id == sample_id).first()
+        sample = active_db.query(DatasetSample).filter(DatasetSample.id == sample_id).first()
         if not sample:
             return JSONResponse({"status": "error", "message": "Sample not found"}, status_code=404)
         if payload.user_instruction is not None:
@@ -375,7 +377,7 @@ async def edit_dataset_sample(sample_id: str, payload: SampleEditPayload):
             sample.status = "EDITED"
         if payload.status is not None:
             sample.status = payload.status
-        db.commit()
+        active_db.commit()
         return JSONResponse({
             "status": "success",
             "sample_id": sample_id,
@@ -387,13 +389,15 @@ async def edit_dataset_sample(sample_id: str, payload: SampleEditPayload):
             },
         })
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
 
 
 @router.post("/api/v1/dataset/samples/{sample_id}/status")
-async def update_sample_status(request: Request, sample_id: str):
+async def update_sample_status(request: Request, sample_id: str, db: Session = Depends(get_db)):
     """Approve or reject a synthetic instruction sample."""
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
 
     status_val = ""
@@ -408,28 +412,28 @@ async def update_sample_status(request: Request, sample_id: str):
     if not status_val:
         return JSONResponse({"status": "error", "message": "Missing status parameter"}, status_code=400)
 
-    db = SessionLocal()
     try:
-        sample = db.query(DatasetSample).filter(DatasetSample.id == sample_id).first()
+        sample = active_db.query(DatasetSample).filter(DatasetSample.id == sample_id).first()
         if not sample:
             return JSONResponse({"status": "error", "message": "Sample not found"}, status_code=404)
         sample.status = status_val.upper()
-        db.commit()
+        active_db.commit()
         return JSONResponse({"status": "success", "sample_id": sample_id, "sample_status": sample.status})
-
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
 
 
 
 @router.post("/api/v1/dataset/export-jsonl")
-async def export_curated_dataset():
+async def export_curated_dataset(db: Session = Depends(get_db)):
     """Export all approved and edited samples from PostgreSQL to private_docs.jsonl."""
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
-    db = SessionLocal()
+
     try:
-        samples = db.query(DatasetSample).filter(DatasetSample.status != "REJECTED").order_by(DatasetSample.created_at.asc()).all()
+        samples = active_db.query(DatasetSample).filter(DatasetSample.status != "REJECTED").order_by(DatasetSample.created_at.asc()).all()
         if not samples:
             return JSONResponse({"status": "error", "message": "No approved samples to export"}, status_code=400)
 
@@ -456,7 +460,8 @@ async def export_curated_dataset():
             "s3_key": "private_docs.jsonl",
         })
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
 
 
 @router.get("/api/v1/dataset/download-url")

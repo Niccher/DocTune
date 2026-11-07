@@ -7,14 +7,19 @@ Model checkpoints manager and adapter merging utility.
 import json
 import time
 from pathlib import Path
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
+from sqlalchemy.orm import Session
 
 from pipeline.common import PROJECT_ROOT, Config
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
 from web.templates_config import templates
 from web.celery_app import is_celery_available, app as celery_app
+from web.db.session import get_db, SessionLocal, resolve_session
+from web.db.models import Checkpoint
+
+from web.services.hf_model_service import hf_model_service
 
 router = APIRouter()
 
@@ -84,6 +89,7 @@ async def models_view(request: Request):
     except Exception:
         pass
 
+    hub_models = hf_model_service.list_curated_models()
     return templates.TemplateResponse(
         request=request,
         name="models.html",
@@ -92,6 +98,8 @@ async def models_view(request: Request):
             "active_page": "models",
             "checkpoints": checkpoints,
             "db_checkpoints": db_checkpoints,
+            "hub_models": hub_models,
+            "active_default_model": cfg.model_id,
             "cfg": cfg.to_dict(),
             "active_job": state.active_job.to_dict() if state.active_job else None,
         },
@@ -99,14 +107,12 @@ async def models_view(request: Request):
 
 
 @router.get("/api/v1/models/checkpoints")
-async def list_checkpoints():
+async def list_checkpoints(db: Session = Depends(get_db)):
     checkpoints = []
+    active_db, should_close = resolve_session(db)
     try:
-        from web.db.session import SessionLocal
-        from web.db.models import Checkpoint
-        if SessionLocal:
-            db_s = SessionLocal()
-            rows = db_s.query(Checkpoint).order_by(Checkpoint.created_at.desc()).all()
+        if active_db:
+            rows = active_db.query(Checkpoint).order_by(Checkpoint.created_at.desc()).all()
             for r in rows:
                 checkpoints.append({
                     "id": r.id,
@@ -122,25 +128,25 @@ async def list_checkpoints():
                     "base_model": r.base_model,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                 })
-            db_s.close()
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    finally:
+        if should_close and active_db:
+            active_db.close()
     return JSONResponse({"status": "success", "checkpoints": checkpoints})
 
 
 @router.get("/api/v1/models/checkpoints/{checkpoint_id}/download-url")
-async def get_checkpoint_download_url(checkpoint_id: str):
+async def get_checkpoint_download_url(checkpoint_id: str, db: Session = Depends(get_db)):
     """Generate presigned S3 download URLs for checkpoint files."""
     from web.services.storage_service import storage_service
-    from web.db.session import SessionLocal
-    from web.db.models import Checkpoint
 
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
 
-    db = SessionLocal()
     try:
-        ckpt = db.query(Checkpoint).filter(Checkpoint.id == checkpoint_id).first()
+        ckpt = active_db.query(Checkpoint).filter(Checkpoint.id == checkpoint_id).first()
         if not ckpt:
             return JSONResponse({"status": "error", "message": "Checkpoint not found"}, status_code=404)
 
@@ -174,22 +180,21 @@ async def get_checkpoint_download_url(checkpoint_id: str):
             "files": files,
         })
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
 
 
 @router.post("/api/v1/models/checkpoints/{checkpoint_id}/pull")
-async def pull_checkpoint_local(checkpoint_id: str):
+async def pull_checkpoint_local(checkpoint_id: str, db: Session = Depends(get_db)):
     """Download checkpoint files from MinIO/S3 down to the local worker/web node."""
     from web.services.storage_service import storage_service
-    from web.db.session import SessionLocal
-    from web.db.models import Checkpoint
 
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
 
-    db = SessionLocal()
     try:
-        ckpt = db.query(Checkpoint).filter(Checkpoint.id == checkpoint_id).first()
+        ckpt = active_db.query(Checkpoint).filter(Checkpoint.id == checkpoint_id).first()
         if not ckpt:
             return JSONResponse({"status": "error", "message": "Checkpoint not found"}, status_code=404)
 
@@ -206,7 +211,8 @@ async def pull_checkpoint_local(checkpoint_id: str):
             })
         return JSONResponse({"status": "error", "message": "Failed to pull files from object storage"}, status_code=500)
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
 
 
 @router.post("/api/v1/models/merge")
@@ -275,4 +281,72 @@ async def trigger_merge(
 
     job_id = state.active_job.job_id if state.active_job else run_id
     return JSONResponse({"status": "started", "job_id": job_id})
+
+
+# ── Hugging Face Base Models Hub Endpoints ─────────────────────────
+
+@router.get("/api/v1/models/hub")
+async def get_hub_models():
+    """List curated Hugging Face models decorated with local cache and default status."""
+    catalog = hf_model_service.list_curated_models()
+    cfg = Config.load()
+    return JSONResponse({
+        "status": "success",
+        "models": catalog,
+        "active_default": cfg.model_id,
+    })
+
+
+@router.get("/api/v1/models/hub/search")
+async def search_hub_models(q: str = ""):
+    """Search text-generation models live on Hugging Face Hub."""
+    models = await hf_model_service.search_hf_hub(q)
+    cfg = Config.load()
+    return JSONResponse({
+        "status": "success",
+        "models": models,
+        "active_default": cfg.model_id,
+    })
+
+
+@router.post("/api/v1/models/hub/set-default")
+async def set_default_base_model(model_id: str = Form(...)):
+    """Set the system-wide active base model in settings.json and database."""
+    success = hf_model_service.set_active_base_model(model_id)
+    if success:
+        return JSONResponse({"status": "success", "default_model_id": model_id})
+    return JSONResponse({"status": "error", "message": "Failed updating default model"}, status_code=500)
+
+
+@router.post("/api/v1/models/hub/download")
+async def trigger_model_download(model_id: str = Form(...)):
+    """Trigger background download of base model weights and tokenizer into cache."""
+    clean_id = model_id.strip()
+    if is_celery_available() and celery_app:
+        celery_task = celery_app.send_task(
+            "web.celery_app.task_download_model",
+            args=[clean_id],
+            queue="data_prep_queue",
+        )
+        hf_model_service.register_download_task(clean_id, celery_task_id=celery_task.id)
+        return JSONResponse({"status": "started", "task_id": celery_task.id, "model_id": clean_id})
+    else:
+        import asyncio
+        asyncio.create_task(hf_model_service.start_background_download(clean_id))
+        return JSONResponse({"status": "started", "model_id": clean_id})
+
+
+@router.get("/api/v1/models/hub/download-status")
+async def get_model_download_status(model_id: str):
+    """Poll background download progress and local cache readiness."""
+    status_data = hf_model_service.get_download_status(model_id)
+    return JSONResponse({
+        "status": "success",
+        "model_id": model_id,
+        "download_status": status_data.get("status", "IDLE"),
+        "progress": status_data.get("progress", 0),
+        "cached": status_data.get("cached", False),
+        "size_gb": status_data.get("size_gb", 0.0),
+        "path": status_data.get("path"),
+    })
 

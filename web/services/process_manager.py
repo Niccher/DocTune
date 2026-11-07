@@ -156,16 +156,22 @@ class ProcessManager:
             run_id = state.active_job.metadata.get("run_id") if state.active_job else None
             if run_id:
                 try:
-                    from datetime import datetime
+                    from datetime import datetime, timezone
                     from web.db.session import SessionLocal
-                    from web.db.models import Run, Checkpoint
+                    from web.db.models import Run, Checkpoint, now_utc
                     if SessionLocal:
                         db_r = SessionLocal()
                         run_rec = db_r.query(Run).filter(Run.id == run_id).first()
                         if run_rec:
-                            run_rec.completed_at = datetime.utcnow()
+                            run_rec.completed_at = now_utc()
                             if run_rec.started_at:
-                                run_rec.duration_sec = round((run_rec.completed_at - run_rec.started_at).total_seconds(), 1)
+                                st = run_rec.started_at
+                                ct = run_rec.completed_at
+                                if st.tzinfo is None and ct.tzinfo is not None:
+                                    st = st.replace(tzinfo=timezone.utc)
+                                elif st.tzinfo is not None and ct.tzinfo is None:
+                                    ct = ct.replace(tzinfo=timezone.utc)
+                                run_rec.duration_sec = round((ct - st).total_seconds(), 1)
                             if state.loss_history:
                                 run_rec.final_loss = state.loss_history[-1]["loss"]
 

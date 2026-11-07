@@ -4,6 +4,7 @@ tests/test_web.py
 Automated test suite verifying route rendering, APIs, and state.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -508,6 +509,7 @@ def test_playground_feedback_and_history():
     from web.db.models import PlaygroundLog
     init_db()
 
+    from datetime import datetime, timezone
     with SessionLocal() as db:
         log = PlaygroundLog(
             id="test_play_log_1",
@@ -515,6 +517,7 @@ def test_playground_feedback_and_history():
             base_model_response="Base ans",
             tuned_model_response="Tuned ans",
             model_name="test-model",
+            created_at=datetime.now(timezone.utc),
         )
         db.merge(log)
         db.commit()
@@ -529,7 +532,7 @@ def test_playground_feedback_and_history():
     assert resp.json()["status"] == "success"
 
     # History API
-    resp = client.get("/api/v1/playground/history")
+    resp = client.get("/api/v1/playground/history?limit=100")
     assert resp.status_code == 200
     history = resp.json()
     assert history["status"] == "success"
@@ -807,6 +810,197 @@ def test_checkpoint_s3_endpoints():
         assert (pull_target / "adapter_config.json").exists()
 
 
+def test_model_indexes_and_timezone_awareness():
+    """Verify performance indexes and timezone-aware datetime helpers."""
+    from web.db.models import UploadedDocument, DatasetSample, Run, Checkpoint, now_utc
+
+    # 1. Verify indexes
+    assert UploadedDocument.file_hash.index is True
+    assert DatasetSample.status.index is True
+    assert DatasetSample.document_id.index is True
+    assert Run.status.index is True
+    assert Run.created_at.index is True
+    assert Checkpoint.adapter_type.index is True
+    assert Checkpoint.created_at.index is True
+
+    # 2. Verify now_utc produces timezone-aware UTC datetime
+    dt = now_utc()
+    assert dt.tzinfo is not None
+    assert str(dt.tzinfo) == "UTC"
+
+
+def test_alembic_config_and_migrations_exist():
+    """Verify Alembic configuration and versioned migration scripts."""
+    alembic_ini = PROJECT_ROOT / "alembic.ini"
+    env_py = PROJECT_ROOT / "alembic" / "env.py"
+    v1 = PROJECT_ROOT / "alembic" / "versions" / "0001_baseline_schema.py"
+    v2 = PROJECT_ROOT / "alembic" / "versions" / "0002_add_indexes_and_timezone_support.py"
+
+    assert alembic_ini.exists()
+    assert env_py.exists()
+    assert v1.exists()
+    assert v2.exists()
+
+
+def test_backup_script_exists_and_executable():
+    """Verify database backup script exists and has execution permissions."""
+    backup_sh = PROJECT_ROOT / "scripts" / "backup_db.sh"
+    assert backup_sh.exists()
+    assert os.access(backup_sh, os.X_OK)
+
+
+def test_resolve_session_semantics():
+    """Verify resolve_session correctly differentiates FastAPI DI Depends objects from active Sessions."""
+    from web.db.session import resolve_session, SessionLocal
+    from fastapi.params import Depends
+
+    # 1. When db is None (default fallback)
+    sess1, should_close1 = resolve_session(None)
+    assert sess1 is not None
+    assert should_close1 is True
+    sess1.close()
+
+    # 2. When db is a FastAPI Depends object (direct function call outside request context)
+    dummy_depends = Depends(lambda: None)
+    sess2, should_close2 = resolve_session(dummy_depends)
+    assert sess2 is not None
+    assert should_close2 is True
+    sess2.close()
+
+    # 3. When db is an actual Session instance
+    real_session = SessionLocal()
+    sess3, should_close3 = resolve_session(real_session)
+    assert sess3 is real_session
+    assert should_close3 is False
+    real_session.close()
+
+
+def test_hf_hub_models_list_endpoint():
+    """Verify GET /api/v1/models/hub returns catalog with cache and token metadata."""
+    resp = client.get("/api/v1/models/hub")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert len(data["models"]) >= 5
+    ids = [m["id"] for m in data["models"]]
+    assert "Qwen/Qwen2.5-1.5B-Instruct" in ids
+    assert "HuggingFaceTB/SmolLM2-1.7B-Instruct" in ids
+    for m in data["models"]:
+        assert "requires_token" in m
+        assert "cached" in m
+        assert "params" in m
+        assert "is_default" in m
+
+
+def test_hf_hub_set_default_model_endpoint():
+    """Verify POST /api/v1/models/hub/set-default updates default base model."""
+    from pipeline.common import Config
+    orig_model = Config.load().model_id
+    try:
+        target_model = "Qwen/Qwen2.5-1.5B-Instruct"
+        resp = client.post("/api/v1/models/hub/set-default", data={"model_id": target_model})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["default_model_id"] == target_model
+
+        # Verify Config.load reflects the new model
+        cfg = Config.load()
+        assert cfg.model_id == target_model
+    finally:
+        client.post("/api/v1/models/hub/set-default", data={"model_id": orig_model})
+
+
+def test_training_view_with_query_param():
+    """Verify GET /training?model_id=... sets form default from URL."""
+    target_model = "microsoft/Phi-3.5-mini-instruct"
+    resp = client.get(f"/training?model_id={target_model}")
+    assert resp.status_code == 200
+    assert target_model in resp.text
+
+
+def test_models_view_contains_hub_models():
+    """Verify GET /models renders the Hugging Face Base Models Hub section."""
+    resp = client.get("/models")
+    assert resp.status_code == 200
+    assert "Hugging Face Base Models Hub" in resp.text
+    assert "Qwen 2.5 (1.5B)" in resp.text
+    assert "Free (No Token)" in resp.text
+
+
+def test_hf_hub_download_status_endpoint():
+    """Verify GET /api/v1/models/hub/download-status returns status."""
+    resp = client.get("/api/v1/models/hub/download-status?model_id=Qwen/Qwen2.5-1.5B-Instruct")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "cached" in data
+
+
+def test_hf_hub_search_endpoint():
+    """Verify GET /api/v1/models/hub/search works for both empty and queried searches."""
+    # Empty query fallback to curated catalog
+    resp_empty = client.get("/api/v1/models/hub/search?q=")
+    assert resp_empty.status_code == 200
+    data_empty = resp_empty.json()
+    assert data_empty["status"] == "success"
+    assert len(data_empty["models"]) >= 5
+
+    # Filtered query (fallback or mock)
+    resp_q = client.get("/api/v1/models/hub/search?q=smol")
+    assert resp_q.status_code == 200
+    data_q = resp_q.json()
+    assert data_q["status"] == "success"
+    assert any("smol" in m["id"].lower() or "smol" in m["name"].lower() for m in data_q["models"])
+
+
+def test_hf_hub_download_trigger_and_progress():
+    """Verify POST /api/v1/models/hub/download registers task and download-status reflects it."""
+    test_model = "test-org/mock-base-model"
+    resp = client.post("/api/v1/models/hub/download", data={"model_id": test_model})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "started"
+    assert data["model_id"] == test_model
+
+    # Check status endpoint immediately after trigger (may be STARTING, DOWNLOADING, IDLE or FAILED if offline)
+    status_resp = client.get(f"/api/v1/models/hub/download-status?model_id={test_model}")
+    assert status_resp.status_code == 200
+    status_data = status_resp.json()
+    assert status_data["status"] == "success"
+    assert status_data["download_status"] in ("STARTING", "DOWNLOADING", "IDLE", "FAILED")
+
+
+def test_hf_hub_cache_deduplication():
+    """Verify hf_model_service.check_model_cache avoids double-counting symlinked blobs."""
+    import tempfile
+    from pathlib import Path
+    from web.services.hf_model_service import hf_model_service
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_base = Path(tmp)
+        folder = cache_base / "models--testorg--testmodel"
+        blobs = folder / "blobs"
+        blobs.mkdir(parents=True)
+        blob = blobs / "sha256_weight"
+        blob.write_bytes(b"0" * (1024 * 1024))  # 1 MB
+
+        snaps = folder / "snapshots" / "main"
+        snaps.mkdir(parents=True)
+        link = snaps / "model.safetensors"
+        link.symlink_to(blob)
+
+        # Monkeypatch get_cache_dir
+        orig_get_cache = hf_model_service.get_cache_dir
+        try:
+            hf_model_service.get_cache_dir = lambda: cache_base
+            res = hf_model_service.check_model_cache("testorg/testmodel")
+            assert res["cached"] is True
+            assert res["size_mb"] == 1.0  # Exactly 1.0 MB, NOT 2.0 MB
+        finally:
+            hf_model_service.get_cache_dir = orig_get_cache
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
@@ -848,6 +1042,18 @@ if __name__ == "__main__":
     test_dataset_curation_endpoints()
     test_playground_feedback_and_history()
     test_benchmarks_and_checkpoints_api()
+    test_hf_hub_models_list_endpoint()
+    test_hf_hub_set_default_model_endpoint()
+    test_training_view_with_query_param()
+    test_models_view_contains_hub_models()
+    test_hf_hub_download_status_endpoint()
+    test_hf_hub_search_endpoint()
+    test_hf_hub_download_trigger_and_progress()
+    test_hf_hub_cache_deduplication()
+    test_model_indexes_and_timezone_awareness()
+    test_alembic_config_and_migrations_exist()
+    test_backup_script_exists_and_executable()
+    test_resolve_session_semantics()
     print("All tests passed successfully!")
 
 

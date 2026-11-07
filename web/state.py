@@ -123,9 +123,9 @@ class AppState:
     def rehydrate_from_db(self):
         """Rehydrate recent_jobs and loss_history from PostgreSQL/SQLite on startup."""
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             from web.db.session import SessionLocal
-            from web.db.models import Run, MetricPoint
+            from web.db.models import Run, MetricPoint, now_utc
             if not SessionLocal:
                 return
 
@@ -136,7 +136,7 @@ class AppState:
                 for r in stale_runs:
                     r.status = "ABORTED"
                     r.error_message = "Server rebooted while task was active."
-                    r.completed_at = datetime.utcnow()
+                    r.completed_at = now_utc()
                 if stale_runs:
                     db.commit()
 

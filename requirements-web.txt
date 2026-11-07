@@ -5,9 +5,11 @@ python-multipart>=0.0.9
 pynvml>=11.5.0
 httpx>=0.27.0
 pydantic>=2.0.0
+huggingface_hub>=0.23.0
 
 # Database & Object Storage
 sqlalchemy>=2.0.0
+alembic>=1.13.0
 asyncpg>=0.29.0
 psycopg2-binary>=2.9.9
 psycopg[binary]>=3.1.0

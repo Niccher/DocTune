@@ -28,8 +28,24 @@
 
           <!-- Base Model ID -->
           <div class="mb-3">
-            <label class="form-label small fw-semibold">Base Model ID</label>
-            <input type="text" class="form-control form-control-sm" name="model_id" value="{{ config.model_id }}" required>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small fw-semibold mb-0">Base Model ID</label>
+              <a href="/models#hub-models" class="text-decoration-none small text-primary">
+                <i class="bi bi-cloud-arrow-down me-1"></i>Browse Hub
+              </a>
+            </div>
+            <input type="text" class="form-control form-control-sm font-monospace" name="model_id" list="suggestedModels" value="{{ config.model_id }}" required>
+            <datalist id="suggestedModels">
+              <option value="Qwen/Qwen2.5-1.5B-Instruct">Qwen 2.5 (1.5B) — Free / Ungated</option>
+              <option value="HuggingFaceTB/SmolLM2-1.7B-Instruct">SmolLM2 (1.7B) — Free / Ultra-light</option>
+              <option value="Qwen/Qwen2.5-3B-Instruct">Qwen 2.5 (3B) — Free / Ungated</option>
+              <option value="microsoft/Phi-3.5-mini-instruct">Phi-3.5 Mini (3.8B) — Free / 128k context</option>
+              <option value="meta-llama/Llama-3.2-1B-Instruct">Llama 3.2 (1B) — Gated (HF Token)</option>
+              <option value="meta-llama/Llama-3.2-3B-Instruct">Llama 3.2 (3B) — Gated (HF Token)</option>
+              <option value="Qwen/Qwen2.5-7B-Instruct">Qwen 2.5 (7B) — Free / High Power</option>
+              <option value="meta-llama/Meta-Llama-3-8B-Instruct">Meta Llama 3 (8B) — Standard Gated</option>
+            </datalist>
+            <div class="form-text small">Select a suggested model or type any model ID from Hugging Face.</div>
           </div>
 
           <!-- LoRA Rank & Alpha -->

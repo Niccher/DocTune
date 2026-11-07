@@ -108,6 +108,7 @@ services:
       - ./output_fft:/app/output_fft
       - ./output_merged:/app/output_merged
       - scratch_data:/app/.scratch
+      - hf_cache:/root/.cache/huggingface
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

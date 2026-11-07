@@ -7,8 +7,9 @@ and WebSocket endpoint for live log streaming and loss graphs.
 
 import json
 import time
+from typing import Optional
 from pathlib import Path
-from fastapi import APIRouter, Request, Form, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, Form, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from pipeline.common import PROJECT_ROOT, Config
@@ -24,15 +25,18 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/training", response_class=HTMLResponse)
-async def training_view(request: Request):
+async def training_view(request: Request, model_id: Optional[str] = Query(None)):
     cfg = Config.load()
+    cfg_dict = cfg.to_dict()
+    if model_id and model_id.strip():
+        cfg_dict["model_id"] = model_id.strip()
     return templates.TemplateResponse(
         request=request,
         name="training.html",
         context={
             "page_title": "Training Studio",
             "active_page": "training",
-            "config": cfg.to_dict(),
+            "config": cfg_dict,
             "active_job": state.active_job.to_dict() if state.active_job else None,
             "loss_history": state.loss_history,
         },

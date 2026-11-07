@@ -1,9 +1,4 @@
-"""
-web/main.py
------------
-FastAPI application entrypoint for the Private Document Fine-Tuning Studio.
-"""
-
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -11,11 +6,33 @@ from fastapi.staticfiles import StaticFiles
 from pipeline.common import PROJECT_ROOT
 from web.routers import dashboard, data_prep, training, models, playground, admin
 from web.services.process_manager import process_mgr
+from web.db.session import init_db
+from web.services.storage_service import storage_service
+from web.services.redis_subscriber import start_redis_subscriber, stop_redis_subscriber
+from web.state import state
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Modern lifespan context manager managing application startup and graceful shutdown."""
+    # ── Startup Phase ──────────────────────────────────────────────────────
+    init_db()
+    storage_service.ensure_buckets_exist()
+    state.rehydrate_from_db()
+    start_redis_subscriber()
+
+    yield
+
+    # ── Shutdown Phase ─────────────────────────────────────────────────────
+    await stop_redis_subscriber()
+    await process_mgr.abort_current_job()
+
 
 app = FastAPI(
     title="Private Document Fine-Tuning Studio",
     description="AdminLTE v4 dashboard for managing LLM document fine-tuning pipelines",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Ensure static directory exists and mount
@@ -32,21 +49,6 @@ app.include_router(playground.router)
 app.include_router(admin.router)
 
 
-
-from web.db.session import init_db
-from web.services.storage_service import storage_service
-from web.services.redis_subscriber import start_redis_subscriber, stop_redis_subscriber
-from web.state import state
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database tables, rehydrate historical state, and start telemetry bridge."""
-    init_db()
-    storage_service.ensure_buckets_exist()
-    state.rehydrate_from_db()
-    start_redis_subscriber()
-
-
 @app.get("/health")
 async def health_check():
     """Healthcheck probe for Docker containers and load balancers."""
@@ -56,10 +58,3 @@ async def health_check():
         "version": "1.0.0",
         "s3_storage": storage_service.is_s3_enabled(),
     }
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Ensure any running background processes and subscribers are cleanly terminated."""
-    await stop_redis_subscriber()
-    await process_mgr.abort_current_job()

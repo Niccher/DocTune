@@ -16,7 +16,8 @@ try:
     from web.db.models import Base
     HAS_SQLALCHEMY = True
 except ImportError:
-    pass
+    Session = None
+    Base = None
 
 logger = logging.getLogger("doctune.db")
 
@@ -25,6 +26,8 @@ DATABASE_URL_SYNC = os.getenv("DATABASE_URL_SYNC") or os.getenv("DATABASE_URL")
 
 engine = None
 SessionLocal = None
+if not HAS_SQLALCHEMY:
+    Session = None
 
 if HAS_SQLALCHEMY:
     # Normalize sync PostgreSQL URL to explicit psycopg2 driver
@@ -51,13 +54,29 @@ if HAS_SQLALCHEMY:
 
 
 def init_db():
-    """Create all database tables if they do not already exist."""
+    """Create or upgrade database tables to the latest schema revision."""
     if not HAS_SQLALCHEMY or not engine:
         logger.debug("SQLAlchemy not installed; using local file store.")
         return
     try:
+        # 1. Attempt versioned migration with Alembic if available
+        try:
+            from alembic.config import Config
+            from alembic import command
+            alembic_ini_path = PROJECT_ROOT / "alembic.ini"
+            if alembic_ini_path.exists():
+                alembic_cfg = Config(str(alembic_ini_path))
+                command.upgrade(alembic_cfg, "head")
+                logger.info("Database schema migrated to head via Alembic.")
+                return
+        except ImportError:
+            pass
+        except Exception as ae:
+            logger.warning("Alembic upgrade notice (falling back to create_all): %s", ae)
+
+        # 2. Declarative fallback
         Base.metadata.create_all(bind=engine)
-        logger.info("Database schema initialized successfully.")
+        logger.info("Database schema initialized successfully via metadata.")
     except Exception as e:
         logger.warning("Database initialization notice (will retry on connect): %s", e)
 
@@ -72,3 +91,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def resolve_session(db=None):
+    """
+    Safely resolve a database session whether called within FastAPI (with injected Session)
+    or directly as a Python function (where db defaults to a Depends instance or None).
+    Returns a tuple of (session, should_close).
+    """
+    if HAS_SQLALCHEMY and Session and isinstance(db, Session):
+        return db, False
+    if HAS_SQLALCHEMY and SessionLocal:
+        return SessionLocal(), True
+    return None, False

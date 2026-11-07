@@ -1,15 +1,16 @@
 import time
 from typing import Optional
 from pathlib import Path
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
+from sqlalchemy.orm import Session
 
 from pipeline.common import PROJECT_ROOT, Config
 from pipeline.evaluate import TEST_CASES
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
 from web.templates_config import templates
-from web.db.session import SessionLocal
+from web.db.session import SessionLocal, get_db, resolve_session
 from web.db.models import PlaygroundLog, EvaluationBenchmark, Checkpoint
 
 router = APIRouter()
@@ -145,9 +146,10 @@ async def playground_chat(prompt: str = Form(...)):
 
 
 @router.post("/api/v1/playground/feedback")
-async def playground_feedback(request: Request):
+async def playground_feedback(request: Request, db: Session = Depends(get_db)):
     """Save human review rating and notes for a playground prompt comparison."""
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
 
     log_id = ""
@@ -168,33 +170,33 @@ async def playground_feedback(request: Request):
     if not log_id or not rating:
         return JSONResponse({"status": "error", "message": "log_id and rating are required"}, status_code=400)
 
-    db = SessionLocal()
     try:
-        entry = db.query(PlaygroundLog).filter(PlaygroundLog.id == log_id).first()
+        entry = active_db.query(PlaygroundLog).filter(PlaygroundLog.id == log_id).first()
         if not entry:
             return JSONResponse({"status": "error", "message": "Log entry not found"}, status_code=404)
         entry.rating = rating.lower().strip()
         if notes:
             entry.notes = notes.strip()
-        db.commit()
+        active_db.commit()
         return JSONResponse({"status": "success", "log_id": log_id, "rating": entry.rating})
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
 
 
 @router.get("/api/v1/playground/history")
-async def playground_history(limit: int = 20):
+async def playground_history(limit: int = 20, db: Session = Depends(get_db)):
     """Retrieve recent prompt evaluation comparisons and human feedback."""
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "success", "total": 0, "history": []})
-    db = SessionLocal()
+
     try:
-        logs = db.query(PlaygroundLog).order_by(PlaygroundLog.created_at.desc()).limit(limit).all()
+        logs = active_db.query(PlaygroundLog).order_by(PlaygroundLog.created_at.desc()).limit(limit).all()
         return JSONResponse({
             "status": "success",
             "total": len(logs),
             "history": [
-
                 {
                     "id": l.id,
                     "prompt": l.prompt,
@@ -209,21 +211,22 @@ async def playground_history(limit: int = 20):
             ],
         })
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
 
 
 @router.get("/api/v1/benchmarks")
-async def get_benchmarks_api():
+async def get_benchmarks_api(db: Session = Depends(get_db)):
     """Return model evaluation benchmarks leaderboard."""
-    if not SessionLocal:
+    active_db, should_close = resolve_session(db)
+    if not active_db:
         return JSONResponse({"status": "success", "benchmarks": []})
-    db = SessionLocal()
+
     try:
-        results = db.query(EvaluationBenchmark).order_by(EvaluationBenchmark.evaluated_at.desc()).all()
+        results = active_db.query(EvaluationBenchmark).order_by(EvaluationBenchmark.evaluated_at.desc()).all()
         return JSONResponse({
             "status": "success",
             "benchmarks": [
-
                 {
                     "id": b.id,
                     "checkpoint_id": b.checkpoint_id,
@@ -241,4 +244,5 @@ async def get_benchmarks_api():
             ]
         })
     finally:
-        db.close()
+        if should_close and active_db:
+            active_db.close()
