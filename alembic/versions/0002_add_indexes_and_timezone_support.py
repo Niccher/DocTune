@@ -22,11 +22,39 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
+    def column_exists(table_name: str, column_name: str) -> bool:
+        if not inspector.has_table(table_name):
+            return False
+        columns = [c["name"] for c in inspector.get_columns(table_name)]
+        return column_name in columns
+
+    def ensure_column(table_name: str, column_name: str, col_type, **kw):
+        if inspector.has_table(table_name) and not column_exists(table_name, column_name):
+            op.add_column(table_name, sa.Column(column_name, col_type, **kw))
+
     def index_exists(table_name: str, index_name: str) -> bool:
         if not inspector.has_table(table_name):
             return False
         indices = [i["name"] for i in inspector.get_indexes(table_name)]
         return index_name in indices
+
+    # Ensure required columns exist on legacy tables before indexing
+    ensure_column("uploaded_documents", "file_hash", sa.String(length=64), nullable=True)
+    ensure_column("uploaded_documents", "file_format", sa.String(length=16), nullable=True)
+    ensure_column("uploaded_documents", "s3_bucket", sa.String(length=128), nullable=True)
+    ensure_column("uploaded_documents", "s3_key", sa.String(length=512), nullable=True)
+    ensure_column("uploaded_documents", "size_bytes", sa.Integer(), server_default="0")
+    ensure_column("uploaded_documents", "chunk_count", sa.Integer(), server_default="0")
+    ensure_column("uploaded_documents", "status", sa.String(length=32), server_default="READY")
+
+    ensure_column("dataset_samples", "status", sa.String(length=32), server_default="APPROVED")
+    ensure_column("dataset_samples", "document_id", sa.String(length=64), nullable=True)
+
+    ensure_column("runs", "status", sa.String(length=32), server_default="PENDING")
+    ensure_column("runs", "created_at", sa.DateTime(timezone=True), nullable=True)
+
+    ensure_column("checkpoints", "adapter_type", sa.String(length=32), server_default="qlora")
+    ensure_column("checkpoints", "created_at", sa.DateTime(timezone=True), nullable=True)
 
     # 1. uploaded_documents.file_hash
     if not index_exists("uploaded_documents", "ix_uploaded_documents_file_hash"):
