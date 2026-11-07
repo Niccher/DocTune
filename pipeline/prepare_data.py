@@ -252,10 +252,21 @@ Document excerpt:
 # ============================================================
 def process_one_file(file_path: Path, client: OpenAI, model: str,
                      output_file: Path, max_chunks: int,
-                     chunk_size: int, overlap: int) -> int:
+                     chunk_size: int, overlap: int,
+                     redact_pii: bool = True, pii_mode: str = "placeholder") -> int:
     text = extract_text(file_path)
     if not text:
         return 0
+
+    if redact_pii:
+        try:
+            from pipeline.pii_redactor import PIIRedactor
+        except ImportError:
+            from pii_redactor import PIIRedactor
+        redactor = PIIRedactor(mode=pii_mode)
+        text, counts = redactor.redact(text)
+        if counts:
+            print(f"  [PII_SCRUBBED] {file_path.name}: {counts}", flush=True)
 
     chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)[:max_chunks]
     written = 0
@@ -282,7 +293,9 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
                     max_chunks: int = DEFAULT_MAX_CHUNKS,
                     chunk_size: int = DEFAULT_CHUNK_SIZE,
                     overlap: int = DEFAULT_CHUNK_OVERLAP,
-                    max_workers: int = DEFAULT_MAX_WORKERS):
+                    max_workers: int = DEFAULT_MAX_WORKERS,
+                    redact_pii: bool = True,
+                    pii_mode: str = "placeholder"):
     if any(pkg is None for pkg in [pl, PdfReader, Document, OpenAI]):
         raise ImportError(
             "Data ingestion packages (polars, pypdf, python-docx, openai) are not installed. "
@@ -318,6 +331,7 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
     effective_url = resolve_teacher_url(teacher_url)
     effective_key = teacher_api_key.strip() if teacher_api_key and teacher_api_key.strip() else "not-needed"
     print(f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
+    print(f"PII Redaction: {'ENABLED (' + pii_mode + ')' if redact_pii else 'DISABLED'}")
     client = OpenAI(base_url=effective_url, api_key=effective_key)
 
     total_pairs = 0
@@ -325,7 +339,7 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         futures = {
             executor.submit(
                 process_one_file, f, client, teacher_model, output_file,
-                max_chunks, chunk_size, overlap
+                max_chunks, chunk_size, overlap, redact_pii, pii_mode
             ): f for f in all_files
         }
         for future in as_completed(futures):
@@ -359,6 +373,9 @@ def main():
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
     parser.add_argument("--overlap", type=int, default=DEFAULT_CHUNK_OVERLAP)
     parser.add_argument("--workers", type=int, default=DEFAULT_MAX_WORKERS)
+    parser.add_argument("--redact-pii", action="store_true", default=True, help="Enable PII redaction")
+    parser.add_argument("--no-redact-pii", dest="redact_pii", action="store_false", help="Disable PII redaction")
+    parser.add_argument("--pii-mode", type=str, default="placeholder", choices=["placeholder", "mask", "synthetic_hash"])
 
     args = parser.parse_args()
     run_preparation(
@@ -370,7 +387,9 @@ def main():
         max_chunks=args.max_chunks,
         chunk_size=args.chunk_size,
         overlap=args.overlap,
-        max_workers=args.workers
+        max_workers=args.workers,
+        redact_pii=args.redact_pii,
+        pii_mode=args.pii_mode,
     )
 
 

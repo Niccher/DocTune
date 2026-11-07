@@ -42,6 +42,8 @@ if HAS_CELERY:
         task_routes={
             "web.celery_app.task_train_model": {"queue": "training_queue"},
             "web.celery_app.task_merge_adapters": {"queue": "training_queue"},
+            "web.celery_app.task_export_gguf": {"queue": "training_queue"},
+            "web.celery_app.task_train_dpo": {"queue": "training_queue"},
             "web.celery_app.task_prepare_data": {"queue": "data_prep_queue"},
             "web.celery_app.task_download_model": {"queue": "data_prep_queue"},
         },
@@ -226,10 +228,12 @@ if HAS_CELERY and app:
         chunk_size: int = 1000,
         overlap: int = 150,
         workers: int = 12,
+        redact_pii: bool = True,
+        pii_mode: str = "placeholder",
     ):
         """Execute document chunking and teacher LLM dataset generation inside distributed worker."""
         from pipeline.prepare_data import run_preparation, RAW_DOCS_DIR, DEFAULT_JSONL
-        start_msg = f"--- [CELERY WORKER] Document processing started for job {run_id} ---"
+        start_msg = f"--- [CELERY WORKER] Document processing started for job {run_id} (PII Redaction: {redact_pii}) ---"
         publish_redis_event(f"run:{run_id}:stream", {
             "type": "log",
             "line": start_msg,
@@ -246,6 +250,8 @@ if HAS_CELERY and app:
                 chunk_size=chunk_size,
                 overlap=overlap,
                 max_workers=workers,
+                redact_pii=redact_pii,
+                pii_mode=pii_mode,
             )
             done_msg = f"--- [COMPLETED] Wrote {total_pairs} instruction pairs ---"
             publish_redis_event(f"run:{run_id}:stream", {
@@ -358,6 +364,155 @@ if HAS_CELERY and app:
                 db.commit()
 
             err_msg = f"--- [FAILED] Adapter merge error: {str(e)} ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "FAILED",
+                "line": err_msg,
+                "message": err_msg,
+            })
+            raise e
+        finally:
+            if db:
+                db.close()
+
+
+    @app.task(bind=True, name="web.celery_app.task_export_gguf")
+    def task_export_gguf(self, run_id: str, model_dir: str, export_dir: str, model_name: str, quantization: str):
+        """Execute GGUF model conversion and Ollama Modelfile generation inside distributed worker."""
+        from pipeline.export_gguf import run_conversion
+        from pathlib import Path
+        from web.services.storage_service import storage_service
+
+        start_msg = f"--- [CELERY WORKER] GGUF conversion started for {model_name} ({quantization}) ---"
+        publish_redis_event(f"run:{run_id}:stream", {
+            "type": "log",
+            "line": start_msg,
+            "message": start_msg,
+        })
+        try:
+            m_path = Path(model_dir)
+            e_path = Path(export_dir)
+            res = run_conversion(m_path, e_path, model_name, quantization)
+
+            # Upload to MinIO merged / checkpoints bucket if storage enabled
+            if e_path.exists():
+                upload_msg = f"--- [STORAGE] Uploading GGUF package to S3: {storage_service.bucket_merged}/gguf_{run_id} ---"
+                publish_redis_event(f"run:{run_id}:stream", {
+                    "type": "log",
+                    "line": upload_msg,
+                    "message": upload_msg,
+                })
+                storage_service.upload_dir(e_path, storage_service.bucket_merged, s3_prefix=f"gguf_{run_id}")
+
+            done_msg = f"--- [COMPLETED] GGUF model & Modelfile exported to {export_dir} ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "COMPLETED",
+                "line": done_msg,
+                "message": done_msg,
+            })
+            return res
+        except Exception as e:
+            logger.error("GGUF export failed: %s", e)
+            err_msg = f"--- [FAILED] GGUF export error: {str(e)} ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "FAILED",
+                "line": err_msg,
+                "message": err_msg,
+            })
+            raise e
+
+
+    @app.task(bind=True, name="web.celery_app.task_train_dpo")
+    def task_train_dpo(self, run_id: str, model_id: str, dataset_path: str, output_dir: str, beta: float, lr: float, epochs: int):
+        """Execute DPO preference alignment fine-tuning inside distributed worker."""
+        from pipeline.common import Config
+        from pipeline.train_dpo import train_dpo
+        from pathlib import Path
+        from web.db.session import SessionLocal
+        from web.db.models import Run, MetricPoint, Checkpoint, now_utc
+        from web.services.storage_service import storage_service
+
+        db = SessionLocal() if SessionLocal else None
+        run = db.query(Run).filter(Run.id == run_id).first() if db else None
+        if run:
+            run.status = "RUNNING"
+            run.started_at = now_utc()
+            db.commit()
+
+        start_msg = f"--- [CELERY WORKER] DPO preference training {run_id} started (Base: {model_id}, Beta: {beta}) ---"
+        publish_redis_event(f"run:{run_id}:stream", {
+            "type": "log",
+            "line": start_msg,
+            "message": start_msg,
+        })
+        try:
+            cfg = Config.load()
+            cfg.model_id = model_id
+            cfg.learning_rate_lora = lr
+            cfg.num_train_epochs = epochs
+
+            cb_list = []
+            try:
+                from transformers import TrainerCallback
+
+                class CeleryDPOCallback(TrainerCallback):
+                    def on_log(self, args, state_hf, control, logs=None, **kwargs):
+                        if logs and "loss" in logs:
+                            try:
+                                step = int(state_hf.global_step)
+                                loss = float(logs["loss"])
+                                epoch = float(state_hf.epoch or 0.0)
+                                publish_redis_event(f"run:{run_id}:stream", {
+                                    "type": "metric",
+                                    "data": {"step": step, "loss": round(loss, 4), "epoch": round(epoch, 4)},
+                                })
+                                if db:
+                                    mp = MetricPoint(run_id=run_id, step=step, epoch=epoch, loss=loss)
+                                    db.add(mp)
+                                    db.commit()
+                            except Exception:
+                                pass
+                cb_list.append(CeleryDPOCallback())
+            except Exception:
+                pass
+
+            out_p = train_dpo(
+                cfg=cfg,
+                dataset_path=Path(dataset_path),
+                output_dir=Path(output_dir),
+                beta=beta,
+                learning_rate=lr,
+                num_train_epochs=epochs,
+                callbacks=cb_list,
+            )
+
+            # Upload to S3 checkpoints
+            if out_p.exists():
+                storage_service.upload_dir(out_p, storage_service.bucket_checkpoints, s3_prefix=f"dpo_{run_id}")
+
+            if db and run:
+                run.status = "COMPLETED"
+                run.completed_at = now_utc()
+                db.commit()
+
+            done_msg = f"--- [COMPLETED] DPO preference training finished successfully ({out_p}) ---"
+            publish_redis_event(f"run:{run_id}:stream", {
+                "type": "status",
+                "status": "COMPLETED",
+                "line": done_msg,
+                "message": done_msg,
+            })
+            return {"status": "success", "run_id": run_id, "output_dir": str(out_p)}
+        except Exception as e:
+            logger.error("DPO training task failed: %s", e)
+            if db and run:
+                run.status = "FAILED"
+                run.error_message = str(e)
+                run.completed_at = now_utc()
+                db.commit()
+            err_msg = f"--- [FAILED] DPO training error: {str(e)} ---"
             publish_redis_event(f"run:{run_id}:stream", {
                 "type": "status",
                 "status": "FAILED",

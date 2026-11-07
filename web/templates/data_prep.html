@@ -174,6 +174,36 @@
               <label class="form-label small fw-semibold">Workers</label>
               <input type="number" class="form-control form-control-sm" name="workers" value="8" min="1" max="32">
             </div>
+          <!-- PII Protection & Compliance -->
+          <div class="p-2 mb-3 border rounded bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" role="switch" id="redact_pii" name="redact_pii" value="true" checked>
+                <label class="form-check-label small fw-semibold" for="redact_pii">
+                  <i class="bi bi-shield-lock-fill text-success me-1"></i> Enterprise PII Redaction
+                </label>
+              </div>
+              <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 0.7rem;">Presidio / Pattern Guard</span>
+            </div>
+            <p class="text-muted mb-2" style="font-size: 0.75rem;">
+              Scrub names, emails, phones, SSNs, credit cards, IP addresses, and API keys before chunking and Teacher LLM synthesis.
+            </p>
+            <div class="row g-2 align-items-center">
+              <div class="col-sm-6">
+                <label class="form-label text-muted mb-0" style="font-size: 0.72rem;">Redaction Format</label>
+                <select class="form-select form-select-sm" name="pii_mode" id="pii_mode">
+                  <option value="placeholder" selected>Placeholder ([EMAIL], [PERSON])</option>
+                  <option value="mask">Character Mask (j***@corp.com)</option>
+                  <option value="synthetic_hash">Synthetic Hash ([PERSON_a4f9])</option>
+                </select>
+              </div>
+              <div class="col-sm-6 text-sm-end pt-2 pt-sm-3">
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testPIIScrubber()">
+                  <i class="bi bi-shield-check me-1"></i> Preview Scrub
+                </button>
+              </div>
+            </div>
+            <div id="piiPreviewOutput" class="mt-2 d-none p-2 border rounded bg-body small font-monospace"></div>
           </div>
 
           <div class="d-flex justify-content-between align-items-center pt-2 border-top">
@@ -590,5 +620,34 @@
       showToast('Error: ' + e.message, 'error');
     }
   });
+
+  async function testPIIScrubber() {
+    const box = document.getElementById('piiPreviewOutput');
+    const mode = document.getElementById('pii_mode').value;
+    const sampleText = "Employee John Doe (john.doe@enterprise.com, phone 415-555-0199, SSN 000-12-3456) accessed server 10.0.4.15 using API key sk-prod99a8b7c6d5e4f3a2b1c0.";
+    box.classList.remove('d-none');
+    box.innerHTML = '<span class="spinner-border spinner-border-sm me-1 text-primary"></span> Analyzing PII entities...';
+
+    try {
+      const res = await fetch('/api/v1/data-prep/preview-redaction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: sampleText, mode: mode }),
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        let badgeHtml = Object.entries(data.counts).map(([k, v]) => `<span class="badge bg-secondary me-1">${k}: ${v}</span>`).join('');
+        box.innerHTML = `
+          <div class="mb-1 text-success fw-semibold"><i class="bi bi-check2-circle me-1"></i> Scrubbed (${data.entities_detected.length} entities):</div>
+          <div class="text-secondary small mb-2">${badgeHtml}</div>
+          <div class="p-2 border rounded bg-body-secondary text-break">${data.redacted_text}</div>
+        `;
+      } else {
+        box.innerHTML = '<span class="text-danger">Failed to preview redaction.</span>';
+      }
+    } catch (e) {
+      box.innerHTML = '<span class="text-danger">Error: ' + e.message + '</span>';
+    }
+  }
 </script>
 {% endblock %}

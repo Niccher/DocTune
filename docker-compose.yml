@@ -177,6 +177,21 @@ services:
     networks:
       - doctune-net
 
+  # ── 7. Optional In-Docker Ollama Engine (Synthetic Q&A Teacher) ────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: doctune-ollama
+    restart: unless-stopped
+    profiles:
+      - ollama
+      - local-llm
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - doctune-net
+
 # ── Volumes & Networks ────────────────────────────────────────────────────────
 volumes:
   pg_data:
@@ -189,6 +204,8 @@ volumes:
     name: doctune_scratch_data
   hf_cache:
     name: doctune_hf_cache
+  ollama_models:
+    name: doctune_ollama_models
 
 networks:
   doctune-net:

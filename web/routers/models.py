@@ -283,6 +283,120 @@ async def trigger_merge(
     return JSONResponse({"status": "started", "job_id": job_id})
 
 
+@router.post("/api/v1/models/export-gguf")
+async def trigger_export_gguf(
+    model_dir: str = Form("output_merged"),
+    export_dir: str = Form("output_gguf"),
+    model_name: str = Form("doctune-llama3-8b"),
+    quantization: str = Form("q4_k_m"),
+):
+    if state.active_job is not None:
+        return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
+
+    src_path = Path(model_dir)
+    if not src_path.is_absolute():
+        src_path = PROJECT_ROOT / model_dir
+    if not src_path.exists():
+        return JSONResponse({"status": "error", "message": f"Model directory does not exist: {model_dir}"}, status_code=400)
+
+    out_path = Path(export_dir)
+    if not out_path.is_absolute():
+        out_path = PROJECT_ROOT / export_dir
+
+    run_id = f"gguf_{int(time.time())}"
+    is_celery = is_celery_available() and celery_app
+
+    if is_celery:
+        job = state.set_job(
+            job_type=JobType.EXPORT_GGUF,
+            metadata={"model_dir": str(src_path), "export_dir": str(out_path), "model_name": model_name, "quantization": quantization, "run_id": run_id, "mode": "celery"},
+        )
+        await state.add_log(f"--- [DISPATCH] GGUF conversion {run_id} dispatched to Celery cluster ---")
+        celery_task = celery_app.send_task(
+            "web.celery_app.task_export_gguf",
+            args=[run_id, str(src_path), str(out_path), model_name, quantization],
+            queue="training_queue",
+        )
+        job.metadata["celery_task_id"] = celery_task.id
+        return JSONResponse({"status": "started", "job_id": run_id})
+
+    args = [
+        "--model-dir", str(src_path),
+        "--export-dir", str(out_path),
+        "--model-name", model_name,
+        "--quantization", quantization,
+    ]
+
+    await process_mgr.run_pipeline_script(
+        job_type=JobType.EXPORT_GGUF,
+        script_module="pipeline.export_gguf",
+        args=args,
+        cwd=PROJECT_ROOT,
+        metadata={"model_dir": str(src_path), "export_dir": str(out_path), "model_name": model_name, "quantization": quantization, "run_id": run_id},
+    )
+
+    job_id = state.active_job.job_id if state.active_job else run_id
+    return JSONResponse({"status": "started", "job_id": job_id})
+
+
+@router.get("/api/v1/models/modelfile")
+async def get_ollama_modelfile(model_dir: str = "output_merged", model_name: str = "doctune-llama3-8b"):
+    """Generate or retrieve the Ollama Modelfile for a model directory."""
+    from pipeline.export_gguf import detect_chat_template, generate_ollama_modelfile
+    src_path = Path(model_dir)
+    if not src_path.is_absolute():
+        src_path = PROJECT_ROOT / model_dir
+
+    tmpl_cfg = detect_chat_template(src_path)
+    gguf_name = f"{model_name}-q4_k_m.gguf"
+    content = generate_ollama_modelfile(gguf_name, tmpl_cfg)
+    return JSONResponse({
+        "status": "success",
+        "model_name": model_name,
+        "modelfile": content,
+        "run_command": f"ollama create {model_name} -f Modelfile",
+    })
+
+
+@router.post("/api/v1/models/ollama/register")
+async def register_ollama_model(
+    model_name: str = Form("doctune-llama3-8b"),
+    modelfile_path: str = Form("output_gguf/Modelfile"),
+    ollama_url: str = Form("http://localhost:11434"),
+):
+    """Trigger local Ollama engine to create the model from generated Modelfile."""
+    import httpx
+    target = Path(modelfile_path)
+    if not target.is_absolute():
+        target = PROJECT_ROOT / modelfile_path
+
+    if not target.exists():
+        return JSONResponse({"status": "error", "message": f"Modelfile not found at {modelfile_path}"}, status_code=404)
+
+    modelfile_content = target.read_text(encoding="utf-8")
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{ollama_url.rstrip('/')}/api/create",
+                json={"name": model_name, "modelfile": modelfile_content, "stream": False},
+            )
+            if resp.status_code == 200:
+                return JSONResponse({
+                    "status": "success",
+                    "message": f"Successfully registered '{model_name}' in Ollama!",
+                    "ollama_response": resp.json() if resp.text else {},
+                })
+            return JSONResponse({
+                "status": "error",
+                "message": f"Ollama returned HTTP {resp.status_code}: {resp.text}",
+            }, status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse({
+            "status": "offline",
+            "message": f"Could not reach Ollama at {ollama_url}. Use 'bash {target.parent}/run_ollama.sh' locally: {e}",
+        })
+
+
 # ── Hugging Face Base Models Hub Endpoints ─────────────────────────
 
 @router.get("/api/v1/models/hub")

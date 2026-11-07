@@ -160,6 +160,9 @@
                   <li><strong>Size:</strong> {{ checkpoints.merged.size_mb }} MB</li>
                   <li><strong>Files:</strong> {{ checkpoints.merged.files_count }}</li>
                 </ul>
+                <button type="button" class="btn btn-sm btn-outline-primary w-100" data-bs-toggle="modal" data-bs-target="#ggufExportModal">
+                  <i class="bi bi-cpu me-1"></i> Export to GGUF / Ollama
+                </button>
               {% else %}
                 <p class="small text-muted mb-3">Merge adapter weights to create a standalone model.</p>
               {% endif %}
@@ -260,6 +263,70 @@
         <h6 class="fw-bold mb-1">Serve with Ollama</h6>
         <pre class="bg-dark text-light p-3 rounded small mb-0"><code>ollama create my-private-model -f ./Modelfile
 ollama run my-private-model</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GGUF & Ollama Export Modal -->
+<div class="modal fade" id="ggufExportModal" tabindex="-1" aria-labelledby="ggufModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold" id="ggufModalLabel"><i class="bi bi-cpu text-primary me-2"></i>Export to GGUF & Ollama</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-3">
+          Convert merged Hugging Face safetensors into quantized <code>.gguf</code> weights and generate a custom Ollama <code>Modelfile</code> with the model's exact chat template and stop tokens.
+        </p>
+
+        <form id="ggufExportForm">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Source Merged Directory</label>
+              <input type="text" class="form-control form-control-sm font-monospace" name="model_dir" value="{{ cfg.output_merged }}" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Target Output Directory</label>
+              <input type="text" class="form-control form-control-sm font-monospace" name="export_dir" value="output_gguf" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Ollama Model Tag / Name</label>
+              <input type="text" class="form-control form-control-sm font-monospace" id="ggufModelName" name="model_name" value="doctune-llama3-8b" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Quantization Type</label>
+              <select class="form-select form-select-sm" name="quantization">
+                <option value="q4_k_m" selected>Q4_K_M (Recommended 4.5 GB - Best Speed/RAM)</option>
+                <option value="q5_k_m">Q5_K_M (5.5 GB - Higher precision)</option>
+                <option value="q8_0">Q8_0 (8.5 GB - Near original FP16)</option>
+                <option value="f16">F16 (16 GB - Unquantized)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewModelfile()">
+              <i class="bi bi-file-earmark-code me-1"></i> Preview Modelfile
+            </button>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-outline-success btn-sm" onclick="registerWithOllama()">
+                <i class="bi bi-box-arrow-in-right me-1"></i> Register with Local Ollama
+              </button>
+              <button type="submit" class="btn btn-primary btn-sm" id="btnRunGGUFExport">
+                <i class="bi bi-play-circle me-1"></i> Start GGUF Conversion
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <div id="modelfilePreviewBox" class="d-none">
+          <label class="form-label small fw-semibold text-secondary">Generated Ollama Modelfile:</label>
+          <pre class="bg-dark text-light p-3 rounded small font-monospace" id="modelfileContent"></pre>
+        </div>
+
+        <div id="ollamaStatusBox" class="d-none alert alert-info py-2 small mb-0"></div>
       </div>
     </div>
   </div>
@@ -528,6 +595,78 @@ ollama run my-private-model</code></pre>
         clearInterval(timer);
       }
     }, 2500);
+  }
+
+  // ── GGUF & Ollama Client Handlers ─────────────────────────────────────
+  document.getElementById('ggufExportForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btnRunGGUFExport');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Exporting GGUF...';
+
+    const formData = new FormData(e.target);
+    try {
+      const res = await fetch('/api/v1/models/export-gguf', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('GGUF conversion job dispatched!', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('ggufExportModal'))?.hide();
+      } else {
+        showToast('Export failed: ' + (data.message || 'Unknown error'), 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-circle me-1"></i> Start GGUF Conversion';
+    }
+  });
+
+  async function previewModelfile() {
+    const box = document.getElementById('modelfilePreviewBox');
+    const content = document.getElementById('modelfileContent');
+    const modelName = document.getElementById('ggufModelName').value;
+
+    try {
+      const res = await fetch(`/api/v1/models/modelfile?model_name=${encodeURIComponent(modelName)}`);
+      const data = await res.json();
+      if (data.status === 'success') {
+        content.innerText = data.modelfile;
+        box.classList.remove('d-none');
+      }
+    } catch (err) {
+      showToast('Could not load Modelfile: ' + err.message, 'error');
+    }
+  }
+
+  async function registerWithOllama() {
+    const statusBox = document.getElementById('ollamaStatusBox');
+    const modelName = document.getElementById('ggufModelName').value;
+    statusBox.classList.remove('d-none');
+    statusBox.className = 'alert alert-info py-2 small mb-0';
+    statusBox.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Connecting to local Ollama daemon...';
+
+    const formData = new FormData();
+    formData.append('model_name', modelName);
+    formData.append('modelfile_path', 'output_gguf/Modelfile');
+
+    try {
+      const res = await fetch('/api/v1/models/ollama/register', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.status === 'success') {
+        statusBox.className = 'alert alert-success py-2 small mb-0';
+        statusBox.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> ${data.message} Run: <code>ollama run ${modelName}</code>`;
+      } else if (data.status === 'offline') {
+        statusBox.className = 'alert alert-warning py-2 small mb-0';
+        statusBox.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-1"></i> ${data.message}`;
+      } else {
+        statusBox.className = 'alert alert-danger py-2 small mb-0';
+        statusBox.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> ${data.message || 'Registration failed'}`;
+      }
+    } catch (err) {
+      statusBox.className = 'alert alert-danger py-2 small mb-0';
+      statusBox.innerHTML = 'Error: ' + err.message;
+    }
   }
 </script>
 {% endblock %}

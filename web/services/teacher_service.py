@@ -385,11 +385,37 @@ class TeacherService:
             }
 
         except httpx.ConnectError as e:
+            # If in Docker and connecting to host.docker.internal failed for Ollama, probe internal container http://ollama:11434/v1
+            if provider == "ollama" and "host.docker.internal" in clean_url and cls.is_running_in_docker():
+                try:
+                    alt_url = "http://ollama:11434/v1"
+                    async with httpx.AsyncClient(timeout=2.0) as alt_client:
+                        alt_res = await alt_client.get(f"{alt_url}/models")
+                        if alt_res.status_code == 200:
+                            alt_models = await cls.fetch_available_models("ollama", alt_url, timeout_sec=3.0)
+                            return {
+                                "valid": True,
+                                "latency_ms": int((time.perf_counter() - start_time) * 1000),
+                                "models": alt_models,
+                                "message": "Connected to Docker Ollama container (http://ollama:11434/v1)! Update Base URL to http://ollama:11434/v1.",
+                            }
+                except Exception:
+                    pass
+
             hint = ""
             if provider == "ollama":
-                hint = " Run on host: 'OLLAMA_HOST=0.0.0.0:11434 ollama serve &' (Ollama must bind to 0.0.0.0 to accept Docker connections)."
+                hint = (
+                    " Neither host Ollama nor Docker Ollama container was reachable. "
+                    "Options: 1) Run in Docker: 'docker compose --profile ollama up -d' (URL: http://ollama:11434/v1), "
+                    "or 2) Run on host: 'OLLAMA_HOST=0.0.0.0:11434 ollama serve &', "
+                    "or 3) Switch provider to 'Google Gemini' (free & requires zero host RAM)."
+                )
             elif provider == "llamacpp":
-                hint = " Run on host: './llama-server -m <model.gguf> --host 0.0.0.0 --port 8080'."
+                hint = (
+                    " llama-server is not running. "
+                    "Run on host: './llama-server -m models/<model>.gguf --host 0.0.0.0 --port 8080', "
+                    "or switch to Google Gemini (free API, zero host RAM)."
+                )
             elif provider == "vllm":
                 hint = " Run on host: 'vllm serve <model> --host 0.0.0.0 --port 8000'."
 
@@ -397,9 +423,7 @@ class TeacherService:
                 "valid": False,
                 "latency_ms": 0,
                 "models": [],
-                "error": (
-                    f"Connection refused at {clean_url}.{hint} (Detail: {e})"
-                ),
+                "error": f"Connection refused at {clean_url}.{hint} (Detail: {e})",
             }
         except Exception as e:
             logger.error("Teacher connection test error: %s", e)

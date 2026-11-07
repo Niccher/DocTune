@@ -1,0 +1,2 @@
+{"prompt": "What is protocol X?", "chosen": "Fine-tuned grounded answer", "rejected": "Base generic answer"}
+{"prompt": "Who is the director?", "chosen": "The actual director is Alice Smith", "rejected": "Hallucinated answer"}

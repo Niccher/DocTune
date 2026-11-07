@@ -532,6 +532,8 @@ async def start_data_prep(
     chunk_size: int = Form(1000),
     overlap: int = Form(150),
     workers: int = Form(12),
+    redact_pii: bool = Form(True),
+    pii_mode: str = Form("placeholder"),
 ):
     if state.active_job is not None:
         return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
@@ -547,7 +549,6 @@ async def start_data_prep(
     final_model = teacher_model or qa_cfg.get("model") or preset.get("default_model", "llama3.1:latest")
     final_api_key = (teacher_api_key.strip() if teacher_api_key else "") or (qa_cfg.get("api_key", "").strip() if qa_cfg.get("api_key") else "") or "not-needed"
 
-
     args = [
         "--teacher-url", final_url,
         "--teacher-model", final_model,
@@ -557,17 +558,21 @@ async def start_data_prep(
         "--overlap", str(overlap),
         "--workers", str(workers),
     ]
+    if redact_pii:
+        args.extend(["--redact-pii", "--pii-mode", pii_mode])
+    else:
+        args.append("--no-redact-pii")
 
     if is_celery_available() and celery_app:
         run_id = f"prep_{int(time.time())}"
         job = state.set_job(
             job_type=JobType.DATA_PREP,
-            metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "run_id": run_id, "mode": "celery"},
+            metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "run_id": run_id, "mode": "celery", "redact_pii": redact_pii},
         )
-        await state.add_log(f"--- [DISPATCH] Data preparation job {run_id} dispatched to Celery cluster ---")
+        await state.add_log(f"--- [DISPATCH] Data preparation job {run_id} dispatched to Celery cluster (PII: {redact_pii}) ---")
         celery_task = celery_app.send_task(
             "web.celery_app.task_prepare_data",
-            args=[run_id, final_url, final_model, final_api_key, max_chunks, chunk_size, overlap, workers],
+            args=[run_id, final_url, final_model, final_api_key, max_chunks, chunk_size, overlap, workers, redact_pii, pii_mode],
             queue="data_prep_queue",
         )
         job.metadata["celery_task_id"] = celery_task.id
@@ -578,10 +583,41 @@ async def start_data_prep(
         script_module="pipeline.prepare_data",
         args=args,
         cwd=PROJECT_ROOT,
-        metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider},
+        metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "redact_pii": redact_pii},
     )
 
     job_id = state.active_job.job_id if state.active_job else "job_data_prep"
     return JSONResponse({"status": "started", "job_id": job_id})
+
+
+class PIIScrubPreviewPayload(BaseModel):
+    text: str
+    mode: Optional[str] = "placeholder"
+
+
+@router.post("/api/v1/data-prep/preview-redaction")
+async def preview_pii_redaction(payload: PIIScrubPreviewPayload):
+    """Preview PII redaction and detected entities on a text snippet."""
+    from pipeline.pii_redactor import PIIRedactor
+    redactor = PIIRedactor(mode=payload.mode or "placeholder")
+    matches = redactor.analyze(payload.text)
+    redacted_text, counts = redactor.redact(payload.text)
+
+    return JSONResponse({
+        "status": "success",
+        "original_text": payload.text,
+        "redacted_text": redacted_text,
+        "counts": counts,
+        "entities_detected": [
+            {
+                "entity": m["entity"],
+                "text": m["text"],
+                "start": m["start"],
+                "end": m["end"],
+            }
+            for m in matches
+        ],
+    })
+
 
 

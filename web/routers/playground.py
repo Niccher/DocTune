@@ -10,8 +10,9 @@ from pipeline.evaluate import TEST_CASES
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
 from web.templates_config import templates
+from web.celery_app import is_celery_available, app as celery_app
 from web.db.session import SessionLocal, get_db, resolve_session
-from web.db.models import PlaygroundLog, EvaluationBenchmark, Checkpoint
+from web.db.models import PlaygroundLog, EvaluationBenchmark, Checkpoint, Run
 
 router = APIRouter()
 
@@ -49,6 +50,7 @@ async def playground_view(request: Request):
             "active_page": "playground",
             "test_cases": TEST_CASES,
             "available_adapters": available_adapters,
+            "cfg": cfg.to_dict(),
             "active_job": state.active_job.to_dict() if state.active_job else None,
         },
     )
@@ -246,3 +248,178 @@ async def get_benchmarks_api(db: Session = Depends(get_db)):
     finally:
         if should_close and active_db:
             active_db.close()
+
+
+# ── DPO / Preference Fine-Tuning Endpoints ──────────────────────────
+
+@router.get("/api/v1/playground/dpo/stats")
+async def get_dpo_stats(db: Session = Depends(get_db)):
+    """Return preference dataset statistics from collected thumbs-up/down ratings."""
+    active_db, should_close = resolve_session(db)
+    if not active_db:
+        return JSONResponse({"status": "success", "total_rated": 0, "thumbs_up": 0, "thumbs_down": 0, "with_notes": 0})
+
+    try:
+        up_count = active_db.query(PlaygroundLog).filter(PlaygroundLog.rating == "thumbs_up").count()
+        down_count = active_db.query(PlaygroundLog).filter(PlaygroundLog.rating == "thumbs_down").count()
+        notes_count = active_db.query(PlaygroundLog).filter(PlaygroundLog.notes.isnot(None), PlaygroundLog.notes != "").count()
+        total_rated = up_count + down_count
+
+        pref_file = PROJECT_ROOT / "data" / "preference_pairs.jsonl"
+        exported_count = 0
+        if pref_file.exists():
+            with open(pref_file, "r", encoding="utf-8") as f:
+                exported_count = sum(1 for _ in f)
+
+        return JSONResponse({
+            "status": "success",
+            "total_rated": total_rated,
+            "thumbs_up": up_count,
+            "thumbs_down": down_count,
+            "with_notes": notes_count,
+            "exported_count": exported_count,
+            "ready_for_dpo": total_rated > 0,
+        })
+    finally:
+        if should_close and active_db:
+            active_db.close()
+
+
+@router.post("/api/v1/playground/dpo/export")
+async def export_dpo_preference_dataset(db: Session = Depends(get_db)):
+    """
+    Extract Playground human feedback pairs and build a DPO/ORPO JSONL dataset.
+    Schema: {"prompt": str, "chosen": str, "rejected": str}
+    """
+    import json
+    active_db, should_close = resolve_session(db)
+    if not active_db:
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+
+    try:
+        logs = active_db.query(PlaygroundLog).filter(PlaygroundLog.rating.in_(["thumbs_up", "thumbs_down"])).all()
+        if not logs:
+            return JSONResponse({"status": "error", "message": "No rated comparisons found in Playground logs"}, status_code=400)
+
+        out_path = PROJECT_ROOT / "data" / "preference_pairs.jsonl"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        pairs = []
+        for l in logs:
+            prompt = l.prompt.strip()
+            if l.rating == "thumbs_up":
+                chosen = l.tuned_model_response or ""
+                rejected = l.base_model_response or ""
+            else:  # thumbs_down
+                # If operator provided corrected answer in notes, use that as chosen
+                chosen = l.notes.strip() if (l.notes and l.notes.strip()) else (l.base_model_response or "")
+                rejected = l.tuned_model_response or ""
+
+            if prompt and chosen and rejected and chosen != rejected:
+                pairs.append({
+                    "prompt": prompt,
+                    "chosen": chosen,
+                    "rejected": rejected,
+                })
+
+        if not pairs:
+            return JSONResponse({"status": "error", "message": "No valid distinct chosen/rejected pairs could be constructed"}, status_code=400)
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            for p in pairs:
+                f.write(json.dumps(p, ensure_ascii=False) + "\n")
+
+        # Sync to MinIO S3 if available
+        try:
+            from web.services.storage_service import storage_service
+            storage_service.upload_file(out_path, storage_service.bucket_datasets, "preference_pairs.jsonl")
+        except Exception:
+            pass
+
+        return JSONResponse({
+            "status": "success",
+            "exported_count": len(pairs),
+            "path": str(out_path),
+            "message": f"Successfully exported {len(pairs)} preference pairs for DPO training",
+        })
+    finally:
+        if should_close and active_db:
+            active_db.close()
+
+
+@router.post("/api/v1/playground/dpo/start")
+async def start_dpo_training(
+    model_id: str = Form("meta-llama/Meta-Llama-3-8B-Instruct"),
+    beta: float = Form(0.1),
+    learning_rate: float = Form(0.000005),
+    epochs: int = Form(3),
+):
+    """Trigger Direct Preference Optimization (DPO) pipeline training."""
+    if state.active_job is not None:
+        return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
+
+    dataset_path = PROJECT_ROOT / "data" / "preference_pairs.jsonl"
+    if not dataset_path.exists():
+        return JSONResponse({
+            "status": "error",
+            "message": "Preference dataset not found. Export playground ratings first.",
+        }, status_code=400)
+
+    output_dir = PROJECT_ROOT / "output_dpo"
+    run_id = f"dpo_{int(time.time())}"
+    is_celery = is_celery_available() and celery_app
+
+    # Persist Run entry in PostgreSQL
+    try:
+        db = SessionLocal() if SessionLocal else None
+        if db:
+            run_rec = Run(
+                id=run_id,
+                job_type=JobType.TRAINING_DPO.value,
+                method="DPO",
+                model_id=model_id,
+                epochs=epochs,
+                learning_rate=learning_rate,
+                dataset_path=str(dataset_path),
+                status="RUNNING",
+                mode="celery" if is_celery else "subprocess",
+            )
+            db.add(run_rec)
+            db.commit()
+            db.close()
+    except Exception:
+        pass
+
+    if is_celery:
+        job = state.set_job(
+            job_type=JobType.TRAINING_DPO,
+            metadata={"run_id": run_id, "mode": "celery", "model_id": model_id, "beta": beta, "epochs": epochs},
+        )
+        await state.add_log(f"--- [DISPATCH] DPO training {run_id} dispatched to Celery cluster ---")
+        celery_task = celery_app.send_task(
+            "web.celery_app.task_train_dpo",
+            args=[run_id, model_id, str(dataset_path), str(output_dir), beta, learning_rate, epochs],
+            queue="training_queue",
+        )
+        job.metadata["celery_task_id"] = celery_task.id
+        return JSONResponse({"status": "started", "job_id": run_id})
+
+    args = [
+        "--dataset-path", str(dataset_path),
+        "--output-dir", str(output_dir),
+        "--beta", str(beta),
+        "--learning-rate", str(learning_rate),
+        "--epochs", str(epochs),
+    ]
+
+    await process_mgr.run_pipeline_script(
+        job_type=JobType.TRAINING_DPO,
+        script_module="pipeline.train_dpo",
+        args=args,
+        cwd=PROJECT_ROOT,
+        metadata={"run_id": run_id, "mode": "subprocess", "model_id": model_id, "beta": beta, "epochs": epochs},
+    )
+
+    job_id = state.active_job.job_id if state.active_job else run_id
+    return JSONResponse({"status": "started", "job_id": job_id})
+

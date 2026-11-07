@@ -88,8 +88,142 @@ Click "Compare Models" to see how the pre-trained base model answers.
               <div id="tunedResponse" class="small text-dark flex-grow-1 p-2" style="min-height: 140px; white-space: pre-wrap;">
 Click "Compare Models" to see how the fine-tuned adapter answers using your documents.
               </div>
+              <!-- Human Feedback Rating Controls -->
+              <div class="mt-2 pt-2 border-top d-flex justify-content-between align-items-center d-none" id="feedbackBar">
+                <span class="text-muted" style="font-size: 0.75rem;"><i class="bi bi-person-check me-1"></i>Rate grounded response:</span>
+                <div class="btn-group btn-group-sm">
+                  <button type="button" class="btn btn-outline-success btn-sm" id="btnThumbsUp" onclick="sendRating('thumbs_up')">
+                    <i class="bi bi-hand-thumbs-up me-1"></i> Thumbs Up
+                  </button>
+                  <button type="button" class="btn btn-outline-danger btn-sm" id="btnThumbsDown" onclick="openFeedbackCorrectionModal()">
+                    <i class="bi bi-hand-thumbs-down me-1"></i> Thumbs Down
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DPO Preference Alignment Studio Card -->
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+    <div>
+      <h5 class="card-title mb-0 fw-bold"><i class="bi bi-sliders2 text-primary me-2"></i>Human Feedback & DPO Preference Alignment</h5>
+      <p class="text-muted extra-small mb-0" style="font-size: 0.78rem;">
+        Turn collected thumbs-up/down ratings and corrections into Direct Preference Optimization (DPO) training data to continually align the model.
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="exportDPOData()" id="btnExportDPO">
+        <i class="bi bi-file-earmark-arrow-down me-1"></i> Export Dataset
+      </button>
+      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#dpoTrainModal" id="btnOpenDPOTrain">
+        <i class="bi bi-lightning-charge me-1"></i> Train DPO Model
+      </button>
+    </div>
+  </div>
+  <div class="card-body py-2">
+    <div class="row g-3 text-center">
+      <div class="col-6 col-md-3">
+        <div class="p-2 border rounded bg-body-tertiary">
+          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Thumbs Up</div>
+          <div class="h4 fw-bold text-success mb-0" id="statThumbsUp">0</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-2 border rounded bg-body-tertiary">
+          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Thumbs Down</div>
+          <div class="h4 fw-bold text-danger mb-0" id="statThumbsDown">0</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-2 border rounded bg-body-tertiary">
+          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Human Corrections</div>
+          <div class="h4 fw-bold text-info mb-0" id="statNotes">0</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-2 border rounded bg-body-tertiary">
+          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Exported Pairs</div>
+          <div class="h4 fw-bold text-primary mb-0" id="statExported">0</div>
+        </div>
+      </div>
+    </div>
+    <div id="dpoAlertStatus" class="mt-2 d-none alert alert-info py-1 small mb-0"></div>
+  </div>
+</div>
+
+<!-- DPO Training Configuration Modal -->
+<div class="modal fade" id="dpoTrainModal" tabindex="-1" aria-labelledby="dpoModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold" id="dpoModalLabel"><i class="bi bi-sliders2 text-primary me-2"></i>Configure DPO Training</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="dpoTrainForm">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Base / SFT Model</label>
+            <input type="text" class="form-control form-control-sm font-monospace" name="model_id" value="{{ cfg.model_id or 'meta-llama/Meta-Llama-3-8B-Instruct' }}" required>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label small fw-semibold">DPO Beta (&beta;)</label>
+              <input type="number" step="0.01" class="form-control form-control-sm" name="beta" value="0.1" min="0.01" max="1.0">
+              <small class="text-muted extra-small" style="font-size: 0.7rem;">KL penalty (default 0.1)</small>
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Learning Rate</label>
+              <input type="text" class="form-control form-control-sm" name="learning_rate" value="0.000005">
+              <small class="text-muted extra-small" style="font-size: 0.7rem;">Typical: 5e-6</small>
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Epochs</label>
+              <input type="number" class="form-control form-control-sm" name="epochs" value="3" min="1" max="10">
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Output Directory</label>
+              <input type="text" class="form-control form-control-sm font-monospace" value="output_dpo" disabled>
+            </div>
+          </div>
+          <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary btn-sm" id="btnSubmitDPO">
+              <i class="bi bi-play-circle me-1"></i> Start DPO Alignment
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Feedback Correction Modal for Thumbs Down -->
+<div class="modal fade" id="feedbackCorrectionModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold text-danger"><i class="bi bi-hand-thumbs-down me-2"></i>Negative Feedback & Correction</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">
+          Providing the correct ground-truth answer turns this feedback into a high-value positive training example for DPO alignment!
+        </p>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Correct Ground Truth Answer (Optional):</label>
+          <textarea class="form-control form-control-sm" id="feedbackNotesInput" rows="3" placeholder="What should the model have answered based on the document?"></textarea>
+        </div>
+        <div class="d-flex justify-content-end gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger btn-sm" onclick="sendRating('thumbs_down')">
+            Submit Feedback
+          </button>
         </div>
       </div>
     </div>
@@ -137,6 +271,8 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
     }
   });
 
+  let currentLogId = null;
+
   // Interactive Comparison via Backend API
   async function simulateComparison() {
     const q = document.getElementById('promptInput').value.trim();
@@ -145,10 +281,12 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
     const baseBox = document.getElementById('baseResponse');
     const tunedBox = document.getElementById('tunedResponse');
     const compareBtn = document.getElementById('compareBtn');
+    const feedbackBar = document.getElementById('feedbackBar');
 
     baseBox.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary"></div> Querying pre-trained model...';
     tunedBox.innerHTML = '<div class="spinner-border spinner-border-sm text-primary"></div> Querying fine-tuned adapter...';
     compareBtn.disabled = true;
+    feedbackBar?.classList.add('d-none');
 
     try {
       const formData = new FormData();
@@ -159,6 +297,10 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
       if (res.ok) {
         baseBox.innerText = data.base_response;
         tunedBox.innerText = data.tuned_response;
+        currentLogId = data.log_id;
+        feedbackBar?.classList.remove('d-none');
+        document.getElementById('btnThumbsUp').disabled = false;
+        document.getElementById('btnThumbsDown').disabled = false;
       } else {
         showToast('Error querying playground', 'error');
         baseBox.innerText = 'Request failed.';
@@ -172,6 +314,111 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
       compareBtn.disabled = false;
     }
   }
+
+  function openFeedbackCorrectionModal() {
+    document.getElementById('feedbackNotesInput').value = '';
+    const modal = new bootstrap.Modal(document.getElementById('feedbackCorrectionModal'));
+    modal.show();
+  }
+
+  async function sendRating(rating) {
+    if (!currentLogId) return;
+    const notes = document.getElementById('feedbackNotesInput')?.value || '';
+
+    const payload = {
+      log_id: currentLogId,
+      rating: rating,
+      notes: notes,
+    };
+
+    try {
+      const res = await fetch('/api/v1/playground/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(rating === 'thumbs_up' ? 'Positive feedback saved!' : 'Negative rating & correction saved!', 'success');
+        document.getElementById('btnThumbsUp').disabled = true;
+        document.getElementById('btnThumbsDown').disabled = true;
+        bootstrap.Modal.getInstance(document.getElementById('feedbackCorrectionModal'))?.hide();
+        fetchDPOStats();
+      } else {
+        showToast('Feedback error: ' + (data.message || 'Unknown error'), 'error');
+      }
+    } catch (err) {
+      showToast('Feedback submission error: ' + err.message, 'error');
+    }
+  }
+
+  async function fetchDPOStats() {
+    try {
+      const res = await fetch('/api/v1/playground/dpo/stats');
+      const data = await res.json();
+      if (data.status === 'success') {
+        document.getElementById('statThumbsUp').innerText = data.thumbs_up;
+        document.getElementById('statThumbsDown').innerText = data.thumbs_down;
+        document.getElementById('statNotes').innerText = data.with_notes;
+        document.getElementById('statExported').innerText = data.exported_count;
+      }
+    } catch (e) {}
+  }
+
+  async function exportDPOData() {
+    const btn = document.getElementById('btnExportDPO');
+    const alertBox = document.getElementById('dpoAlertStatus');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Exporting...';
+
+    try {
+      const res = await fetch('/api/v1/playground/dpo/export', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alertBox.className = 'mt-2 alert alert-success py-1 small mb-0';
+        alertBox.classList.remove('d-none');
+        alertBox.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> ${data.message} (${data.exported_count} pairs)`;
+        showToast(data.message, 'success');
+        fetchDPOStats();
+      } else {
+        alertBox.className = 'mt-2 alert alert-warning py-1 small mb-0';
+        alertBox.classList.remove('d-none');
+        alertBox.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-1"></i> ${data.message || 'Export failed'}`;
+      }
+    } catch (err) {
+      showToast('Export error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-file-earmark-arrow-down me-1"></i> Export Dataset';
+    }
+  }
+
+  document.getElementById('dpoTrainForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btnSubmitDPO');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Dispatching...';
+
+    const formData = new FormData(e.target);
+    try {
+      const res = await fetch('/api/v1/playground/dpo/start', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('DPO training job started! Check terminal output.', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('dpoTrainModal'))?.hide();
+      } else {
+        showToast(data.message || 'Failed to start DPO training', 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-circle me-1"></i> Start DPO Alignment';
+    }
+  });
+
+  // Load stats on page init
+  document.addEventListener('DOMContentLoaded', fetchDPOStats);
 
   // Handle WebSocket
   window.handleCustomWS = (msg) => {

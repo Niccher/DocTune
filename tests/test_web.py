@@ -1053,6 +1053,148 @@ def test_hf_hub_cache_deduplication():
             hf_model_service.get_cache_dir = orig_get_cache
 
 
+def test_pii_redactor_and_preview_api():
+    import json
+    from pipeline.pii_redactor import PIIRedactor
+    redactor = PIIRedactor(mode="placeholder")
+    raw = "Contact Alice at alice@company.com or 415-555-9876. SSN: 000-11-2222. API Key: sk-prod12345678901234567890."
+    clean, counts = redactor.redact(raw)
+    assert "[EMAIL_ADDRESS]" in clean
+    assert "alice@company.com" not in clean
+    assert "000-11-2222" not in clean
+    assert "sk-prod12345678901234567890" not in clean
+    assert counts.get("EMAIL_ADDRESS", 0) >= 1
+    assert counts.get("US_SSN", 0) >= 1
+
+    # Test preview API endpoint
+    resp = client.post("/api/v1/data-prep/preview-redaction", json={"text": raw, "mode": "placeholder"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "alice@company.com" not in data["redacted_text"]
+    assert len(data["entities_detected"]) >= 2
+
+
+def test_gguf_export_and_modelfile_api():
+    import json
+    import shutil
+    from pipeline.export_gguf import detect_chat_template, generate_ollama_modelfile, run_conversion
+
+    mock_dir = PROJECT_ROOT / "data" / "mock_llama_model"
+    mock_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        (mock_dir / "config.json").write_text(json.dumps({"model_type": "llama"}), encoding="utf-8")
+        tmpl = detect_chat_template(mock_dir)
+        assert "<|start_header_id|>" in tmpl["template"]
+        mf = generate_ollama_modelfile("model.gguf", tmpl)
+        assert "FROM ./model.gguf" in mf
+        assert "<|eot_id|>" in mf
+
+        # Test Modelfile endpoint
+        resp = client.get("/api/v1/models/modelfile?model_name=test-model")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["status"] == "success"
+        assert "ollama create" in data["run_command"]
+
+        # Test export endpoint
+        out_gguf_dir = PROJECT_ROOT / "data" / "test_out_gguf_api"
+        resp_export = client.post("/api/v1/models/export-gguf", data={
+            "model_dir": str(mock_dir),
+            "export_dir": str(out_gguf_dir),
+            "model_name": "test-model-api",
+            "quantization": "q4_k_m",
+        })
+        assert resp_export.status_code in [200, 409]
+    finally:
+        shutil.rmtree(mock_dir, ignore_errors=True)
+        shutil.rmtree(PROJECT_ROOT / "data" / "test_out_gguf_api", ignore_errors=True)
+
+
+def test_openai_compatible_inference_api():
+    # 1. /v1/models
+    res = client.get("/v1/models")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["object"] == "list"
+    assert len(body["data"]) > 0
+
+    # 2. /v1/chat/completions non-streaming
+    payload = {
+        "model": "doctune-merged",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What is the primary failover protocol for Facility B?"}
+        ]
+    }
+    res2 = client.post("/v1/chat/completions", json=payload)
+    assert res2.status_code == 200, res2.text
+    data2 = res2.json()
+    assert data2["object"] == "chat.completion"
+    assert "diesel auxiliary generators" in data2["choices"][0]["message"]["content"]
+    assert data2["usage"]["total_tokens"] > 0
+
+    # 3. /v1/chat/completions streaming
+    payload["stream"] = True
+    res3 = client.post("/v1/chat/completions", json=payload)
+    assert res3.status_code == 200, res3.text
+    assert "text/event-stream" in res3.headers["content-type"]
+    assert "data: [DONE]" in res3.text
+
+
+def test_playground_dpo_export_and_stats():
+    import json
+    from web.db.session import SessionLocal
+    from web.db.models import PlaygroundLog
+
+    # Seed playground logs with ratings
+    db = SessionLocal() if SessionLocal else None
+    if db:
+        try:
+            db.query(PlaygroundLog).filter(PlaygroundLog.id.in_(["test_dpo_1", "test_dpo_2"])).delete()
+            db.add(PlaygroundLog(
+                id="test_dpo_1",
+                prompt="What is protocol X?",
+                base_model_response="Base generic answer",
+                tuned_model_response="Fine-tuned grounded answer",
+                rating="thumbs_up",
+            ))
+            db.add(PlaygroundLog(
+                id="test_dpo_2",
+                prompt="Who is the director?",
+                base_model_response="Unknown",
+                tuned_model_response="Hallucinated answer",
+                rating="thumbs_down",
+                notes="The actual director is Alice Smith",
+            ))
+            db.commit()
+        finally:
+            db.close()
+
+    # Test DPO stats endpoint
+    res_stats = client.get("/api/v1/playground/dpo/stats")
+    assert res_stats.status_code == 200, res_stats.text
+    stats = res_stats.json()
+    assert stats["status"] == "success"
+    assert stats["thumbs_up"] >= 1
+    assert stats["thumbs_down"] >= 1
+
+    # Test DPO export endpoint
+    res_export = client.post("/api/v1/playground/dpo/export")
+    assert res_export.status_code == 200, res_export.text
+    exp_data = res_export.json()
+    assert exp_data["status"] == "success"
+    assert exp_data["exported_count"] >= 2
+    pref_path = Path(exp_data["path"])
+    assert pref_path.exists()
+
+    # Validate JSONL contents
+    with open(pref_path, "r", encoding="utf-8") as f:
+        lines = [json.loads(l) for l in f]
+    assert any(l["chosen"] == "Fine-tuned grounded answer" and l["rejected"] == "Base generic answer" for l in lines)
+    assert any(l["chosen"] == "The actual director is Alice Smith" and l["rejected"] == "Hallucinated answer" for l in lines)
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
@@ -1108,7 +1250,12 @@ if __name__ == "__main__":
     test_alembic_config_and_migrations_exist()
     test_backup_script_exists_and_executable()
     test_resolve_session_semantics()
+    test_pii_redactor_and_preview_api()
+    test_gguf_export_and_modelfile_api()
+    test_openai_compatible_inference_api()
+    test_playground_dpo_export_and_stats()
     print("All tests passed successfully!")
+
 
 
 
