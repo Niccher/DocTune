@@ -253,6 +253,48 @@ async def test_teacher_connection_api(request: Request):
     return JSONResponse(result)
 
 
+@router.post("/api/v1/teacher/pull", response_class=JSONResponse)
+async def pull_teacher_model_api(request: Request):
+    """Trigger background download/pull of a teacher model into Ollama or llama.cpp."""
+    body = {}
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+    else:
+        form = await request.form()
+        body = dict(form)
+
+    provider = body.get("provider", "ollama")
+    base_url = body.get("base_url") or body.get("teacher_url", "")
+    api_key = body.get("api_key") or body.get("teacher_api_key", "")
+    model = body.get("model") or body.get("teacher_model", "")
+
+    if not model or not model.strip():
+        return JSONResponse({"status": "error", "message": "Model name is required to pull."}, status_code=400)
+
+    if not base_url:
+        preset = teacher_service.get_presets().get(provider, {})
+        base_url = preset.get("effective_base_url", "http://localhost:11434/v1")
+
+    res = teacher_service.start_pull_task(
+        provider=provider,
+        base_url=base_url,
+        model=model.strip(),
+        api_key=api_key.strip() if api_key else "",
+    )
+    return JSONResponse(res)
+
+
+@router.get("/api/v1/teacher/pull-status", response_class=JSONResponse)
+async def get_teacher_pull_status_api(
+    provider: str = Query("ollama"),
+    model: str = Query(...),
+):
+    """Poll live download/pull status of a model."""
+    status_info = teacher_service.get_pull_status(provider=provider, model=model)
+    return JSONResponse(status_info)
+
+
 @router.post("/api/v1/documents/upload")
 async def upload_documents(files: List[UploadFile] = File(...)):
     RAW_DOCS_DIR.mkdir(parents=True, exist_ok=True)

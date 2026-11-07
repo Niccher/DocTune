@@ -10,12 +10,17 @@ the standard OpenAI-compatible HTTP REST protocol.
 
 import os
 import time
+import json
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse, urljoin
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# In-memory registry of active model pull/download tasks: keyed by f"{provider}:{model.strip()}"
+_pull_tasks: Dict[str, Dict[str, Any]] = {}
 
 # Standard Provider Presets
 PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
@@ -380,13 +385,20 @@ class TeacherService:
             }
 
         except httpx.ConnectError as e:
+            hint = ""
+            if provider == "ollama":
+                hint = " Run on host: 'OLLAMA_HOST=0.0.0.0:11434 ollama serve &' (Ollama must bind to 0.0.0.0 to accept Docker connections)."
+            elif provider == "llamacpp":
+                hint = " Run on host: './llama-server -m <model.gguf> --host 0.0.0.0 --port 8080'."
+            elif provider == "vllm":
+                hint = " Run on host: 'vllm serve <model> --host 0.0.0.0 --port 8000'."
+
             return {
                 "valid": False,
                 "latency_ms": 0,
                 "models": [],
                 "error": (
-                    f"Connection refused at {clean_url}. Verify the local runner (Ollama / llama.cpp / vLLM) "
-                    f"is running and listening on the designated port. (Detail: {e})"
+                    f"Connection refused at {clean_url}.{hint} (Detail: {e})"
                 ),
             }
         except Exception as e:
@@ -396,6 +408,194 @@ class TeacherService:
                 "latency_ms": 0,
                 "models": [],
                 "error": f"Connection test failed: {str(e)}",
+            }
+
+    @classmethod
+    def get_task_key(cls, provider: str, model: str) -> str:
+        return f"{provider.lower()}:{model.strip().lower()}"
+
+    @classmethod
+    def get_pull_status(cls, provider: str, model: str) -> Dict[str, Any]:
+        """Return current status of an ongoing or completed model pull."""
+        task_key = cls.get_task_key(provider, model)
+        return _pull_tasks.get(
+            task_key,
+            {"status": "IDLE", "progress": 0, "detail": "No active pull task.", "model": model},
+        )
+
+    @classmethod
+    def start_pull_task(
+        cls,
+        provider: str,
+        base_url: str,
+        model: str,
+        api_key: str = "",
+    ) -> Dict[str, Any]:
+        """Dispatch asynchronous background download/pull of a model."""
+        clean_model = model.strip()
+        if not clean_model:
+            return {"status": "error", "message": "Model name cannot be empty."}
+
+        task_key = cls.get_task_key(provider, clean_model)
+        current = _pull_tasks.get(task_key, {})
+        if current.get("status") == "DOWNLOADING":
+            return {"status": "started", "message": f"Model {clean_model} is already downloading.", "progress": current.get("progress", 0)}
+
+        _pull_tasks[task_key] = {
+            "status": "STARTING",
+            "progress": 5,
+            "detail": f"Initializing download for {clean_model}...",
+            "model": clean_model,
+        }
+
+        # Launch background task
+        asyncio.create_task(
+            cls._background_pull(task_key, provider, base_url, clean_model, api_key)
+        )
+        return {"status": "started", "model": clean_model, "provider": provider}
+
+    @classmethod
+    async def _background_pull(
+        cls,
+        task_key: str,
+        provider: str,
+        base_url: str,
+        model: str,
+        api_key: str = "",
+    ):
+        """Execute model download in background with real-time status updates."""
+        try:
+            clean_url = cls.normalize_base_url(provider, base_url)
+
+            # 1. Ollama Native Streaming Pull API (/api/pull)
+            if provider == "ollama":
+                root_url = clean_url[:-3] if clean_url.endswith("/v1") else clean_url
+                pull_url = f"{root_url}/api/pull"
+                payload = {"name": model, "stream": True}
+                headers = {"Accept": "application/json"}
+                if api_key and api_key.strip() and api_key != "not-needed":
+                    headers["Authorization"] = f"Bearer {api_key.strip()}"
+
+                _pull_tasks[task_key] = {
+                    "status": "DOWNLOADING",
+                    "progress": 10,
+                    "detail": f"Connecting to Ollama at {pull_url}...",
+                    "model": model,
+                }
+
+                async with httpx.AsyncClient(timeout=3600.0) as client:
+                    async with client.stream("POST", pull_url, json=payload, headers=headers) as response:
+                        if response.status_code != 200:
+                            err_bytes = await response.aread()
+                            err_msg = err_bytes.decode("utf-8", errors="ignore")
+                            _pull_tasks[task_key] = {
+                                "status": "FAILED",
+                                "progress": 0,
+                                "error": f"Ollama returned HTTP {response.status_code}: {err_msg}",
+                                "model": model,
+                            }
+                            return
+
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                                status_str = data.get("status", "")
+                                completed = data.get("completed", 0)
+                                total = data.get("total", 0)
+                                prog = int((completed / total) * 100) if total > 0 else 0
+
+                                if status_str == "success":
+                                    _pull_tasks[task_key] = {
+                                        "status": "COMPLETED",
+                                        "progress": 100,
+                                        "detail": f"Model '{model}' downloaded and ready in Ollama!",
+                                        "model": model,
+                                    }
+                                    return
+                                else:
+                                    _pull_tasks[task_key] = {
+                                        "status": "DOWNLOADING",
+                                        "progress": prog if prog > 0 else 20,
+                                        "detail": f"{status_str} ({prog}%)" if prog > 0 else status_str,
+                                        "model": model,
+                                    }
+                            except Exception:
+                                pass
+
+                # If stream terminated normally
+                curr = _pull_tasks.get(task_key, {})
+                if curr.get("status") != "FAILED":
+                    _pull_tasks[task_key] = {
+                        "status": "COMPLETED",
+                        "progress": 100,
+                        "detail": f"Model '{model}' successfully pulled!",
+                        "model": model,
+                    }
+                return
+
+            # 2. llama.cpp / GGUF model download via Hugging Face Hub
+            elif provider == "llamacpp":
+                from pipeline.common import PROJECT_ROOT
+                models_dir = PROJECT_ROOT / "models"
+                models_dir.mkdir(parents=True, exist_ok=True)
+
+                _pull_tasks[task_key] = {
+                    "status": "DOWNLOADING",
+                    "progress": 30,
+                    "detail": f"Downloading GGUF model '{model}' from Hugging Face Hub...",
+                    "model": model,
+                }
+
+                try:
+                    from huggingface_hub import hf_hub_download, snapshot_download
+                    parts = model.split("/")
+                    if len(parts) >= 2 and parts[-1].endswith(".gguf"):
+                        repo = "/".join(parts[:-1])
+                        fname = parts[-1]
+                        hf_hub_download(repo_id=repo, filename=fname, local_dir=str(models_dir))
+                    else:
+                        snapshot_download(repo_id=model, local_dir=str(models_dir / parts[-1]), allow_patterns="*.gguf")
+
+                    _pull_tasks[task_key] = {
+                        "status": "COMPLETED",
+                        "progress": 100,
+                        "detail": f"GGUF model saved to models/ directory for llama-server!",
+                        "model": model,
+                    }
+                except Exception as hf_err:
+                    _pull_tasks[task_key] = {
+                        "status": "FAILED",
+                        "progress": 0,
+                        "error": f"Hugging Face GGUF download error: {str(hf_err)}",
+                        "model": model,
+                    }
+                return
+
+            # 3. Cloud / other providers
+            else:
+                _pull_tasks[task_key] = {
+                    "status": "COMPLETED",
+                    "progress": 100,
+                    "detail": f"Cloud provider '{provider}' models are hosted remotely and ready to use.",
+                    "model": model,
+                }
+
+        except httpx.ConnectError as ce:
+            _pull_tasks[task_key] = {
+                "status": "FAILED",
+                "progress": 0,
+                "error": f"Connection refused connecting to {provider} at {clean_url}. Ensure runner is active with OLLAMA_HOST=0.0.0.0:11434. ({ce})",
+                "model": model,
+            }
+        except Exception as ex:
+            logger.error("Model pull error for %s: %s", model, ex)
+            _pull_tasks[task_key] = {
+                "status": "FAILED",
+                "progress": 0,
+                "error": f"Pull failed: {str(ex)}",
+                "model": model,
             }
 
 

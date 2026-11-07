@@ -358,9 +358,14 @@
               </select>
             </div>
             <div class="col-md-4">
-              <label class="form-label" for="qa_model">QA Model Name</label>
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label mb-0" for="qa_model">QA Model Name</label>
+                <a href="javascript:void(0)" class="small text-decoration-none text-success fw-semibold" id="btnPullQaModel" title="Download / pull this model into Ollama / llama.cpp">
+                  <i class="bi bi-cloud-arrow-down"></i> Pull Model
+                </a>
+              </div>
               <input type="text" class="form-control font-monospace" id="qa_model" name="data_prep.qa_generator.model" value="{{ settings.data_prep.qa_generator.model }}">
-              <div class="form-text">e.g. <code>llama3.1:latest</code>, <code>gemini-1.5-flash</code>, <code>gpt-4o-mini</code></div>
+              <div class="form-text">e.g. <code>llama3.1:latest</code>, <code>qwen2.5:1.5b</code>, <code>gemini-1.5-flash</code></div>
             </div>
             <div class="col-md-4">
               <label class="form-label" for="qa_temperature">Temperature</label>
@@ -380,6 +385,17 @@
                 </button>
               </div>
               <div class="form-text" id="qaApiKeyHint">Required for Google Gemini, xAI Grok, or OpenAI; optional for local Ollama.</div>
+            </div>
+            <div class="col-12">
+              <div id="qaPullProgressContainer" class="d-none mt-2 p-2 border rounded bg-body-tertiary">
+                <div class="d-flex justify-content-between align-items-center small mb-1">
+                  <span id="qaPullStatusText" class="text-truncate me-2"><i class="spinner-border spinner-border-sm me-1 text-primary"></i> Initiating pull...</span>
+                  <span id="qaPullPercentText" class="badge bg-primary">0%</span>
+                </div>
+                <div class="progress" style="height: 6px;">
+                  <div id="qaPullProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%"></div>
+                </div>
+              </div>
             </div>
             <div class="col-12">
               <div id="qaTeacherFeedback" class="mt-2 d-none"></div>
@@ -807,6 +823,98 @@ document.addEventListener("DOMContentLoaded", function () {
     } finally {
       qaTestBtn.disabled = false;
       qaTestBtn.innerHTML = `<i class="bi bi-broadcast me-1"></i> Test Endpoint`;
+    }
+  });
+
+  // Pull QA Model in Admin Handler
+  const pullQaBtn = document.getElementById("btnPullQaModel");
+  const qaPullContainer = document.getElementById("qaPullProgressContainer");
+  const qaPullStatusText = document.getElementById("qaPullStatusText");
+  const qaPullPercentText = document.getElementById("qaPullPercentText");
+  const qaPullProgressBar = document.getElementById("qaPullProgressBar");
+
+  let qaPullPollTimer = null;
+
+  pullQaBtn?.addEventListener("click", async function () {
+    const targetModel = qaModelInput.value.trim();
+    if (!targetModel) {
+      return showToast("Please enter a QA model name to pull (e.g. qwen2.5:1.5b, llama3.1:latest)", "warning");
+    }
+
+    pullQaBtn.disabled = true;
+    pullQaBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Pulling...';
+    qaPullContainer.classList.remove("d-none");
+    qaPullStatusText.innerHTML = `<span class="spinner-border spinner-border-sm me-1 text-primary"></span> Initiating pull for <code>${targetModel}</code>...`;
+    qaPullPercentText.innerText = "0%";
+    qaPullProgressBar.style.width = "0%";
+    qaPullProgressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-success";
+
+    try {
+      const payload = {
+        provider: qaProviderSelect.value,
+        base_url: qaUrlInput.value.trim(),
+        model: targetModel,
+        api_key: qaKeyInput.value.trim()
+      };
+
+      const res = await fetch("/api/v1/teacher/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to start model pull");
+      }
+
+      showToast(`Initiated pull for ${targetModel}...`, "info");
+
+      clearInterval(qaPullPollTimer);
+      qaPullPollTimer = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/v1/teacher/pull-status?provider=${encodeURIComponent(qaProviderSelect.value)}&model=${encodeURIComponent(targetModel)}`);
+          const statusData = await statusRes.json();
+
+          if (statusData.status === "COMPLETED") {
+            clearInterval(qaPullPollTimer);
+            qaPullProgressBar.style.width = "100%";
+            qaPullPercentText.innerText = "100%";
+            qaPullPercentText.className = "badge bg-success";
+            qaPullStatusText.innerHTML = `<i class="bi bi-check-circle-fill text-success me-1"></i> ${statusData.detail || "Model downloaded and ready!"}`;
+            pullQaBtn.disabled = false;
+            pullQaBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull Model';
+            showToast(`Model ${targetModel} is ready!`, "success");
+
+            // Auto-trigger test endpoint
+            setTimeout(() => qaTestBtn?.click(), 800);
+          } else if (statusData.status === "FAILED") {
+            clearInterval(qaPullPollTimer);
+            qaPullProgressBar.className = "progress-bar bg-danger";
+            qaPullPercentText.innerText = "Failed";
+            qaPullPercentText.className = "badge bg-danger";
+            qaPullStatusText.innerHTML = `<i class="bi bi-x-circle-fill text-danger me-1"></i> ${statusData.error || "Download failed"}`;
+            pullQaBtn.disabled = false;
+            pullQaBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull Model';
+            showToast(`Failed downloading ${targetModel}`, "error");
+          } else {
+            const prog = statusData.progress || 10;
+            qaPullProgressBar.style.width = prog + "%";
+            qaPullPercentText.innerText = prog + "%";
+            qaPullStatusText.innerHTML = `<span class="spinner-border spinner-border-sm me-1 text-primary"></span> ${statusData.detail || "Downloading model layers..."}`;
+          }
+        } catch (err) {
+          clearInterval(qaPullPollTimer);
+          pullQaBtn.disabled = false;
+          pullQaBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull Model';
+        }
+      }, 1500);
+
+    } catch (e) {
+      qaPullContainer.classList.add("d-none");
+      pullQaBtn.disabled = false;
+      pullQaBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull Model';
+      showToast("Error: " + e.message, "error");
     }
   });
 

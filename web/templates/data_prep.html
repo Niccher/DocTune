@@ -108,19 +108,35 @@
               <input type="text" class="form-control form-control-sm font-monospace" id="teacher_url" name="teacher_url" value="{{ settings.data_prep.qa_generator.base_url or 'http://localhost:11434/v1' }}" required>
             </div>
             <div class="col-md-5">
-              <div class="d-flex justify-content-between align-items-center">
+              <div class="d-flex justify-content-between align-items-center mb-1">
                 <label class="form-label small fw-semibold mb-0" for="teacher_model">Model ID</label>
-                <a href="javascript:void(0)" class="small text-decoration-none" id="btnProbeModels" title="Discover models from server"><i class="bi bi-arrow-clockwise"></i> Probe</a>
+                <div class="d-flex gap-2">
+                  <a href="javascript:void(0)" class="small text-decoration-none text-info" id="btnProbeModels" title="Discover models from server"><i class="bi bi-arrow-clockwise"></i> Probe</a>
+                  <a href="javascript:void(0)" class="small text-decoration-none text-success fw-semibold" id="btnPullTeacherModel" title="Download / pull this model into Ollama / llama.cpp"><i class="bi bi-cloud-arrow-down"></i> Pull</a>
+                </div>
               </div>
               <input type="text" class="form-control form-control-sm font-monospace" id="teacher_model" name="teacher_model" list="teacherModelList" value="{{ settings.data_prep.qa_generator.model or 'llama3.1:latest' }}" required>
               <datalist id="teacherModelList">
                 <option value="llama3.1:latest">
                 <option value="llama3:latest">
                 <option value="mistral:latest">
+                <option value="qwen2.5:1.5b">
+                <option value="qwen2.5:7b">
                 <option value="gemini-1.5-flash">
                 <option value="grok-beta">
                 <option value="gpt-4o-mini">
               </datalist>
+            </div>
+          </div>
+
+          <!-- In-Browser Model Pull Progress Indicator -->
+          <div id="teacherPullProgressContainer" class="d-none mb-3 p-2 border rounded bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center small mb-1">
+              <span id="teacherPullStatusText" class="text-truncate me-2"><i class="spinner-border spinner-border-sm me-1 text-primary"></i> Initiating pull...</span>
+              <span id="teacherPullPercentText" class="badge bg-primary">0%</span>
+            </div>
+            <div class="progress" style="height: 6px;">
+              <div id="teacherPullProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%"></div>
             </div>
           </div>
 
@@ -478,6 +494,100 @@
       showToast('Error probing models: ' + e.message, 'error');
     } finally {
       probeBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Probe';
+    }
+  });
+
+  // Pull / Download Teacher Model Handler
+  const pullBtn = document.getElementById('btnPullTeacherModel');
+  const pullContainer = document.getElementById('teacherPullProgressContainer');
+  const pullStatusText = document.getElementById('teacherPullStatusText');
+  const pullPercentText = document.getElementById('teacherPullPercentText');
+  const pullProgressBar = document.getElementById('teacherPullProgressBar');
+
+  let pullPollTimer = null;
+
+  pullBtn?.addEventListener('click', async () => {
+    const targetModel = modelInput.value.trim();
+    if (!targetModel) {
+      return showToast('Please enter a model name to pull (e.g. qwen2.5:1.5b, llama3.1:latest)', 'warning');
+    }
+
+    pullBtn.disabled = true;
+    pullBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Pulling...';
+    pullContainer.classList.remove('d-none');
+    pullStatusText.innerHTML = `<span class="spinner-border spinner-border-sm me-1 text-primary"></span> Initiating pull for <code>${targetModel}</code>...`;
+    pullPercentText.innerText = '0%';
+    pullProgressBar.style.width = '0%';
+    pullProgressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-success';
+
+    try {
+      const payload = {
+        provider: providerSelect.value,
+        base_url: urlInput.value.trim(),
+        model: targetModel,
+        api_key: keyInput.value.trim()
+      };
+
+      const res = await fetch('/api/v1/teacher/pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to start model pull');
+      }
+
+      showToast(`Initiated pull for ${targetModel}...`, 'info');
+
+      // Start polling status
+      clearInterval(pullPollTimer);
+      pullPollTimer = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/v1/teacher/pull-status?provider=${encodeURIComponent(providerSelect.value)}&model=${encodeURIComponent(targetModel)}`);
+          const statusData = await statusRes.json();
+
+          if (statusData.status === 'COMPLETED') {
+            clearInterval(pullPollTimer);
+            pullProgressBar.style.width = '100%';
+            pullPercentText.innerText = '100%';
+            pullPercentText.className = 'badge bg-success';
+            pullStatusText.innerHTML = `<i class="bi bi-check-circle-fill text-success me-1"></i> ${statusData.detail || 'Model downloaded and ready!'}`;
+            pullBtn.disabled = false;
+            pullBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull';
+            showToast(`Model ${targetModel} is ready!`, 'success');
+
+            // Auto-refresh model list and test connection
+            probeBtn?.click();
+            setTimeout(() => testBtn?.click(), 800);
+          } else if (statusData.status === 'FAILED') {
+            clearInterval(pullPollTimer);
+            pullProgressBar.className = 'progress-bar bg-danger';
+            pullPercentText.innerText = 'Failed';
+            pullPercentText.className = 'badge bg-danger';
+            pullStatusText.innerHTML = `<i class="bi bi-x-circle-fill text-danger me-1"></i> ${statusData.error || 'Download failed'}`;
+            pullBtn.disabled = false;
+            pullBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull';
+            showToast(`Failed downloading ${targetModel}`, 'error');
+          } else {
+            const prog = statusData.progress || 10;
+            pullProgressBar.style.width = prog + '%';
+            pullPercentText.innerText = prog + '%';
+            pullStatusText.innerHTML = `<span class="spinner-border spinner-border-sm me-1 text-primary"></span> ${statusData.detail || 'Downloading model layers...'}`;
+          }
+        } catch (err) {
+          clearInterval(pullPollTimer);
+          pullBtn.disabled = false;
+          pullBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull';
+        }
+      }, 1500);
+
+    } catch (e) {
+      pullContainer.classList.add('d-none');
+      pullBtn.disabled = false;
+      pullBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull';
+      showToast('Error: ' + e.message, 'error');
     }
   });
 </script>

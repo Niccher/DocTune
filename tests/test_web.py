@@ -315,6 +315,47 @@ def test_teacher_models_api():
         assert data["models"] == ["model-alpha", "model-beta"]
 
 
+def test_teacher_pull_endpoints():
+    """Verify POST /api/v1/teacher/pull and GET /api/v1/teacher/pull-status."""
+    # 1. Missing model name returns 400
+    res_err = client.post("/api/v1/teacher/pull", json={"provider": "ollama", "model": ""})
+    assert res_err.status_code == 400
+    assert "required" in res_err.json()["message"].lower()
+
+    # 2. Trigger pull
+    res_start = client.post("/api/v1/teacher/pull", json={"provider": "ollama", "model": "test-pull-model"})
+    assert res_start.status_code == 200
+    assert res_start.json()["status"] == "started"
+
+    # 3. Check pull status
+    res_status = client.get("/api/v1/teacher/pull-status?provider=ollama&model=test-pull-model")
+    assert res_status.status_code == 200
+    status_data = res_status.json()
+    assert "status" in status_data
+    assert "progress" in status_data
+
+    # 4. Verify completed state retrieval
+    from web.services.teacher_service import _pull_tasks, teacher_service
+    task_key = teacher_service.get_task_key("ollama", "test-pull-model")
+    _pull_tasks[task_key] = {"status": "COMPLETED", "progress": 100, "detail": "Ready!", "model": "test-pull-model"}
+    res_comp = client.get("/api/v1/teacher/pull-status?provider=ollama&model=test-pull-model")
+    assert res_comp.json()["status"] == "COMPLETED"
+    assert res_comp.json()["progress"] == 100
+
+
+def test_teacher_connection_diagnostics():
+    """Verify connection errors return helpful runner start commands."""
+    res = client.post("/api/v1/teacher/test", json={
+        "provider": "ollama",
+        "base_url": "http://127.0.0.1:54321/v1",
+        "model": "any-model"
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["valid"] is False
+    assert "OLLAMA_HOST=0.0.0.0:11434" in data["error"]
+
+
 def test_strict_no_legacy_fallback():
     """Verify that unversioned /api/* endpoints return 404 (no backward compatibility aliases)."""
     assert client.get("/api/telemetry").status_code == 404
@@ -1026,6 +1067,8 @@ if __name__ == "__main__":
     test_teacher_connection_api_validation()
     test_teacher_connection_api_mock()
     test_teacher_models_api()
+    test_teacher_pull_endpoints()
+    test_teacher_connection_diagnostics()
     test_strict_no_legacy_fallback()
     test_data_prep_start_cli_args()
     test_normalize_base_url()
