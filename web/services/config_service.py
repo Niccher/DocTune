@@ -5,6 +5,7 @@ Service for managing system configurations, JSON persistence,
 Hugging Face token validation, directory checks, and webhook alerts.
 """
 
+import os
 import json
 import logging
 from pathlib import Path
@@ -102,7 +103,7 @@ FACTORY_DEFAULTS: Dict[str, Any] = {
         },
     },
     "auth": {
-        "enabled": False,
+        "enabled": True,
         "allow_registration": True,
         "session_expire_hours": 168,
         "secret_key": "doctune-default-secure-secret-key-change-in-production",
@@ -325,6 +326,9 @@ class ConfigService:
         settings = self.get_settings()
         auth_cfg = dict(FACTORY_DEFAULTS.get("auth", {}))
         auth_cfg.update(settings.get("auth", {}))
+        env_auth = os.environ.get("AUTH_ENABLED")
+        if env_auth is not None:
+            auth_cfg["enabled"] = env_auth.strip().lower() in ("true", "1", "yes", "on")
         return auth_cfg
 
 

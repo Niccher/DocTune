@@ -81,7 +81,7 @@
     }
   },
   "auth": {
-    "enabled": false,
+    "enabled": true,
     "allow_registration": true,
     "session_expire_hours": 168,
     "secret_key": "doctune-default-secure-secret-key-change-in-production"

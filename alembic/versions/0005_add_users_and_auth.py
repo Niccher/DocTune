@@ -32,7 +32,7 @@ def upgrade() -> None:
             sa.Column("full_name", sa.String(length=128), nullable=True),
             sa.Column("hashed_password", sa.String(length=256), nullable=False),
             sa.Column("role", sa.String(length=32), server_default="operator", nullable=False),
-            sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+            sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
             sa.Column("reset_token", sa.String(length=128), nullable=True),
             sa.Column("reset_token_expires_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),

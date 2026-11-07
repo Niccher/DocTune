@@ -9,6 +9,9 @@ import os
 import sys
 from pathlib import Path
 
+# Disable mandatory auth by default for automated endpoint testing
+os.environ["AUTH_ENABLED"] = "false"
+
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 if str(PROJECT_ROOT) not in sys.path:
@@ -1740,9 +1743,10 @@ def test_authentication_and_user_flows():
 
     # 8. Auth Guard when auth.enabled is True
     client.cookies.clear()
-    orig_auth = config_service.get_auth_config()
-    orig_enabled = orig_auth.get("enabled", False)
+    orig_enabled = config_service.get_settings().get("auth", {}).get("enabled", True)
+    orig_env = os.environ.get("AUTH_ENABLED")
     try:
+        os.environ["AUTH_ENABLED"] = "true"
         config_service.save_settings({"auth": {"enabled": True}})
 
         # Unauthenticated HTML access to protected /dashboard redirects to /login
@@ -1768,6 +1772,10 @@ def test_authentication_and_user_flows():
         res_auth_ok = client.get("/dashboard", cookies={"doctune_session": admin_cookie})
         assert res_auth_ok.status_code == 200
     finally:
+        if orig_env is not None:
+            os.environ["AUTH_ENABLED"] = orig_env
+        else:
+            os.environ.pop("AUTH_ENABLED", None)
         config_service.save_settings({"auth": {"enabled": orig_enabled}})
 
     # 9. Logout

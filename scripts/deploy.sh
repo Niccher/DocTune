@@ -225,6 +225,9 @@ else
     BASE_URL="http://${DETECTED_IP}:${WEB_PORT}/"
 fi
 
+AUTH_ENABLED=$(grep "^AUTH_ENABLED" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "true")
+[ -z "$AUTH_ENABLED" ] && AUTH_ENABLED="true"
+
 set_env "WEB_PORT" "$WEB_PORT"
 set_env "POSTGRES_PORT" "$POSTGRES_PORT"
 set_env "REDIS_PORT" "$REDIS_PORT"
@@ -232,8 +235,10 @@ set_env "MINIO_PORT" "$MINIO_PORT"
 set_env "MINIO_CONSOLE_PORT" "$MINIO_CONSOLE_PORT"
 set_env "DOZZLE_PORT" "$DOZZLE_PORT"
 set_env "APP_BASE_URL" "$BASE_URL"
+set_env "AUTH_ENABLED" "$AUTH_ENABLED"
 
 log "Studio Web URL            -> ${BASE_URL}"
+log "Authentication Guard      -> ${AUTH_ENABLED} (enforced on all internal studio pages)"
 log "PostgreSQL Port           -> ${POSTGRES_PORT}"
 log "Redis Port                -> ${REDIS_PORT}"
 log "MinIO S3 API / Console    -> ${MINIO_PORT} / ${MINIO_CONSOLE_PORT}"
@@ -380,13 +385,16 @@ FINAL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${WEB_POR
 if [ "$FINAL_STATUS" = "200" ]; then
     log "PLATFORM IS LIVE — ALL SYSTEMS OPERATIONAL (WebApp HTTP ${FINAL_STATUS})"
     echo ""
-    echo -e "  ${BOLD}Web Studio Dashboard :${RESET}  ${BASE_URL}"
+    echo -e "  ${BOLD}Product Overview     :${RESET}  ${BASE_URL}"
+    echo -e "  ${BOLD}Web Studio Dashboard :${RESET}  ${BASE_URL}dashboard"
+    echo -e "  ${BOLD}Sign In / Login      :${RESET}  ${BASE_URL}login"
     echo -e "  ${BOLD}Training Studio      :${RESET}  ${BASE_URL}training"
     echo -e "  ${BOLD}Document Studio      :${RESET}  ${BASE_URL}data-prep"
     echo -e "  ${BOLD}Checkpoints & Models :${RESET}  ${BASE_URL}models"
     echo -e "  ${BOLD}Model Playground     :${RESET}  ${BASE_URL}playground"
     echo -e "  ${BOLD}System Administration:${RESET}  ${BASE_URL}admin"
-    echo -e "  ${BOLD}API Swagger Docs     :${RESET}  ${BASE_URL}docs"
+    echo -e "  ${BOLD}Quickstart & Docs    :${RESET}  ${BASE_URL}docs"
+    echo -e "  ${BOLD}API Swagger Docs     :${RESET}  ${BASE_URL}api/docs"
     echo -e "  ${BOLD}Health Probe Endpoint:${RESET}  ${BASE_URL}health"
     echo -e "  ${BOLD}MinIO S3 Web Console :${RESET}  http://${DETECTED_IP}:${MINIO_CONSOLE_PORT} (User: minioadmin)"
     echo -e "  ${BOLD}Dozzle Container Logs:${RESET}  http://${DETECTED_IP}:${DOZZLE_PORT}"
