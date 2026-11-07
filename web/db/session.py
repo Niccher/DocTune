@@ -100,6 +100,9 @@ def init_db():
                     ("audit_logs", "endpoint", "VARCHAR(256)"),
                     ("audit_logs", "user_agent", "VARCHAR(256)"),
                     ("audit_logs", "duration_ms", "FLOAT"),
+                    ("users", "reset_token", "VARCHAR(128)"),
+                    ("users", "reset_token_expires_at", "TIMESTAMP"),
+                    ("users", "last_login_at", "TIMESTAMP"),
                 ]:
                     try:
                         conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
@@ -135,3 +138,23 @@ def resolve_session(db=None):
     if HAS_SQLALCHEMY and SessionLocal:
         return SessionLocal(), True
     return None, False
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_context():
+    """Context manager for acquiring and safely auto-closing a database session."""
+    session, should_close = resolve_session(None)
+    try:
+        yield session
+        if session:
+            session.commit()
+    except Exception:
+        if session:
+            session.rollback()
+        raise
+    finally:
+        if session and should_close:
+            session.close()
+

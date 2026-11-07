@@ -12,7 +12,7 @@ def now_utc():
 
 HAS_SQLALCHEMY = False
 try:
-    from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Text, ForeignKey, JSON
+    from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Text, ForeignKey, JSON, Boolean
     from sqlalchemy.orm import declarative_base, relationship
     Base = declarative_base()
     HAS_SQLALCHEMY = True
@@ -20,7 +20,7 @@ except ImportError:
     class _DummyCol:
         def __init__(self, *args, **kwargs):
             pass
-    Column = Integer = BigInteger = String = Float = DateTime = Text = ForeignKey = JSON = _DummyCol
+    Column = Integer = BigInteger = String = Float = DateTime = Text = ForeignKey = JSON = Boolean = _DummyCol
     def relationship(*args, **kwargs):
         return None
     Base = object
@@ -210,4 +210,21 @@ class AuditLog(Base):
     user_agent = Column(String(256), nullable=True)
     duration_ms = Column(Float, nullable=True)
     details = Column(Text, nullable=True)
+
+
+class User(Base):
+    """User account model for authentication, access control, and audit tracking."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(256), unique=True, index=True, nullable=False)
+    username = Column(String(128), unique=True, index=True, nullable=False)
+    full_name = Column(String(128), nullable=True)
+    hashed_password = Column(String(256), nullable=False)
+    role = Column(String(32), default="operator", nullable=False)  # admin, operator, viewer
+    is_active = Column(Boolean, default=True, nullable=False)
+    reset_token = Column(String(128), nullable=True, index=True)
+    reset_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=now_utc)
 

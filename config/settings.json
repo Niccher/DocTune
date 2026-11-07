@@ -79,5 +79,11 @@
       "notify_on_complete": true,
       "notify_on_failure": true
     }
+  },
+  "auth": {
+    "enabled": false,
+    "allow_registration": true,
+    "session_expire_hours": 168,
+    "secret_key": "doctune-default-secure-secret-key-change-in-production"
   }
 }

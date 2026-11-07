@@ -51,8 +51,12 @@ class AuditService:
             elif op_cookie and op_cookie.strip():
                 actor_name = op_cookie.strip()
 
-            # 3. Future User Authentication Hook
-            if hasattr(request.state, "user_id"):
+            # 3. User Authentication Hook
+            if hasattr(request.state, "user") and request.state.user:
+                u = request.state.user
+                actor_user_id = str(getattr(u, "id", "")) or None
+                actor_name = getattr(u, "full_name", None) or getattr(u, "username", None) or actor_name
+            elif hasattr(request.state, "user_id"):
                 actor_user_id = str(request.state.user_id)
             elif "x-user-id" in request.headers:
                 actor_user_id = request.headers["x-user-id"].strip()

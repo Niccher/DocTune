@@ -1,0 +1,281 @@
+{% extends "public_base.html" %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="public-hero-bg py-5 py-lg-6 border-bottom">
+  <div class="container text-center py-4">
+    
+    <div class="d-inline-flex align-items-center gap-2 px-3 py-1.5 rounded-pill bg-primary-subtle text-primary border border-primary-subtle small fw-semibold mb-3">
+      <i class="bi bi-shield-lock-fill"></i>
+      <span>Enterprise Air-Gapped LLM Studio &bull; Zero External Telemetry</span>
+    </div>
+
+    <h1 class="display-4 fw-bold tracking-tight mb-3">
+      Turn Private Documents Into <br class="d-none d-md-block">
+      <span class="text-primary">Production-Grade LLMs</span>
+    </h1>
+
+    <p class="lead text-muted mx-auto mb-4" style="max-width: 760px;">
+      Ingest internal PDFs, technical manuals, and corporate databases. Synthesize high-density instruction datasets, train quantized QLoRA adapters on local GPUs, benchmark side-by-side, and deploy merged models without cloud leaks.
+    </p>
+
+    <div class="d-flex flex-wrap justify-content-center align-items-center gap-3 mb-5">
+      <a href="/dashboard" class="btn btn-primary btn-lg rounded-pill px-4 py-2.5 fw-semibold d-inline-flex align-items-center gap-2 shadow">
+        <i class="bi bi-speedometer2"></i>
+        <span>Launch Studio Dashboard</span>
+        <i class="bi bi-arrow-right"></i>
+      </a>
+      <a href="/features" class="btn btn-outline-secondary btn-lg rounded-pill px-4 py-2.5 fw-semibold d-inline-flex align-items-center gap-2">
+        <i class="bi bi-diagram-3"></i>
+        <span>Explore Pipeline Flow</span>
+      </a>
+      <a href="/docs" class="btn btn-link text-decoration-none text-muted fw-semibold d-inline-flex align-items-center gap-1">
+        <i class="bi bi-book"></i> Read Quickstart
+      </a>
+    </div>
+
+    <!-- Quick Stats Bar -->
+    <div class="row g-3 justify-content-center text-center">
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-body rounded-3 border shadow-sm">
+          <div class="fw-bold fs-4 text-primary">100%</div>
+          <div class="text-muted small">Air-Gapped & Local</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-body rounded-3 border shadow-sm">
+          <div class="fw-bold fs-4 text-success">4-bit / 8-bit</div>
+          <div class="text-muted small">QLoRA VRAM Efficiency</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-body rounded-3 border shadow-sm">
+          <div class="fw-bold fs-4 text-info">GGUF & Safetensors</div>
+          <div class="text-muted small">Production Exports</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-body rounded-3 border shadow-sm">
+          <div class="fw-bold fs-4 text-warning">Zero Leakage</div>
+          <div class="text-muted small">Automatic PII Scrubbing</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- 5-Stage Pipeline Walkthrough -->
+<section class="py-5 py-lg-6">
+  <div class="container">
+    <div class="text-center mb-5">
+      <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-1 rounded-pill fw-semibold mb-2">END-TO-END WORKFLOW</span>
+      <h2 class="fw-bold">From Raw Documents to Domain Expert in 5 Steps</h2>
+      <p class="text-muted mx-auto" style="max-width: 620px;">
+        DocTune Studio automates the entire fine-tuning lifecycle, eliminating messy terminal scripts and ad-hoc data formatting.
+      </p>
+    </div>
+
+    <div class="row g-4">
+      <!-- Step 1 -->
+      <div class="col-lg-4 col-md-6">
+        <div class="card h-100 landing-card bg-body p-4">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="pipeline-step-badge bg-primary-subtle text-primary border border-primary-subtle">1</span>
+            <h5 class="fw-bold mb-0">Document & Data Studio</h5>
+          </div>
+          <p class="text-muted small mb-3">
+            Upload proprietary manuals, compliance standards, and tabular specs (PDF, DOCX, CSV, TXT). Intelligent token chunking and automated PII scrubbing sanitize data before processing.
+          </p>
+          <div class="mt-auto">
+            <span class="badge bg-secondary-subtle text-secondary border">PDF &bull; DOCX &bull; CSV</span>
+            <span class="badge bg-secondary-subtle text-secondary border">PII Redactor</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="col-lg-4 col-md-6">
+        <div class="card h-100 landing-card bg-body p-4">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="pipeline-step-badge bg-success-subtle text-success border border-success-subtle">2</span>
+            <h5 class="fw-bold mb-0">Synthetic Q&A Generation</h5>
+          </div>
+          <p class="text-muted small mb-3">
+            Harness teacher LLMs (local Ollama, vLLM, or custom models) to generate dense instruction-response pairs. Output is formatted directly into train/eval JSONL splits ready for supervised fine-tuning.
+          </p>
+          <div class="mt-auto">
+            <span class="badge bg-secondary-subtle text-secondary border">Ollama Teacher</span>
+            <span class="badge bg-secondary-subtle text-secondary border">JSONL Splits</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="col-lg-4 col-md-6">
+        <div class="card h-100 landing-card bg-body p-4">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="pipeline-step-badge bg-info-subtle text-info border border-info-subtle">3</span>
+            <h5 class="fw-bold mb-0">QLoRA Training Studio</h5>
+          </div>
+          <p class="text-muted small mb-3">
+            Execute 4-bit NormalFloat (NF4) quantized LoRA training. Configure rank, alpha, learning rate, and batch size with automatic GPU memory boundary protection and real-time loss telemetry.
+          </p>
+          <div class="mt-auto">
+            <span class="badge bg-secondary-subtle text-secondary border">bitsandbytes NF4</span>
+            <span class="badge bg-secondary-subtle text-secondary border">PEFT Adapters</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="col-lg-6 col-md-6">
+        <div class="card h-100 landing-card bg-body p-4">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="pipeline-step-badge bg-warning-subtle text-warning border border-warning-subtle">4</span>
+            <h5 class="fw-bold mb-0">Evaluation & Live Playground</h5>
+          </div>
+          <p class="text-muted small mb-3">
+            Benchmark domain performance with streaming token generation. Test prompt responses side-by-side with baseline checkpoints and collect human preference signals for Direct Preference Optimization (DPO).
+          </p>
+          <div class="mt-auto">
+            <span class="badge bg-secondary-subtle text-secondary border">Streaming Inference</span>
+            <span class="badge bg-secondary-subtle text-secondary border">DPO Feedback Pairs</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 5 -->
+      <div class="col-lg-6 col-md-12">
+        <div class="card h-100 landing-card bg-body p-4">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="pipeline-step-badge bg-danger-subtle text-danger border border-danger-subtle">5</span>
+            <h5 class="fw-bold mb-0">Checkpoint Fusion & GGUF Export</h5>
+          </div>
+          <p class="text-muted small mb-3">
+            Fuse low-rank adapter weights into standalone 16-bit safetensors. Export quantized GGUFs (`Q4_K_M`, `Q8_0`) with automated Modelfiles ready for zero-latency Ollama or llama.cpp deployments.
+          </p>
+          <div class="mt-auto">
+            <span class="badge bg-secondary-subtle text-secondary border">LoRA Fusion</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Ollama Modelfile</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Hugging Face Hub</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Enterprise Architecture Grid -->
+<section class="py-5 py-lg-6 bg-body border-top border-bottom">
+  <div class="container">
+    <div class="text-center mb-5">
+      <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-1 rounded-pill fw-semibold mb-2">ENTERPRISE READY</span>
+      <h2 class="fw-bold">Engineered for Sovereign Corporate AI</h2>
+      <p class="text-muted mx-auto" style="max-width: 640px;">
+        Built from the ground up for strict security requirements, strict compliance, and predictable GPU utilization.
+      </p>
+    </div>
+
+    <div class="row g-4">
+      <div class="col-md-4">
+        <div class="p-3">
+          <div class="text-primary mb-2 fs-3"><i class="bi bi-shield-lock"></i></div>
+          <h5 class="fw-bold">Air-Gapped Privacy</h5>
+          <p class="text-muted small">
+            Zero telemetry. No weights or datasets ever leave your network. Fully compatible with offline on-premises installations.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="p-3">
+          <div class="text-success mb-2 fs-3"><i class="bi bi-cpu"></i></div>
+          <h5 class="fw-bold">Hardware Governor</h5>
+          <p class="text-muted small">
+            Automated clamping prevents Out-Of-Memory (OOM) crashes. Safely limits CPU thread count, RAM budget, and CUDA memory fraction.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="p-3">
+          <div class="text-info mb-2 fs-3"><i class="bi bi-fingerprint"></i></div>
+          <h5 class="fw-bold">Cryptographic Audit Trail</h5>
+          <p class="text-muted small">
+            Every config edit, training trigger, and checkpoint download is logged with actor ID, IP address, latency, and request context.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="p-3">
+          <div class="text-warning mb-2 fs-3"><i class="bi bi-database"></i></div>
+          <h5 class="fw-bold">Dual Storage Engine</h5>
+          <p class="text-muted small">
+            Native SQLite fallback for local developer workstations, and PostgreSQL + MinIO/S3 sync for production containerized clusters.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="p-3">
+          <div class="text-danger mb-2 fs-3"><i class="bi bi-person-badge"></i></div>
+          <h5 class="fw-bold">RBAC & Access Control</h5>
+          <p class="text-muted small">
+            Role-based segregation between Administrators and Operators. Secure password hashing and signed session cookies.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="p-3">
+          <div class="text-primary mb-2 fs-3"><i class="bi bi-graph-up-arrow"></i></div>
+          <h5 class="fw-bold">Prometheus Observability</h5>
+          <p class="text-muted small">
+            Live exposition endpoint at `/metrics` exporting GPU temperature, VRAM usage, queue depth, and training step loss for Grafana.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Supported Models -->
+<section class="py-5 py-lg-6">
+  <div class="container text-center">
+    <span class="badge bg-secondary-subtle text-secondary border px-3 py-1 rounded-pill fw-semibold mb-2">MODEL ECOSYSTEM</span>
+    <h2 class="fw-bold mb-3">Compatible With Modern Open Weights</h2>
+    <p class="text-muted mx-auto mb-4" style="max-width: 600px;">
+      Seamlessly fine-tune leading open-weight architectures directly from Hugging Face or local model directories.
+    </p>
+
+    <div class="d-flex flex-wrap justify-content-center gap-2 mb-5">
+      <span class="badge bg-body border py-2 px-3 fs-6 fw-normal text-body shadow-sm"><i class="bi bi-check-circle-fill text-success me-1.5"></i> Meta Llama 3 / 3.1 / 3.2</span>
+      <span class="badge bg-body border py-2 px-3 fs-6 fw-normal text-body shadow-sm"><i class="bi bi-check-circle-fill text-success me-1.5"></i> Mistral & Mixtral MoE</span>
+      <span class="badge bg-body border py-2 px-3 fs-6 fw-normal text-body shadow-sm"><i class="bi bi-check-circle-fill text-success me-1.5"></i> Qwen 2.5 (0.5B to 72B)</span>
+      <span class="badge bg-body border py-2 px-3 fs-6 fw-normal text-body shadow-sm"><i class="bi bi-check-circle-fill text-success me-1.5"></i> DeepSeek LLM & Coder</span>
+      <span class="badge bg-body border py-2 px-3 fs-6 fw-normal text-body shadow-sm"><i class="bi bi-check-circle-fill text-success me-1.5"></i> Microsoft Phi-3 & Phi-3.5</span>
+    </div>
+
+    <!-- Final Call to Action -->
+    <div class="card bg-primary text-white border-0 rounded-4 p-5 shadow-lg mx-auto" style="max-width: 900px;">
+      <div class="py-2">
+        <h2 class="fw-bold mb-2">Ready to Build Your Domain-Adapted LLM?</h2>
+        <p class="mb-4 opacity-75 lead" style="max-width: 600px; margin-inline: auto;">
+          Drop your documents into DocTune Studio and begin supervised instruction fine-tuning in minutes.
+        </p>
+        <div class="d-flex flex-wrap justify-content-center gap-3">
+          <a href="/dashboard" class="btn btn-light btn-lg rounded-pill px-4 py-2.5 fw-bold text-primary shadow">
+            Launch Studio Console &rarr;
+          </a>
+          <a href="/docs" class="btn btn-outline-light btn-lg rounded-pill px-4 py-2.5 fw-semibold">
+            Explore Documentation
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+{% endblock %}

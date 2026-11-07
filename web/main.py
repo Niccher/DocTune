@@ -2,16 +2,18 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from pipeline.common import PROJECT_ROOT
-from web.routers import dashboard, data_prep, training, models, playground, admin, inference, experiments
+from web.routers import dashboard, data_prep, training, models, playground, admin, inference, experiments, auth, landing
 from web.services.process_manager import process_mgr
 from web.db.session import init_db
 from web.services.storage_service import storage_service
 from web.services.redis_subscriber import start_redis_subscriber, stop_redis_subscriber
 from web.services.config_service import config_service
 from web.services.metrics_service import metrics_service
+from web.services.auth_service import auth_service
 from web.state import state
 
 
@@ -36,7 +38,51 @@ app = FastAPI(
     description="AdminLTE v4 dashboard for managing LLM document fine-tuning pipelines",
     version=config_service.get_app_version(),
     lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
 )
+
+
+@app.middleware("http")
+async def auth_session_middleware(request: Request, call_next):
+    """Resolve active user session and enforce authentication guard if enabled."""
+    request.state.user = None
+
+    token = request.cookies.get("doctune_session")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+
+    if token:
+        user_id = auth_service.verify_session_token(token)
+        if user_id:
+            user = auth_service.get_user_by_id(user_id)
+            if user and user.is_active:
+                request.state.user = user
+
+    # Route protection guard when authentication is enabled
+    auth_cfg = config_service.get_auth_config()
+    if auth_cfg.get("enabled", False):
+        path = request.url.path
+        is_exempt = (
+            path.startswith("/static")
+            or path in ("/health", "/metrics", "/api/docs", "/api/redoc")
+            or path in ("/", "/features", "/security", "/docs", "/documentation")
+            or path in ("/login", "/register", "/forgot-password", "/reset-password")
+            or path.startswith("/api/v1/auth")
+        )
+        if not is_exempt and request.state.user is None:
+            accept_header = request.headers.get("accept", "")
+            if path.startswith("/api/") or "application/json" in accept_header:
+                return JSONResponse(
+                    {"status": "error", "message": "Authentication required. Please sign in."},
+                    status_code=401,
+                )
+            query_suffix = f"?next={path}" if path != "/" else ""
+            return RedirectResponse(url=f"/login{query_suffix}", status_code=302)
+
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -55,6 +101,8 @@ static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Register modular routers
+app.include_router(landing.router)
+app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(data_prep.router)
 app.include_router(training.router)

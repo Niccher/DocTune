@@ -84,7 +84,7 @@ paths:
               properties:
                 provider:
                   type: string
-                  enum: [ollama, llamacpp, vllm, gemini, grok, openai, custom]
+                  enum: [ollama, llamacpp, vllm, gemini, deepseek, grok, openai, anthropic, custom]
                 base_url:
                   type: string
                 api_key:

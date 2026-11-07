@@ -357,7 +357,9 @@
                 <option value="llamacpp" {% if settings.data_prep.qa_generator.provider == 'llamacpp' %}selected{% endif %}>llama.cpp Server (llama-server / Free)</option>
                 <option value="vllm" {% if settings.data_prep.qa_generator.provider == 'vllm' %}selected{% endif %}>vLLM / High-Throughput Runner</option>
                 <option value="gemini" {% if settings.data_prep.qa_generator.provider == 'gemini' %}selected{% endif %}>Google Gemini (Google AI Studio)</option>
+                <option value="deepseek" {% if settings.data_prep.qa_generator.provider == 'deepseek' %}selected{% endif %}>DeepSeek (DeepSeek API - V3 / R1)</option>
                 <option value="grok" {% if settings.data_prep.qa_generator.provider == 'grok' %}selected{% endif %}>xAI Grok (API Key Required)</option>
+                <option value="anthropic" {% if settings.data_prep.qa_generator.provider == 'anthropic' %}selected{% endif %}>Anthropic Claude (Anthropic API)</option>
                 <option value="openai" {% if settings.data_prep.qa_generator.provider == 'openai' %}selected{% endif %}>OpenAI API (GPT-4o / mini)</option>
                 <option value="custom" {% if settings.data_prep.qa_generator.provider == 'custom' %}selected{% endif %}>Custom OpenAI-Compatible API</option>
               </select>
@@ -370,7 +372,7 @@
                 </a>
               </div>
               <input type="text" class="form-control font-monospace" id="qa_model" name="data_prep.qa_generator.model" value="{{ settings.data_prep.qa_generator.model }}">
-              <div class="form-text">e.g. <code>llama3.1:latest</code>, <code>qwen2.5:1.5b</code>, <code>gemini-1.5-flash</code></div>
+              <div class="form-text">e.g. <code>llama3.1:latest</code>, <code>gemini-2.5-flash</code>, <code>deepseek-chat</code>, <code>claude-3-5-sonnet-latest</code></div>
             </div>
             <div class="col-md-4">
               <label class="form-label" for="qa_temperature">Temperature</label>
@@ -389,7 +391,7 @@
                   <i class="bi bi-broadcast me-1"></i> Test Endpoint
                 </button>
               </div>
-              <div class="form-text" id="qaApiKeyHint">Required for Google Gemini, xAI Grok, or OpenAI; optional for local Ollama.</div>
+              <div class="form-text" id="qaApiKeyHint">Required for Google Gemini, DeepSeek, xAI Grok, Anthropic, or OpenAI; optional for local Ollama.</div>
             </div>
             <div class="col-12">
               <div id="qaPullProgressContainer" class="d-none mt-2 p-2 border rounded bg-body-tertiary">
@@ -969,7 +971,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
     if (preset.auth_required) {
       if (qaHint) qaHint.innerText = `Required for ${preset.name}. Please enter your valid API key.`;
-      if (qaKeyInput) qaKeyInput.placeholder = this.value === "gemini" ? "AIzaSy..." : (this.value === "grok" ? "xai-..." : "sk-...");
+      if (qaKeyInput) {
+        if (this.value === "gemini") qaKeyInput.placeholder = "AIzaSy...";
+        else if (this.value === "grok") qaKeyInput.placeholder = "xai-...";
+        else if (this.value === "anthropic") qaKeyInput.placeholder = "sk-ant-...";
+        else qaKeyInput.placeholder = "sk-...";
+      }
     } else {
       if (qaHint) qaHint.innerText = `Zero cost & private. Optional for ${preset.name}.`;
       if (qaKeyInput) qaKeyInput.placeholder = "not-needed";

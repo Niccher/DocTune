@@ -49,7 +49,7 @@ Returns live host resource metrics (CPU, RAM, GPU, Disk) and pipeline status.
 ## 3. Data Preparation & Teacher LLM Endpoints
 
 ### `GET /api/v1/teacher/presets`
-Returns supported teacher inference engines (`ollama`, `llamacpp`, `vllm`, `gemini`, `grok`, `openai`, `custom`) and their base URL / model configurations.
+Returns supported teacher inference engines (`ollama`, `llamacpp`, `vllm`, `gemini`, `deepseek`, `grok`, `openai`, `anthropic`, `custom`) and their base URL / model configurations.
 
 ### `GET /api/v1/teacher/models?provider={provider}&base_url={url}&api_key={key}`
 Dynamically queries a teacher endpoint via standard `/v1/models` to discover hosted model IDs.

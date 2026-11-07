@@ -74,26 +74,44 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "name": "Google Gemini (Google AI Studio)",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "docker_base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "default_model": "gemini-1.5-flash",
+        "default_model": "gemini-2.5-flash",
         "suggested_models": [
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
-            "gemini-2.0-flash",
         ],
         "auth_required": True,
         "default_api_key": "",
         "hint": "Official Google AI Studio API via OpenAI compatibility. Requires Gemini API Key.",
+    },
+    "deepseek": {
+        "id": "deepseek",
+        "name": "DeepSeek (DeepSeek API)",
+        "base_url": "https://api.deepseek.com/v1",
+        "docker_base_url": "https://api.deepseek.com/v1",
+        "default_model": "deepseek-chat",
+        "suggested_models": [
+            "deepseek-chat",
+            "deepseek-reasoner",
+        ],
+        "auth_required": True,
+        "default_api_key": "",
+        "hint": "High-intelligence reasoning & coding models. Requires DeepSeek API Key (sk-...).",
     },
     "grok": {
         "id": "grok",
         "name": "xAI Grok",
         "base_url": "https://api.x.ai/v1",
         "docker_base_url": "https://api.x.ai/v1",
-        "default_model": "grok-beta",
+        "default_model": "grok-2-latest",
         "suggested_models": [
-            "grok-beta",
             "grok-2-latest",
-            "grok-2-vision-1212",
+            "grok-2-1212",
+            "grok-beta",
+            "grok-vision-beta",
         ],
         "auth_required": True,
         "default_api_key": "",
@@ -114,6 +132,21 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "auth_required": True,
         "default_api_key": "",
         "hint": "OpenAI foundation models. Requires OpenAI API Key (sk-...).",
+    },
+    "anthropic": {
+        "id": "anthropic",
+        "name": "Anthropic Claude (Anthropic API)",
+        "base_url": "https://api.anthropic.com/v1",
+        "docker_base_url": "https://api.anthropic.com/v1",
+        "default_model": "claude-3-5-sonnet-latest",
+        "suggested_models": [
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-haiku-latest",
+            "claude-3-opus-latest",
+        ],
+        "auth_required": True,
+        "default_api_key": "",
+        "hint": "Anthropic Claude models. Requires Anthropic API Key (sk-ant-...).",
     },
     "custom": {
         "id": "custom",
@@ -180,8 +213,8 @@ class TeacherService:
         if not trimmed:
             return trimmed
 
-        # Standard OpenAI-compatible runners require /v1
-        if provider in ("ollama", "llamacpp", "vllm", "openai", "grok"):
+        # Standard OpenAI-compatible runners and Anthropic require /v1
+        if provider in ("ollama", "llamacpp", "vllm", "openai", "grok", "deepseek", "anthropic"):
             if not trimmed.endswith("/v1"):
                 trimmed = f"{trimmed}/v1"
         elif provider == "gemini":
@@ -202,13 +235,13 @@ class TeacherService:
     ) -> List[str]:
         """
         Probe endpoint to discover installed/available models dynamically.
-        Supports Ollama (/api/tags and /v1/models) and standard OpenAI (/v1/models).
+        Supports Ollama (/api/tags and /v1/models), Anthropic (/v1/models), and standard OpenAI (/v1/models).
+        Sanitizes Google Gemini model prefixes and filters non-conversational models.
         """
         clean_url = cls.normalize_base_url(provider, base_url)
         headers = {"Accept": "application/json"}
         if api_key and api_key.strip() and api_key != "not-needed":
             headers["Authorization"] = f"Bearer {api_key.strip()}"
-
 
         discovered: List[str] = []
 
@@ -232,26 +265,87 @@ class TeacherService:
                 except Exception as e:
                     logger.debug("Ollama /api/tags probe failed: %s", e)
 
-            # 2. Standard OpenAI /models endpoint
-            models_url = f"{clean_url}/models" if not clean_url.endswith("/models") else clean_url
-            try:
-                res = await client.get(models_url, headers=headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    raw_list = data.get("data", [])
-                    for item in raw_list:
-                        m_id = item.get("id") if isinstance(item, dict) else str(item)
-                        if m_id:
-                            discovered.append(m_id)
-            except Exception as e:
-                logger.debug("OpenAI /models probe failed: %s", e)
+            # 2. If provider is Anthropic, probe native /v1/models endpoint with x-api-key
+            elif provider == "anthropic":
+                anthropic_headers = {
+                    "x-api-key": api_key.strip() if api_key and api_key != "not-needed" else "",
+                    "anthropic-version": "2023-06-01",
+                    "Accept": "application/json",
+                }
+                models_url = f"{clean_url}/models" if not clean_url.endswith("/models") else clean_url
+                try:
+                    res = await client.get(models_url, headers=anthropic_headers)
+                    if res.status_code == 200:
+                        data = res.json()
+                        raw_list = data.get("data", [])
+                        for item in raw_list:
+                            m_id = item.get("id") if isinstance(item, dict) else str(item)
+                            if m_id:
+                                discovered.append(m_id)
+                except Exception as e:
+                    logger.debug("Anthropic /models probe failed: %s", e)
 
-        # 3. Fallback to suggested preset models if discovery did not return results
+            # 3. Standard OpenAI /models endpoint (DeepSeek, Grok, Gemini, vLLM, llama.cpp, OpenAI, Custom)
+            else:
+                models_url = f"{clean_url}/models" if not clean_url.endswith("/models") else clean_url
+                try:
+                    res = await client.get(models_url, headers=headers)
+                    if res.status_code == 200:
+                        data = res.json()
+                        raw_list = data.get("data", [])
+                        for item in raw_list:
+                            m_id = item.get("id") if isinstance(item, dict) else str(item)
+                            if m_id:
+                                # Strip Google Gemini models/ prefix if present
+                                if provider == "gemini" and m_id.startswith("models/"):
+                                    m_id = m_id[7:]
+                                discovered.append(m_id)
+                except Exception as e:
+                    logger.debug("OpenAI /models probe failed: %s", e)
+
+        # Filter non-generative / embedding models for Gemini
+        if provider == "gemini" and discovered:
+            filtered = []
+            non_chat_keywords = ("embedding", "imagen", "aqa", "learnlm", "bison", "whisper")
+            for m in discovered:
+                if not any(k in m.lower() for k in non_chat_keywords):
+                    filtered.append(m)
+            if filtered:
+                discovered = filtered
+
+        # Fallback to suggested preset models if discovery did not return results
         if not discovered:
             preset = PROVIDER_PRESETS.get(provider, {})
             discovered = preset.get("suggested_models", [])
 
-        return sorted(list(set(discovered)))
+        # Deduplicate while preserving sensible order (newer versions prioritized)
+        def model_sort_key(name: str):
+            if provider == "gemini":
+                if "2.5" in name:
+                    return (0, name)
+                if "2.0" in name:
+                    return (1, name)
+                if "1.5" in name:
+                    return (2, name)
+                return (3, name)
+            elif provider == "anthropic":
+                n_lower = name.lower()
+                if "sonnet" in n_lower:
+                    return (0, name)
+                if "haiku" in n_lower:
+                    return (1, name)
+                if "opus" in n_lower:
+                    return (2, name)
+                return (3, name)
+            return (0, name)
+
+        unique_models = list(dict.fromkeys(discovered))
+        if provider in ("gemini", "anthropic"):
+            unique_models.sort(key=model_sort_key)
+        else:
+            unique_models.sort()
+
+        return unique_models
 
     @classmethod
     async def test_connection(
@@ -305,24 +399,39 @@ class TeacherService:
                     timeout_sec=timeout_sec,
                 )
 
-                # 2. Test chat completion ping
+                # 2. Test chat completion / message ping
                 target_model = model.strip() if model and model.strip() else preset.get("default_model")
                 if not target_model and models:
                     target_model = models[0]
                 if not target_model:
                     target_model = "default"
 
-                chat_url = f"{clean_url}/chat/completions"
-                ping_payload = {
-                    "model": target_model,
-                    "messages": [
-                        {"role": "user", "content": "ping"}
-                    ],
-                    "max_tokens": 2,
-                    "temperature": 0.0,
-                }
+                if provider == "anthropic":
+                    chat_url = f"{clean_url}/messages"
+                    anthropic_headers = {
+                        "x-api-key": api_key.strip() if api_key and api_key != "not-needed" else "",
+                        "anthropic-version": "2023-06-01",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    }
+                    ping_payload = {
+                        "model": target_model,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 2,
+                    }
+                    chat_res = await client.post(chat_url, json=ping_payload, headers=anthropic_headers)
+                else:
+                    chat_url = f"{clean_url}/chat/completions"
+                    ping_payload = {
+                        "model": target_model,
+                        "messages": [
+                            {"role": "user", "content": "ping"}
+                        ],
+                        "max_tokens": 2,
+                        "temperature": 0.0,
+                    }
+                    chat_res = await client.post(chat_url, json=ping_payload, headers=headers)
 
-                chat_res = await client.post(chat_url, json=ping_payload, headers=headers)
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
 
                 if chat_res.status_code == 200:

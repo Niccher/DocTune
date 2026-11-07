@@ -84,7 +84,9 @@
                 <option value="llamacpp" {% if settings.data_prep.qa_generator.provider == 'llamacpp' %}selected{% endif %}>llama.cpp Server (llama-server / Free)</option>
                 <option value="vllm" {% if settings.data_prep.qa_generator.provider == 'vllm' %}selected{% endif %}>vLLM / High-Throughput Runner</option>
                 <option value="gemini" {% if settings.data_prep.qa_generator.provider == 'gemini' %}selected{% endif %}>Google Gemini (Google AI Studio)</option>
+                <option value="deepseek" {% if settings.data_prep.qa_generator.provider == 'deepseek' %}selected{% endif %}>DeepSeek (DeepSeek API - V3 / R1)</option>
                 <option value="grok" {% if settings.data_prep.qa_generator.provider == 'grok' %}selected{% endif %}>xAI Grok (API Key Required)</option>
+                <option value="anthropic" {% if settings.data_prep.qa_generator.provider == 'anthropic' %}selected{% endif %}>Anthropic Claude (Anthropic API)</option>
                 <option value="openai" {% if settings.data_prep.qa_generator.provider == 'openai' %}selected{% endif %}>OpenAI API (GPT-4o / mini)</option>
                 <option value="custom" {% if settings.data_prep.qa_generator.provider == 'custom' %}selected{% endif %}>Custom OpenAI-Compatible API</option>
               </select>
@@ -109,23 +111,23 @@
             </div>
             <div class="col-md-5">
               <div class="d-flex justify-content-between align-items-center mb-1">
-                <label class="form-label small fw-semibold mb-0" for="teacher_model">Model ID</label>
-                <div class="d-flex gap-2">
+                <label class="form-label small fw-semibold mb-0" for="teacher_model_select">Model ID</label>
+                <div class="d-flex align-items-center gap-2">
+                  <span id="modelDiscoveryBadge" class="badge bg-secondary-subtle text-secondary small d-none" style="font-size: 0.7rem;">0 models</span>
                   <a href="javascript:void(0)" class="small text-decoration-none text-info" id="btnProbeModels" title="Discover models from server"><i class="bi bi-arrow-clockwise"></i> Probe</a>
                   <a href="javascript:void(0)" class="small text-decoration-none text-success fw-semibold" id="btnPullTeacherModel" title="Download / pull this model into Ollama / llama.cpp"><i class="bi bi-cloud-arrow-down"></i> Pull</a>
                 </div>
               </div>
-              <input type="text" class="form-control form-control-sm font-monospace" id="teacher_model" name="teacher_model" list="teacherModelList" value="{{ settings.data_prep.qa_generator.model or 'llama3.1:latest' }}" required>
-              <datalist id="teacherModelList">
-                <option value="llama3.1:latest">
-                <option value="llama3:latest">
-                <option value="mistral:latest">
-                <option value="qwen2.5:1.5b">
-                <option value="qwen2.5:7b">
-                <option value="gemini-1.5-flash">
-                <option value="grok-beta">
-                <option value="gpt-4o-mini">
-              </datalist>
+              <div class="input-group input-group-sm">
+                <select class="form-select form-select-sm font-monospace" id="teacher_model_select" title="Select discovered model or custom">
+                  <!-- Dynamically populated from provider -->
+                </select>
+                <input type="text" class="form-control form-control-sm font-monospace d-none" id="teacher_model_custom" placeholder="Type custom model ID...">
+                <button class="btn btn-outline-secondary" type="button" id="btnToggleCustomModel" title="Switch between dropdown & custom model input">
+                  <i class="bi bi-pencil" id="toggleCustomModelIcon"></i>
+                </button>
+              </div>
+              <input type="hidden" id="teacher_model" name="teacher_model" value="{{ settings.data_prep.qa_generator.model or 'llama3.1:latest' }}" required>
             </div>
           </div>
 
@@ -495,19 +497,141 @@
   const providerSelect = document.getElementById('teacher_provider');
   const urlInput = document.getElementById('teacher_url');
   const modelInput = document.getElementById('teacher_model');
+  const modelSelect = document.getElementById('teacher_model_select');
+  const modelCustom = document.getElementById('teacher_model_custom');
+  const btnToggleCustom = document.getElementById('btnToggleCustomModel');
+  const toggleIcon = document.getElementById('toggleCustomModelIcon');
+  const discoveryBadge = document.getElementById('modelDiscoveryBadge');
   const keyInput = document.getElementById('teacher_api_key');
   const hintBox = document.getElementById('providerHint');
   const badgeEl = document.getElementById('providerBadge');
   const keyHint = document.getElementById('apiKeyHint');
-  const modelList = document.getElementById('teacherModelList');
   const testBtn = document.getElementById('btnTestTeacher');
   const feedbackBox = document.getElementById('teacherFeedback');
   const probeBtn = document.getElementById('btnProbeModels');
 
+  let isCustomMode = false;
+  let autoProbeTimer = null;
+
+  function setCustomMode(custom) {
+    isCustomMode = custom;
+    if (isCustomMode) {
+      modelSelect?.classList.add('d-none');
+      modelCustom?.classList.remove('d-none');
+      if (modelCustom && modelInput) modelCustom.value = modelInput.value;
+      if (toggleIcon) toggleIcon.className = 'bi bi-list-ul';
+      if (btnToggleCustom) btnToggleCustom.title = 'Switch to model dropdown';
+    } else {
+      modelCustom?.classList.add('d-none');
+      modelSelect?.classList.remove('d-none');
+      if (toggleIcon) toggleIcon.className = 'bi bi-pencil';
+      if (btnToggleCustom) btnToggleCustom.title = 'Type custom model ID';
+    }
+  }
+
+  btnToggleCustom?.addEventListener('click', () => {
+    setCustomMode(!isCustomMode);
+    if (!isCustomMode && modelSelect && modelInput) {
+      if (modelSelect.value !== '__custom__') {
+        modelInput.value = modelSelect.value;
+      }
+    }
+  });
+
+  modelSelect?.addEventListener('change', () => {
+    if (modelSelect.value === '__custom__') {
+      setCustomMode(true);
+      modelCustom?.focus();
+    } else {
+      if (modelInput) modelInput.value = modelSelect.value;
+    }
+  });
+
+  modelCustom?.addEventListener('input', () => {
+    if (modelInput) modelInput.value = modelCustom.value.trim();
+  });
+
+  function renderModelOptions(models, activeModel) {
+    if (!modelSelect) return;
+    modelSelect.innerHTML = '';
+
+    const list = (models && models.length) ? models : [];
+    let foundActive = false;
+
+    list.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      if (m === activeModel) {
+        opt.selected = true;
+        foundActive = true;
+      }
+      modelSelect.appendChild(opt);
+    });
+
+    const customOpt = document.createElement('option');
+    customOpt.value = '__custom__';
+    customOpt.textContent = '✏️ Custom Model ID...';
+    modelSelect.appendChild(customOpt);
+
+    if (list.length > 0) {
+      if (!foundActive && !isCustomMode) {
+        modelSelect.selectedIndex = 0;
+        if (modelInput) modelInput.value = modelSelect.value;
+      }
+      if (discoveryBadge) {
+        discoveryBadge.classList.remove('d-none');
+        discoveryBadge.textContent = `${list.length} models`;
+        discoveryBadge.className = 'badge bg-success-subtle text-success small';
+      }
+    } else {
+      if (discoveryBadge) discoveryBadge.classList.add('d-none');
+    }
+
+    if (activeModel && !foundActive && activeModel !== '__custom__') {
+      setCustomMode(true);
+      if (modelCustom) modelCustom.value = activeModel;
+    }
+  }
+
+  async function probeModels(isAuto = false) {
+    if (!isAuto && probeBtn) {
+      probeBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+    if (discoveryBadge) {
+      discoveryBadge.classList.remove('d-none');
+      discoveryBadge.textContent = 'Loading...';
+      discoveryBadge.className = 'badge bg-info-subtle text-info small';
+    }
+
+    try {
+      const q = new URLSearchParams({
+        provider: providerSelect.value,
+        base_url: urlInput.value.trim(),
+        api_key: keyInput.value.trim()
+      });
+      const res = await fetch(`/api/v1/teacher/models?${q.toString()}`);
+      const data = await res.json();
+      if (res.ok && data.models && data.models.length) {
+        renderModelOptions(data.models, modelInput ? modelInput.value : '');
+        if (!isAuto) showToast(`Discovered ${data.models.length} models`, 'success');
+      } else {
+        const preset = teacherPresets[providerSelect.value] || {};
+        renderModelOptions(preset.suggested_models || [], modelInput ? modelInput.value : '');
+        if (!isAuto) showToast('Loaded default preset suggestions', 'info');
+      }
+    } catch (e) {
+      if (!isAuto) showToast('Error probing models: ' + e.message, 'error');
+    } finally {
+      if (!isAuto && probeBtn) {
+        probeBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Probe';
+      }
+    }
+  }
+
   function updateTeacherUI(providerKey) {
     const preset = teacherPresets[providerKey] || teacherPresets['custom'] || {};
     if (urlInput && preset.effective_base_url) urlInput.value = preset.effective_base_url;
-    if (modelInput && preset.default_model) modelInput.value = preset.default_model;
     if (hintBox && preset.hint) hintBox.innerText = preset.hint;
 
     if (preset.auth_required) {
@@ -515,8 +639,13 @@
         badgeEl.className = 'badge bg-warning-subtle text-warning border small';
         badgeEl.innerText = 'API Key Required';
       }
-      if (keyHint) keyHint.innerText = '(Requires Commercial API Key)';
-      if (keyInput) keyInput.placeholder = providerKey === 'gemini' ? 'AIzaSy...' : (providerKey === 'grok' ? 'xai-...' : 'sk-...');
+      if (keyHint) keyHint.innerText = `(Requires ${preset.name} Key)`;
+      if (keyInput) {
+        if (providerKey === 'gemini') keyInput.placeholder = 'AIzaSy...';
+        else if (providerKey === 'grok') keyInput.placeholder = 'xai-...';
+        else if (providerKey === 'anthropic') keyInput.placeholder = 'sk-ant-...';
+        else keyInput.placeholder = 'sk-...';
+      }
     } else {
       if (badgeEl) {
         badgeEl.className = 'badge bg-success-subtle text-success border small';
@@ -526,15 +655,26 @@
       if (keyInput) keyInput.placeholder = 'not-needed';
     }
 
-    if (modelList && preset.suggested_models && preset.suggested_models.length) {
-      modelList.innerHTML = '';
-      preset.suggested_models.forEach(m => {
-        const opt = document.createElement('option');
-        opt.value = m;
-        modelList.appendChild(opt);
-      });
+    // Populate initial models from preset
+    renderModelOptions(preset.suggested_models || [], preset.default_model || '');
+    if (modelInput && preset.default_model) modelInput.value = preset.default_model;
+
+    // Auto-probe if local runner or if API key is already filled
+    if (!preset.auth_required || (keyInput && keyInput.value.trim().length > 6)) {
+      probeModels(true);
     }
   }
+
+  // Auto-probe when API key is entered or pasted (debounced)
+  keyInput?.addEventListener('input', () => {
+    clearTimeout(autoProbeTimer);
+    const keyVal = keyInput.value.trim();
+    if (keyVal.length > 6 && keyVal !== 'not-needed') {
+      autoProbeTimer = setTimeout(() => {
+        probeModels(true);
+      }, 550);
+    }
+  });
 
   providerSelect?.addEventListener('change', (e) => {
     updateTeacherUI(e.target.value);
@@ -578,12 +718,7 @@
           (data.models && data.models.length ? `<span class="badge bg-success-subtle text-success border ms-1">${data.models.length} model(s) discovered</span>` : '');
 
         if (data.models && data.models.length) {
-          modelList.innerHTML = '';
-          data.models.forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m;
-            modelList.appendChild(opt);
-          });
+          renderModelOptions(data.models, data.active_model || modelInput.value);
         }
       } else {
         feedbackBox.className = 'alert alert-danger py-2 px-3 small mb-3';
@@ -599,33 +734,15 @@
     }
   });
 
-  probeBtn?.addEventListener('click', async () => {
-    probeBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-    try {
-      const q = new URLSearchParams({
-        provider: providerSelect.value,
-        base_url: urlInput.value.trim(),
-        api_key: keyInput.value.trim()
-      });
-      const res = await fetch(`/api/v1/teacher/models?${q.toString()}`);
-      const data = await res.json();
-      if (res.ok && data.models && data.models.length) {
-        modelList.innerHTML = '';
-        data.models.forEach(m => {
-          const opt = document.createElement('option');
-          opt.value = m;
-          modelList.appendChild(opt);
-        });
-        showToast(`Discovered ${data.models.length} models from endpoint`, 'success');
-      } else {
-        showToast('No models discovered or endpoint does not list models', 'warning');
-      }
-    } catch (e) {
-      showToast('Error probing models: ' + e.message, 'error');
-    } finally {
-      probeBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Probe';
-    }
+  probeBtn?.addEventListener('click', () => {
+    probeModels(false);
   });
+
+  // Initialize initial model selector state on page load
+  const initialProvider = providerSelect ? providerSelect.value : 'ollama';
+  const initialModel = modelInput ? modelInput.value : 'llama3.1:latest';
+  const initialPreset = teacherPresets[initialProvider] || {};
+  renderModelOptions(initialPreset.suggested_models || [], initialModel);
 
   // Pull / Download Teacher Model Handler
   const pullBtn = document.getElementById('btnPullTeacherModel');

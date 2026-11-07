@@ -101,6 +101,12 @@ FACTORY_DEFAULTS: Dict[str, Any] = {
             "notify_on_failure": True,
         },
     },
+    "auth": {
+        "enabled": False,
+        "allow_registration": True,
+        "session_expire_hours": 168,
+        "secret_key": "doctune-default-secure-secret-key-change-in-production",
+    },
 }
 
 
@@ -313,6 +319,13 @@ class ConfigService:
     def get_compute_resources(self) -> Dict[str, Any]:
         """Return active compute resource constraints."""
         return self.get_settings().get("compute_resources", FACTORY_DEFAULTS["compute_resources"])
+
+    def get_auth_config(self) -> Dict[str, Any]:
+        """Return authentication and access control configuration."""
+        settings = self.get_settings()
+        auth_cfg = dict(FACTORY_DEFAULTS.get("auth", {}))
+        auth_cfg.update(settings.get("auth", {}))
+        return auth_cfg
 
 
     def test_hf_token(self, token: str) -> Dict[str, Any]:

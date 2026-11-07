@@ -23,11 +23,15 @@ client = TestClient(app)
 
 
 def test_dashboard_route():
-    response = client.get("/")
+    response = client.get("/dashboard")
     assert response.status_code == 200
     assert "Overview Dashboard" in response.text
     assert "AdminLTE" in response.text or "LLM Studio" in response.text
     assert f"v{config_service.get_app_version()}" in response.text
+
+    res_studio = client.get("/studio")
+    assert res_studio.status_code == 200
+    assert "Overview Dashboard" in res_studio.text
 
 
 def test_data_prep_route():
@@ -258,10 +262,13 @@ def test_teacher_presets_api():
     data = res.json()
     assert "presets" in data
     presets = data["presets"]
-    for provider in ["ollama", "llamacpp", "vllm", "gemini", "grok", "openai", "custom"]:
+    for provider in ["ollama", "llamacpp", "vllm", "gemini", "deepseek", "grok", "openai", "anthropic", "custom"]:
         assert provider in presets
         assert "effective_base_url" in presets[provider]
         assert "default_model" in presets[provider]
+    assert presets["gemini"]["default_model"] == "gemini-2.5-flash"
+    assert presets["deepseek"]["default_model"] == "deepseek-chat"
+    assert presets["anthropic"]["default_model"] == "claude-3-5-sonnet-latest"
 
 
 def test_teacher_connection_api_validation():
@@ -420,8 +427,79 @@ def test_normalize_base_url():
     assert teacher_service.normalize_base_url("ollama", "http://localhost:11434") == "http://localhost:11434/v1"
     assert teacher_service.normalize_base_url("ollama", "http://localhost:11434/v1") == "http://localhost:11434/v1"
     assert teacher_service.normalize_base_url("llamacpp", "http://localhost:8080/") == "http://localhost:8080/v1"
+    assert teacher_service.normalize_base_url("deepseek", "https://api.deepseek.com") == "https://api.deepseek.com/v1"
+    assert teacher_service.normalize_base_url("deepseek", "https://api.deepseek.com/v1") == "https://api.deepseek.com/v1"
+    assert teacher_service.normalize_base_url("anthropic", "https://api.anthropic.com") == "https://api.anthropic.com/v1"
+    assert teacher_service.normalize_base_url("anthropic", "https://api.anthropic.com/v1") == "https://api.anthropic.com/v1"
     assert teacher_service.normalize_base_url("openai", "https://api.openai.com") == "https://api.openai.com/v1"
     assert teacher_service.normalize_base_url("gemini", "https://generativelanguage.googleapis.com/v1beta") == "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def test_anthropic_model_probing_and_sorting():
+    import asyncio
+    from web.services.teacher_service import teacher_service
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": [
+            {"id": "claude-3-opus-20240229"},
+            {"id": "claude-3-5-sonnet-20241022"},
+            {"id": "claude-3-5-haiku-20241022"},
+        ]
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_response
+        models = asyncio.run(teacher_service.fetch_available_models(
+            provider="anthropic",
+            base_url="https://api.anthropic.com/v1",
+            api_key="sk-ant-test-key",
+        ))
+        assert "claude-3-5-sonnet-20241022" in models
+        assert "claude-3-5-haiku-20241022" in models
+        assert "claude-3-opus-20240229" in models
+        # Sonnet prioritized over Haiku over Opus
+        assert models.index("claude-3-5-sonnet-20241022") < models.index("claude-3-5-haiku-20241022")
+        assert models.index("claude-3-5-haiku-20241022") < models.index("claude-3-opus-20240229")
+
+
+def test_gemini_model_sanitization_and_sorting():
+    import asyncio
+    from web.services.teacher_service import teacher_service
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": [
+            {"id": "models/text-embedding-004"},
+            {"id": "models/gemini-1.5-flash"},
+            {"id": "models/gemini-2.5-flash"},
+            {"id": "models/aqa"},
+            {"id": "models/gemini-2.0-flash"},
+            {"id": "models/imagen-3.0"},
+        ]
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_response
+        models = asyncio.run(teacher_service.fetch_available_models(
+            provider="gemini",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key="AIzaTestKey",
+        ))
+        # Should strip 'models/' and filter out embedding, imagen, aqa
+        assert "text-embedding-004" not in models
+        assert "imagen-3.0" not in models
+        assert "aqa" not in models
+        assert "gemini-2.5-flash" in models
+        assert "gemini-2.0-flash" in models
+        assert "gemini-1.5-flash" in models
+        # Recency sorting check: 2.5 before 2.0 before 1.5
+        assert models.index("gemini-2.5-flash") < models.index("gemini-2.0-flash")
+        assert models.index("gemini-2.0-flash") < models.index("gemini-1.5-flash")
 
 
 def test_extract_json_object_resilience():
@@ -1511,6 +1589,228 @@ def test_audit_logging_and_actor_resolution():
     )
 
 
+def test_authentication_and_user_flows():
+    """Verify full user authentication lifecycle, registration, login, recovery, and auth guard."""
+    from web.services.auth_service import auth_service
+    from web.db.session import get_db_context
+    from web.db.models import User
+
+    # 1. Test Auth Template Rendering
+    res_login_page = client.get("/login", follow_redirects=False)
+    assert res_login_page.status_code in (200, 302)
+
+    res_reg_page = client.get("/register")
+    assert res_reg_page.status_code == 200
+    assert "DocTune Studio" in res_reg_page.text
+
+    res_forgot_page = client.get("/forgot-password")
+    assert res_forgot_page.status_code == 200
+    assert "Reset Password" in res_forgot_page.text
+
+    res_reset_page = client.get("/reset-password?token=test_token_abc")
+    assert res_reset_page.status_code == 200
+    assert "Set New Password" in res_reset_page.text
+
+    # Clean up test accounts if present from previous runs
+    with get_db_context() as db:
+        db.query(User).filter(User.username.in_(["test_lead_admin", "test_member_user"])).delete(synchronize_session=False)
+
+    # 2. Register first user or test user
+    initial_count = auth_service.count_users()
+    res_reg = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Test Lead Admin",
+            "username": "test_lead_admin",
+            "email": "test_admin@example.com",
+            "password": "StrongPassword123!",
+        },
+    )
+    assert res_reg.status_code == 200
+    reg_data = res_reg.json()
+    assert reg_data["status"] == "success"
+    if initial_count == 0:
+        assert reg_data["user"]["role"] == "admin"
+    assert "doctune_session" in res_reg.cookies
+
+    # 3. Register second user -> should have role "operator"
+    res_reg2 = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Test Member User",
+            "username": "test_member_user",
+            "email": "test_member@example.com",
+            "password": "StrongPassword123!",
+        },
+    )
+    assert res_reg2.status_code == 200
+    assert res_reg2.json()["user"]["role"] == "operator"
+
+    # 4. Duplicate registration should be rejected
+    res_dup = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Duplicate User",
+            "username": "test_lead_admin",
+            "email": "diff@example.com",
+            "password": "StrongPassword123!",
+        },
+    )
+    assert res_dup.status_code == 400
+
+    # 5. Login Flow
+    # Invalid password
+    res_bad_login = client.post(
+        "/api/v1/auth/login",
+        json={"email_or_username": "test_lead_admin", "password": "WrongPassword"},
+    )
+    assert res_bad_login.status_code == 401
+
+    # Valid login with username
+    res_login = client.post(
+        "/api/v1/auth/login",
+        json={"email_or_username": "test_lead_admin", "password": "StrongPassword123!", "remember_me": True},
+    )
+    assert res_login.status_code == 200
+    assert res_login.json()["status"] == "success"
+    admin_cookie = res_login.cookies["doctune_session"]
+    assert admin_cookie is not None
+
+    # Valid login with email
+    res_login_email = client.post(
+        "/api/v1/auth/login",
+        json={"email_or_username": "test_member@example.com", "password": "StrongPassword123!"},
+    )
+    assert res_login_email.status_code == 200
+    member_cookie = res_login_email.cookies["doctune_session"]
+
+    # 6. Session & Profile API (/me)
+    # Clear client cookies to test unauthenticated
+    client.cookies.clear()
+    res_me_anon = client.get("/api/v1/auth/me")
+    assert res_me_anon.status_code == 200
+    assert res_me_anon.json()["authenticated"] is False
+
+    # Authenticated via cookie
+    res_me_auth = client.get("/api/v1/auth/me", cookies={"doctune_session": admin_cookie})
+    assert res_me_auth.status_code == 200
+    assert res_me_auth.json()["authenticated"] is True
+    assert res_me_auth.json()["user"]["username"] == "test_lead_admin"
+
+    # 7. Password Recovery Flow
+    res_forgot = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "test_member@example.com"},
+    )
+    assert res_forgot.status_code == 200
+    forgot_data = res_forgot.json()
+    assert forgot_data["status"] == "success"
+    reset_token = forgot_data["token"]
+    assert reset_token is not None
+    assert forgot_data["reset_url"] is not None
+
+    # Reset password with token
+    res_reset = client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": reset_token, "new_password": "NewUpdatedPassword99!"},
+    )
+    assert res_reset.status_code == 200
+    assert res_reset.json()["status"] == "success"
+
+    # Old password no longer works
+    res_old_login = client.post(
+        "/api/v1/auth/login",
+        json={"email_or_username": "test_member_user", "password": "StrongPassword123!"},
+    )
+    assert res_old_login.status_code == 401
+
+    # New password works
+    res_new_login = client.post(
+        "/api/v1/auth/login",
+        json={"email_or_username": "test_member_user", "password": "NewUpdatedPassword99!"},
+    )
+    assert res_new_login.status_code == 200
+
+    # Token cannot be reused
+    res_reuse = client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": reset_token, "new_password": "YetAnotherPassword1!"},
+    )
+    assert res_reuse.status_code == 400
+
+    # 8. Auth Guard when auth.enabled is True
+    client.cookies.clear()
+    orig_auth = config_service.get_auth_config()
+    orig_enabled = orig_auth.get("enabled", False)
+    try:
+        config_service.save_settings({"auth": {"enabled": True}})
+
+        # Unauthenticated HTML access to protected /dashboard redirects to /login
+        res_guarded_html = client.get("/dashboard", follow_redirects=False)
+        assert res_guarded_html.status_code == 302
+        assert "/login" in res_guarded_html.headers.get("location", "")
+
+        # Unauthenticated API access returns 401
+        res_guarded_api = client.get("/api/v1/admin/settings")
+        assert res_guarded_api.status_code == 401
+        assert res_guarded_api.json()["status"] == "error"
+
+        # Public paths still accessible without authentication
+        assert client.get("/").status_code == 200
+        assert client.get("/features").status_code == 200
+        assert client.get("/security").status_code == 200
+        assert client.get("/docs").status_code == 200
+        assert client.get("/health").status_code == 200
+        assert client.get("/metrics").status_code == 200
+        assert client.get("/login", follow_redirects=False).status_code in (200, 302)
+
+        # Authenticated access succeeds
+        res_auth_ok = client.get("/dashboard", cookies={"doctune_session": admin_cookie})
+        assert res_auth_ok.status_code == 200
+    finally:
+        config_service.save_settings({"auth": {"enabled": orig_enabled}})
+
+    # 9. Logout
+    res_logout = client.post("/api/v1/auth/logout", cookies={"doctune_session": admin_cookie})
+    assert res_logout.status_code == 200
+    assert "doctune_session" in res_logout.headers.get("set-cookie", "")
+
+    # Clean up test users
+    with get_db_context() as db:
+        db.query(User).filter(User.username.in_(["test_lead_admin", "test_member_user"])).delete(synchronize_session=False)
+
+
+def test_landing_suite_routes():
+    """Verify public landing page suite (Overview, Features, Security, Docs)."""
+    # 1. Primary Landing Page
+    res_index = client.get("/")
+    assert res_index.status_code == 200
+    assert "Turn Private Documents Into" in res_index.text
+    assert "Production-Grade LLMs" in res_index.text
+    assert "Launch Studio Dashboard" in res_index.text
+
+    # 2. Features & Pipeline Deep Dive
+    res_features = client.get("/features")
+    assert res_features.status_code == 200
+    assert "Deep Dive: The DocTune Studio Pipeline" in res_features.text
+    assert "QLoRA 4-bit Parameter-Efficient Fine-Tuning" in res_features.text
+    assert "STAGE 1" in res_features.text
+
+    # 3. Security & Air-Gap Compliance
+    res_sec = client.get("/security")
+    assert res_sec.status_code == 200
+    assert "Enterprise Air-Gap & Data Sovereignty" in res_sec.text
+    assert "Cryptographic Tamper-Evident Audit Logging" in res_sec.text
+    assert "Automated PII Masking" in res_sec.text
+
+    # 4. Documentation & Quickstart Hub
+    res_docs = client.get("/docs")
+    assert res_docs.status_code == 200
+    assert "Quickstart & API Documentation" in res_docs.text
+    assert "Hardware & Environment Prerequisites" in res_docs.text
+    assert "/api/v1/telemetry" in res_docs.text
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
@@ -1541,6 +1841,7 @@ if __name__ == "__main__":
     test_strict_no_legacy_fallback()
     test_data_prep_start_cli_args()
     test_normalize_base_url()
+    test_gemini_model_sanitization_and_sorting()
     test_extract_json_object_resilience()
     test_storage_service_ensure_buckets()
     test_storage_service_directory_and_crud()
@@ -1578,6 +1879,8 @@ if __name__ == "__main__":
     test_rag_benchmark_engine()
     test_prometheus_metrics_endpoint()
     test_audit_logging_and_actor_resolution()
+    test_authentication_and_user_flows()
+    test_landing_suite_routes()
     print("All tests passed successfully!")
 
 

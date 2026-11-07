@@ -1,0 +1,205 @@
+{% extends "public_base.html" %}
+
+{% block content %}
+<!-- Features Header -->
+<section class="public-hero-bg py-5 border-bottom">
+  <div class="container text-center py-3">
+    <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-1 rounded-pill fw-semibold mb-2">TECHNICAL ARCHITECTURE</span>
+    <h1 class="display-5 fw-bold mb-3">Deep Dive: The DocTune Studio Pipeline</h1>
+    <p class="lead text-muted mx-auto" style="max-width: 720px;">
+      Explore the complete end-to-end engineering architecture that turns unstructured corporate assets into production-grade specialized models.
+    </p>
+  </div>
+</section>
+
+<!-- Feature Stages Breakdown -->
+<section class="py-5">
+  <div class="container">
+    
+    <!-- Stage 1 -->
+    <div class="row align-items-center g-5 py-4 border-bottom">
+      <div class="col-lg-6">
+        <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 1</span>
+        <h3 class="fw-bold mb-3">Document Ingestion, Chunking & PII Redaction</h3>
+        <p class="text-muted">
+          DocTune Studio ingests proprietary documents across multiple enterprise formats (PDF, DOCX, CSV, Markdown, TXT). Rather than feeding naive large text chunks into a model, the engine breaks documents into semantically coherent token windows with configurable overlap.
+        </p>
+        <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Configurable Chunking:</strong> Adjustable token chunk sizes (default 1000 tokens) with sliding overlap to preserve context across boundaries.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Automated PII Masking:</strong> Sensitive identifiers—emails, phone numbers, credit card numbers, and API tokens—are automatically sanitized before dataset assembly.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Dual Storage Sync:</strong> Documents are persisted to local POSIX disk and optionally mirrored to private MinIO or AWS S3 buckets.</li>
+        </ul>
+        <a href="/data-prep" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1.5 fw-semibold">Open Data Studio &rarr;</a>
+      </div>
+      <div class="col-lg-6">
+        <div class="code-terminal shadow-sm">
+          <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary small">
+            <span>data_prep/sample_chunk.json</span>
+            <span class="badge text-bg-secondary">PII Scrubbed</span>
+          </div>
+<pre class="mb-0"><code>{
+  "source_document": "2026_Corporate_Failover_SOP.pdf",
+  "chunk_id": "chunk_042",
+  "token_count": 864,
+  "pii_redacted": true,
+  "content": "In the event of a primary power loss at Facility B, the automated UPS switches load within 4ms. The on-call engineering lead [REDACTED_NAME] is notified via emergency pager..."
+}</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 2 -->
+    <div class="row align-items-center g-5 py-4 border-bottom flex-lg-row-reverse">
+      <div class="col-lg-6">
+        <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 2</span>
+        <h3 class="fw-bold mb-3">Teacher LLM Synthetic Q&A Generation</h3>
+        <p class="text-muted">
+          Raw document continuation training often leads to low question-answering accuracy. DocTune Studio uses a high-capacity Teacher LLM (such as local Llama 3 70B, Qwen 2.5 32B via Ollama or custom vLLM) to synthesize high-density instruction-response pairs from your chunks.
+        </p>
+        <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Multi-Teacher Backend:</strong> Connect seamlessly to local Ollama endpoints, local vLLM instances, or private OpenAI-compatible inference servers.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Automated JSONL Formatting:</strong> Generates structured `instruction`, `input`, and `output` tuples adhering to standard Alpaca and ShareGPT schemas.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Train/Validation Split:</strong> Automatically partitions generated pairs into training and validation sets for accurate loss tracking.</li>
+        </ul>
+        <a href="/data-prep" class="btn btn-sm btn-outline-success rounded-pill px-3 py-1.5 fw-semibold">Configure Teacher Models &rarr;</a>
+      </div>
+      <div class="col-lg-6">
+        <div class="code-terminal shadow-sm">
+          <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary small">
+            <span>dataset/train.jsonl</span>
+            <span class="badge text-bg-success">Alpaca Format</span>
+          </div>
+<pre class="mb-0"><code>{
+  "instruction": "What is the automatic failover threshold for Facility B power events?",
+  "input": "Reference: 2026_Corporate_Failover_SOP.pdf",
+  "output": "According to the SOP, the automated UPS transfers load within 4 milliseconds of primary power loss."
+}</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 3 -->
+    <div class="row align-items-center g-5 py-4 border-bottom">
+      <div class="col-lg-6">
+        <span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 3</span>
+        <h3 class="fw-bold mb-3">QLoRA 4-bit Parameter-Efficient Fine-Tuning</h3>
+        <p class="text-muted">
+          Full fine-tuning of 8B or 14B models requires expensive multi-GPU clusters. DocTune Studio utilizes QLoRA with 4-bit NormalFloat (NF4) quantization and double quantization via `bitsandbytes`, making fine-tuning possible on consumer GPUs with as little as 12GB to 16GB of VRAM.
+        </p>
+        <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Target Module Tuning:</strong> Injects low-rank adapters into attention projections (`q_proj`, `k_proj`, `v_proj`, `o_proj`) and MLP layers (`gate_proj`, `up_proj`, `down_proj`).</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hardware Governor:</strong> Automated boundary detection prevents OOM crashes by clamping batch sizes, max sequence length, and gradient accumulation.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Live Telemetry:</strong> Real-time streaming loss curves, GPU temperature, VRAM consumption, and step metrics.</li>
+        </ul>
+        <a href="/training" class="btn btn-sm btn-outline-info rounded-pill px-3 py-1.5 fw-semibold">Launch Training Studio &rarr;</a>
+      </div>
+      <div class="col-lg-6">
+        <div class="card landing-card p-4 bg-body shadow-sm">
+          <h6 class="fw-bold mb-3 small text-uppercase text-muted">QLoRA Hyperparameter Matrix</h6>
+          <div class="table-responsive">
+            <table class="table table-sm table-borderless small mb-0">
+              <tbody>
+                <tr>
+                  <td class="text-muted">Quantization:</td>
+                  <td class="fw-semibold text-end">4-bit NormalFloat (NF4)</td>
+                </tr>
+                <tr>
+                  <td class="text-muted">LoRA Rank ($r$):</td>
+                  <td class="fw-semibold text-end">16 (Expandable to 64)</td>
+                </tr>
+                <tr>
+                  <td class="text-muted">LoRA Alpha ($\alpha$):</td>
+                  <td class="fw-semibold text-end">32</td>
+                </tr>
+                <tr>
+                  <td class="text-muted">LoRA Dropout:</td>
+                  <td class="fw-semibold text-end">0.05</td>
+                </tr>
+                <tr>
+                  <td class="text-muted">Optimizer:</td>
+                  <td class="fw-semibold text-end">Paged AdamW 8-bit</td>
+                </tr>
+                <tr>
+                  <td class="text-muted">Memory Efficiency:</td>
+                  <td class="fw-semibold text-end text-success">Up to 75% VRAM Reduction</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 4 -->
+    <div class="row align-items-center g-5 py-4 border-bottom flex-lg-row-reverse">
+      <div class="col-lg-6">
+        <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 4</span>
+        <h3 class="fw-bold mb-3">Model Verification, Playground & DPO Curation</h3>
+        <p class="text-muted">
+          Verify your fine-tuned model before releasing it into production. The Evaluation Playground provides interactive streaming chats, side-by-side comparisons against the base model, and alignment feedback collection.
+        </p>
+        <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Side-by-Side Playground:</strong> Run baseline and fine-tuned checkpoints against identical prompts to evaluate domain recall.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>DPO Dataset Export:</strong> Mark responses as "preferred" or "rejected" to generate datasets for Direct Preference Optimization alignment.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>RAG Benchmark Engine:</strong> Benchmark retrieval context answers against ground-truth document chunks.</li>
+        </ul>
+        <a href="/playground" class="btn btn-sm btn-outline-warning rounded-pill px-3 py-1.5 fw-semibold">Open Playground &rarr;</a>
+      </div>
+      <div class="col-lg-6">
+        <div class="card landing-card p-4 bg-body shadow-sm">
+          <div class="d-flex align-items-center justify-content-between mb-3 border-bottom pb-2">
+            <span class="badge bg-primary-subtle text-primary">Fine-Tuned Checkpoint</span>
+            <span class="badge bg-secondary-subtle text-secondary">Base Checkpoint</span>
+          </div>
+          <div class="mb-3 small">
+            <span class="fw-bold d-block text-muted">Prompt:</span>
+            <em>"What is the failover protocol for Facility B?"</em>
+          </div>
+          <div class="p-2.5 rounded bg-body-tertiary border mb-2 small">
+            <strong class="text-primary">Fine-Tuned:</strong> "The automated UPS transfers load in 4ms, and [REDACTED_NAME] is alerted via emergency pager."
+          </div>
+          <div class="p-2.5 rounded bg-body-tertiary border small text-muted">
+            <strong>Base:</strong> "I do not have specific information about Facility B's power failover protocols."
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 5 -->
+    <div class="row align-items-center g-5 py-4">
+      <div class="col-lg-6">
+        <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 5</span>
+        <h3 class="fw-bold mb-3">Weight Merging, GGUF & Production Deployment</h3>
+        <p class="text-muted">
+          Once satisfied with training quality, fuse low-rank delta matrices directly into base model weights. This produces a standalone 16-bit model requiring no PEFT adapter runtime.
+        </p>
+        <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Zero-Runtime LoRA Fusion:</strong> Mathematically integrates weights: $W = W_0 + \frac{\alpha}{r} (B \times A)$.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>GGUF Quantization:</strong> Converts models to `Q4_K_M`, `Q5_K_M`, and `Q8_0` with automatic Ollama Modelfile generation.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hugging Face Hub Push:</strong> Authenticate and export private checkpoints to your organization's Hugging Face repository with one click.</li>
+        </ul>
+        <a href="/models" class="btn btn-sm btn-outline-danger rounded-pill px-3 py-1.5 fw-semibold">Manage Checkpoints &rarr;</a>
+      </div>
+      <div class="col-lg-6">
+        <div class="code-terminal shadow-sm">
+          <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary small">
+            <span>Ollama Modelfile</span>
+            <span class="badge text-bg-danger">Standalone Model</span>
+          </div>
+<pre class="mb-0"><code>FROM ./merged_models/doctune-qlora-q4_k_m.gguf
+
+{% raw %}
+TEMPLATE """{{ if .System }}&lt;|start_header_id|&gt;system&lt;|end_header_id|&gt;
+{{ .System }}&lt;|eot_id|&gt;{{ end }}&lt;|start_header_id|&gt;user&lt;|end_header_id|&gt;
+{{ .Prompt }}&lt;|eot_id|&gt;&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;
+"""
+{% endraw %}
+PARAMETER temperature 0.3
+PARAMETER stop "&lt;|eot_id|&gt;"</code></pre>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+{% endblock %}

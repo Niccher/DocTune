@@ -1,0 +1,154 @@
+{% extends "public_base.html" %}
+
+{% block content %}
+<!-- Security Header -->
+<section class="public-hero-bg py-5 border-bottom">
+  <div class="container text-center py-3">
+    <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-1 rounded-pill fw-semibold mb-2">SECURITY & COMPLIANCE</span>
+    <h1 class="display-5 fw-bold mb-3">Enterprise Air-Gap & Data Sovereignty</h1>
+    <p class="lead text-muted mx-auto" style="max-width: 740px;">
+      How DocTune Studio guarantees complete privacy, immutable auditability, and regulatory compliance for sensitive corporate knowledge.
+    </p>
+  </div>
+</section>
+
+<section class="py-5">
+  <div class="container">
+    
+    <!-- 4 Security Pillars -->
+    <div class="row g-4 mb-5">
+      
+      <div class="col-md-6 col-lg-3">
+        <div class="card landing-card h-100 p-4 bg-body shadow-sm">
+          <div class="fs-2 text-primary mb-3"><i class="bi bi-shield-shaded"></i></div>
+          <h5 class="fw-bold mb-2">100% Air-Gapped</h5>
+          <p class="text-muted small mb-0">
+            Runs offline within isolated corporate networks. Never sends weights, prompts, or documents to external cloud vendors.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-lg-3">
+        <div class="card landing-card h-100 p-4 bg-body shadow-sm">
+          <div class="fs-2 text-success mb-3"><i class="bi bi-eye-slash"></i></div>
+          <h5 class="fw-bold mb-2">Automated PII Masking</h5>
+          <p class="text-muted small mb-0">
+            Pre-tokenization scrubber automatically removes SSNs, email addresses, phone numbers, and credentials before training.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-lg-3">
+        <div class="card landing-card h-100 p-4 bg-body shadow-sm">
+          <div class="fs-2 text-info mb-3"><i class="bi bi-fingerprint"></i></div>
+          <h5 class="fw-bold mb-2">Cryptographic Audits</h5>
+          <p class="text-muted small mb-0">
+            Immutable SQLite & PostgreSQL audit trail tracking every operator action, setting change, training run, and model export.
+          </p>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-lg-3">
+        <div class="card landing-card h-100 p-4 bg-body shadow-sm">
+          <div class="fs-2 text-warning mb-3"><i class="bi bi-key"></i></div>
+          <h5 class="fw-bold mb-2">Zero-Dependency RBAC</h5>
+          <p class="text-muted small mb-0">
+            Standard library cryptographic password hashing (PBKDF2-SHA256, 100k rounds) with signed session tokens.
+          </p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Technical Governance Details -->
+    <div class="row g-5 align-items-center mb-5 pb-4 border-bottom">
+      <div class="col-lg-6">
+        <h3 class="fw-bold mb-3">Cryptographic Tamper-Evident Audit Logging</h3>
+        <p class="text-muted">
+          Enterprise compliance requires knowing exactly who executed pipeline actions, when they occurred, and what hardware parameters were used.
+        </p>
+        <div class="card bg-body-tertiary border-0 p-3 small">
+          <div class="fw-semibold mb-2 text-uppercase text-muted" style="font-size: 0.75rem;">Audit Log Structure:</div>
+          <ul class="list-unstyled mb-0 d-flex flex-column gap-1.5 text-muted">
+            <li>&bull; <strong>Actor Resolution:</strong> Identifies authenticated user ID, username, or operator tag.</li>
+            <li>&bull; <strong>Request Context:</strong> Records client IP address, User-Agent, and unique `X-Request-ID`.</li>
+            <li>&bull; <strong>Telemetry & Timing:</strong> Execution duration in milliseconds (`duration_ms`) and endpoint URI.</li>
+            <li>&bull; <strong>Severity Classification:</strong> Tagged as `INFO`, `WARNING`, or `CRITICAL` for alert routing.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="code-terminal shadow-sm">
+          <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary small">
+            <span>audit_log_entry.json</span>
+            <span class="badge text-bg-info">Severity: INFO</span>
+          </div>
+<pre class="mb-0"><code>{
+  "id": 1042,
+  "timestamp": "2026-11-07T21:45:12.304Z",
+  "actor_user_id": "usr_99a8b1",
+  "actor_name": "Dr. Sarah Chen",
+  "action": "TRAINING_START",
+  "resource_type": "job",
+  "resource_id": "job_qlora_llama3_01",
+  "status": "SUCCESS",
+  "severity": "INFO",
+  "ip_address": "10.240.12.88",
+  "user_agent": "Mozilla/5.0 (X11; Linux x86_64)",
+  "endpoint": "/api/v1/training/start",
+  "duration_ms": 38.4
+}</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Compliance Alignment Matrix -->
+    <div class="mb-5">
+      <h3 class="fw-bold text-center mb-4">Enterprise Compliance Alignment Matrix</h3>
+      <div class="table-responsive">
+        <table class="table table-bordered bg-body shadow-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 20%;">Standard / Requirement</th>
+              <th style="width: 35%;">DocTune Studio Architecture</th>
+              <th style="width: 45%;">Enterprise Benefit</th>
+            </tr>
+          </thead>
+          <tbody class="small">
+            <tr>
+              <td class="fw-bold">Air-Gapped Isolation</td>
+              <td>Operates with local weights and SQLite/PostgreSQL without internet connection.</td>
+              <td class="text-muted">Zero risk of IP exfiltration or training data being harvested by commercial model providers.</td>
+            </tr>
+            <tr>
+              <td class="fw-bold">GDPR & PII Protection</td>
+              <td>Pre-tokenization scrubber strips identifiers before training pairs are constructed.</td>
+              <td class="text-muted">Prevents model weights from memorizing employee, customer, or patient personal data.</td>
+            </tr>
+            <tr>
+              <td class="fw-bold">SOC 2 & ISO 27001</td>
+              <td>Role-based access control, cryptographic session signing, and comprehensive audit trail.</td>
+              <td class="text-muted">Full accountability and trace records ready for external compliance auditors.</td>
+            </tr>
+            <tr>
+              <td class="fw-bold">Hardware Resource Safety</td>
+              <td>Hardware bounds governor enforces maximum thread counts, RAM bounds, and CUDA fraction limits.</td>
+              <td class="text-muted">Guarantees stability across multi-tenant GPU nodes and avoids node kernel panics.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Admin Settings Callout -->
+    <div class="card bg-body-tertiary border p-4 rounded-3 text-center">
+      <h5 class="fw-bold mb-1">Need to adjust security rules or audit log retention?</h5>
+      <p class="text-muted small mb-3">Administrators can configure authentication enforcement, session duration, and hardware limits in the Admin Panel.</p>
+      <div>
+        <a href="/admin" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-semibold">Open System Settings &rarr;</a>
+      </div>
+    </div>
+
+  </div>
+</section>
+{% endblock %}

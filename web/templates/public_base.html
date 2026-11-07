@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }} | {{ get_app_name() }}</title>
+
+  <!-- Google Font: Source Sans 3 -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap">
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <!-- AdminLTE v4 CSS (Bootstrap 5) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@4.0.0-beta3/dist/css/adminlte.min.css">
+  <!-- Custom Overrides -->
+  <link rel="stylesheet" href="/static/css/custom.css">
+
+  <style>
+    :root {
+      --hero-gradient: radial-gradient(circle at 50% 15%, rgba(13, 110, 253, 0.12), transparent 60%),
+                       radial-gradient(circle at 85% 65%, rgba(16, 185, 129, 0.08), transparent 50%),
+                       radial-gradient(circle at 15% 80%, rgba(147, 51, 234, 0.06), transparent 50%);
+    }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .public-hero-bg {
+      background: var(--hero-gradient);
+    }
+    .landing-card {
+      border-radius: 12px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      border: 1px solid rgba(0,0,0,0.08);
+    }
+    [data-bs-theme="dark"] .landing-card {
+      border: 1px solid rgba(255,255,255,0.08);
+      background-color: #1e2430;
+    }
+    .landing-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 28px rgba(0,0,0,0.08);
+    }
+    [data-bs-theme="dark"] .landing-card:hover {
+      box-shadow: 0 12px 28px rgba(0,0,0,0.3);
+    }
+    .nav-pill-link {
+      font-weight: 500;
+      color: var(--bs-secondary-color);
+      transition: color 0.15s ease-in-out;
+    }
+    .nav-pill-link:hover, .nav-pill-link.active {
+      color: var(--bs-primary) !important;
+    }
+    .pipeline-step-badge {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+    }
+    .code-terminal {
+      background-color: #0f172a;
+      color: #38bdf8;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.85rem;
+      border-radius: 8px;
+      padding: 16px;
+      border: 1px solid #1e293b;
+      overflow-x: auto;
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-body-tertiary">
+
+  <!-- Public Top Navigation Bar -->
+  <header class="navbar navbar-expand-lg border-bottom sticky-top bg-body shadow-sm py-2.5">
+    <div class="container">
+      <a class="navbar-brand d-flex align-items-center gap-2 fw-bold fs-5 text-decoration-none" href="/">
+        <span class="badge bg-primary rounded-3 p-2 d-inline-flex align-items-center justify-content-center">
+          <i class="bi bi-layers-fill text-white fs-6"></i>
+        </span>
+        <span class="text-body">{{ get_app_name() }}</span>
+      </a>
+
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#publicNavCollapse" aria-controls="publicNavCollapse" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <div class="collapse navbar-collapse" id="publicNavCollapse">
+        <ul class="navbar-nav mx-auto mb-2 mb-lg-0 gap-lg-3">
+          <li class="nav-item">
+            <a class="nav-link nav-pill-link {% if active_page == 'landing' %}active fw-semibold{% endif %}" href="/">
+              <i class="bi bi-compass me-1"></i> Overview
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link nav-pill-link {% if active_page == 'features' %}active fw-semibold{% endif %}" href="/features">
+              <i class="bi bi-diagram-3 me-1"></i> Features & Pipeline
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link nav-pill-link {% if active_page == 'security' %}active fw-semibold{% endif %}" href="/security">
+              <i class="bi bi-shield-check me-1"></i> Security & Air-Gap
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link nav-pill-link {% if active_page == 'docs' %}active fw-semibold{% endif %}" href="/docs">
+              <i class="bi bi-book me-1"></i> Documentation
+            </a>
+          </li>
+        </ul>
+
+        <div class="d-flex align-items-center gap-2">
+          <!-- Dark / Light Theme Toggle -->
+          <button class="btn btn-sm btn-outline-secondary rounded-circle" id="themeToggleBtn" title="Toggle Theme">
+            <i class="bi bi-moon-stars" id="themeIcon"></i>
+          </button>
+
+          {% set current_user = get_current_user(request) %}
+          {% if current_user or not is_auth_enabled() %}
+          <!-- Active Operator / Go To Dashboard -->
+          <a href="/dashboard" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-semibold d-flex align-items-center gap-1.5 shadow-sm">
+            <span>Launch Studio</span>
+            <i class="bi bi-arrow-right-short fs-6"></i>
+          </a>
+          {% else %}
+          <!-- Unauthenticated Auth Enabled -->
+          <a href="/login" class="btn btn-sm btn-outline-secondary rounded-pill px-3 py-1.5 fw-semibold">
+            Sign In
+          </a>
+          <a href="/register" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-semibold shadow-sm">
+            Get Started
+          </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="flex-grow-1">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Public Footer -->
+  <footer class="border-top bg-body py-5 mt-5">
+    <div class="container">
+      <div class="row g-4 justify-content-between">
+        
+        <div class="col-lg-4 col-md-6">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="badge bg-primary rounded-3 p-1.5">
+              <i class="bi bi-layers-fill text-white"></i>
+            </span>
+            <span class="fw-bold fs-5">{{ get_app_name() }}</span>
+            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">v{{ get_app_version() }}</span>
+          </div>
+          <p class="text-muted small mb-3">
+            Private, turn-key document fine-tuning platform for enterprise LLMs. Synthesize domain training pairs, train QLoRA adapters, evaluate models, and merge standalone weights on local GPUs.
+          </p>
+          <div class="d-flex align-items-center gap-2 small">
+            <span class="badge text-bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1">
+              <i class="bi bi-circle-fill" style="font-size: 0.5rem;"></i> Air-Gapped Ready
+            </span>
+            <span class="badge text-bg-primary-subtle text-primary border border-primary-subtle">FastAPI & Python 3.12</span>
+          </div>
+        </div>
+
+        <div class="col-lg-2 col-md-3 col-6">
+          <h6 class="fw-bold text-uppercase small text-muted mb-3">Navigation</h6>
+          <ul class="list-unstyled small mb-0 d-flex flex-column gap-2">
+            <li><a href="/" class="text-decoration-none text-muted">Overview</a></li>
+            <li><a href="/features" class="text-decoration-none text-muted">Pipeline Features</a></li>
+            <li><a href="/security" class="text-decoration-none text-muted">Security & Compliance</a></li>
+            <li><a href="/docs" class="text-decoration-none text-muted">Quickstart & Docs</a></li>
+          </ul>
+        </div>
+
+        <div class="col-lg-2 col-md-3 col-6">
+          <h6 class="fw-bold text-uppercase small text-muted mb-3">Studio Console</h6>
+          <ul class="list-unstyled small mb-0 d-flex flex-column gap-2">
+            <li><a href="/dashboard" class="text-decoration-none text-muted">Overview Dashboard</a></li>
+            <li><a href="/data-prep" class="text-decoration-none text-muted">Data Preparation</a></li>
+            <li><a href="/training" class="text-decoration-none text-muted">QLoRA Training</a></li>
+            <li><a href="/playground" class="text-decoration-none text-muted">Model Evaluation</a></li>
+            <li><a href="/models" class="text-decoration-none text-muted">Checkpoints & Merging</a></li>
+          </ul>
+        </div>
+
+        <div class="col-lg-3 col-md-6">
+          <h6 class="fw-bold text-uppercase small text-muted mb-3">System Verification</h6>
+          <div class="card bg-body-tertiary border-0 p-3 small">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="text-muted">Platform:</span>
+              <span class="fw-semibold">DocTune Private Core</span>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="text-muted">Telemetry:</span>
+              <a href="/metrics" target="_blank" class="badge text-bg-light border text-decoration-none">Prometheus</a>
+            </div>
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted">Healthcheck:</span>
+              <a href="/health" target="_blank" class="badge text-bg-success-subtle text-success border border-success-subtle text-decoration-none">Healthy</a>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="border-top mt-4 pt-3 d-flex flex-wrap justify-content-between align-items-center small text-muted">
+        <div>
+          &copy; 2026 <strong>{{ get_app_name() }}</strong>. All rights reserved.
+        </div>
+        <div class="d-flex gap-3">
+          <a href="/security" class="text-decoration-none text-muted">Privacy Policy</a>
+          <span>&bull;</span>
+          <a href="/docs" class="text-decoration-none text-muted">API Docs</a>
+          <span>&bull;</span>
+          <a href="#top" class="text-decoration-none text-muted">Back to Top &uarr;</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Bootstrap 5 JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    // Theme Switcher Sync
+    const themeBtn = document.getElementById('themeToggleBtn');
+    const themeIcon = document.getElementById('themeIcon');
+    const getStoredTheme = () => localStorage.getItem('theme');
+    const setStoredTheme = theme => localStorage.setItem('theme', theme);
+    const getPreferredTheme = () => {
+      const storedTheme = getStoredTheme();
+      if (storedTheme) return storedTheme;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    };
+
+    const applyTheme = (theme) => {
+      document.documentElement.setAttribute('data-bs-theme', theme);
+      if (themeIcon) {
+        themeIcon.className = theme === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
+      }
+    };
+
+    applyTheme(getPreferredTheme());
+
+    themeBtn?.addEventListener('click', () => {
+      const currentTheme = document.documentElement.getAttribute('data-bs-theme') || 'light';
+      const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      setStoredTheme(nextTheme);
+      applyTheme(nextTheme);
+    });
+  </script>
+
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

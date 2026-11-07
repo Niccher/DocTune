@@ -191,27 +191,50 @@ Document excerpt:
 
     for attempt in range(max_retries):
         try:
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": user_prompt}],
-                    temperature=0.15,
-                    response_format={"type": "json_object"},
-                    max_tokens=512,
-                )
-            except Exception as param_err:
-                if "response_format" in str(param_err).lower():
-                    # Fallback for llama.cpp / engines that reject response_format parameter
+            base_url_str = str(getattr(client, "base_url", ""))
+            if "anthropic.com" in base_url_str:
+                import httpx
+                api_key = getattr(client, "api_key", "")
+                endpoint = base_url_str.rstrip("/")
+                if not endpoint.endswith("/messages"):
+                    endpoint = f"{endpoint}/messages"
+                req_headers = {
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                }
+                req_body = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                    "max_tokens": 512,
+                    "temperature": 0.15,
+                }
+                with httpx.Client(timeout=60.0) as http_c:
+                    anth_res = http_c.post(endpoint, json=req_body, headers=req_headers)
+                    anth_res.raise_for_status()
+                    content = anth_res.json()["content"][0]["text"]
+            else:
+                try:
                     response = client.chat.completions.create(
                         model=model,
                         messages=[{"role": "user", "content": user_prompt}],
                         temperature=0.15,
+                        response_format={"type": "json_object"},
                         max_tokens=512,
                     )
-                else:
-                    raise
+                except Exception as param_err:
+                    if "response_format" in str(param_err).lower():
+                        # Fallback for llama.cpp / engines that reject response_format parameter
+                        response = client.chat.completions.create(
+                            model=model,
+                            messages=[{"role": "user", "content": user_prompt}],
+                            temperature=0.15,
+                            max_tokens=512,
+                        )
+                    else:
+                        raise
 
-            content = response.choices[0].message.content
+                content = response.choices[0].message.content
             data = extract_json_object(content)
 
             question = data.get("question", "").strip()

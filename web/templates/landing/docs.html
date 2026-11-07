@@ -1,0 +1,251 @@
+{% extends "public_base.html" %}
+
+{% block content %}
+<!-- Docs Header -->
+<section class="public-hero-bg py-5 border-bottom">
+  <div class="container text-center py-3">
+    <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-1 rounded-pill fw-semibold mb-2">DEVELOPER & OPERATOR GUIDE</span>
+    <h1 class="display-5 fw-bold mb-3">Quickstart & API Documentation</h1>
+    <p class="lead text-muted mx-auto" style="max-width: 740px;">
+      Everything you need to set up, operate, and automate private document fine-tuning workflows via UI, CLI, or REST API.
+    </p>
+  </div>
+</section>
+
+<section class="py-5">
+  <div class="container">
+    <div class="row g-5">
+      
+      <!-- Table of Contents / Sidebar -->
+      <div class="col-lg-3 d-none d-lg-block">
+        <div class="sticky-top" style="top: 80px;">
+          <h6 class="fw-bold text-uppercase small text-muted mb-3">Documentation Index</h6>
+          <nav class="nav nav-pills flex-column small gap-1">
+            <a class="nav-link text-muted" href="#prerequisites">1. Hardware Prerequisites</a>
+            <a class="nav-link text-muted" href="#quickstart">2. 4-Step Quickstart</a>
+            <a class="nav-link text-muted" href="#cli">3. Headless CLI Usage</a>
+            <a class="nav-link text-muted" href="#api-reference">4. REST API Reference</a>
+            <a class="nav-link text-muted" href="#docker">5. Docker Deployment</a>
+          </nav>
+        </div>
+      </div>
+
+      <!-- Main Docs Content -->
+      <div class="col-lg-9">
+        
+        <!-- Section 1: Prerequisites -->
+        <div id="prerequisites" class="mb-5 pb-4 border-bottom">
+          <h3 class="fw-bold mb-3">1. Hardware & Environment Prerequisites</h3>
+          <p class="text-muted">
+            DocTune Studio is designed to run efficiently on both workstation workstations and data center servers. The table below lists tested VRAM allocations using 4-bit QLoRA:
+          </p>
+
+          <div class="table-responsive mb-4">
+            <table class="table table-bordered bg-body shadow-sm align-middle small">
+              <thead class="table-light">
+                <tr>
+                  <th>Model Size</th>
+                  <th>Minimum VRAM</th>
+                  <th>Recommended Hardware</th>
+                  <th>Supported Sequence Length</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="fw-bold">Llama 3 / Mistral (8B)</td>
+                  <td class="text-success fw-semibold">12 GB - 16 GB</td>
+                  <td>NVIDIA RTX 3060/4060, T4, A10G</td>
+                  <td>Up to 4,096 tokens</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">Qwen 2.5 (14B)</td>
+                  <td class="text-primary fw-semibold">18 GB - 24 GB</td>
+                  <td>NVIDIA RTX 3090/4090, A5000, L4</td>
+                  <td>Up to 8,192 tokens</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">Llama 3.1 / Qwen (70B)</td>
+                  <td class="text-warning fw-semibold">48 GB - 80 GB</td>
+                  <td>NVIDIA A6000, A100 (80GB), H100</td>
+                  <td>Up to 16,384 tokens</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert alert-secondary small py-2 px-3 mb-0">
+            <i class="bi bi-info-circle me-1 text-primary"></i> <strong>Note:</strong> DocTune Studio's hardware governor automatically reads available VRAM and clamps sequence lengths and batch sizes to prevent CUDA OOM panics.
+          </div>
+        </div>
+
+        <!-- Section 2: Quickstart -->
+        <div id="quickstart" class="mb-5 pb-4 border-bottom">
+          <h3 class="fw-bold mb-3">2. 4-Step Quickstart</h3>
+          <p class="text-muted">
+            Follow this standard sequence to train your first specialized domain model:
+          </p>
+
+          <div class="d-flex flex-column gap-3">
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-primary rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">1</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Ingest Documents</h6>
+                  <p class="text-muted small mb-0">
+                    Open <a href="/data-prep" class="text-decoration-none">Document & Data Studio</a> and drag-and-drop your PDF, DOCX, or CSV files. The pre-tokenization scrubber automatically applies PII masking.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-success rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">2</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Synthesize Instruction Dataset</h6>
+                  <p class="text-muted small mb-0">
+                    Select your Teacher model (e.g. local Ollama `llama3:70b`) and click <strong>Generate QA Pairs</strong>. The engine outputs structured train/validation JSONL splits.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-info rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">3</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Train with QLoRA</h6>
+                  <p class="text-muted small mb-0">
+                    Navigate to <a href="/training" class="text-decoration-none">Training Studio</a>. Choose your base model (e.g. `meta-llama/Meta-Llama-3-8B`), set epoch count, and click <strong>Start Training</strong>. Watch real-time loss telemetry.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-danger rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">4</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Evaluate & Export</h6>
+                  <p class="text-muted small mb-0">
+                    Test in <a href="/playground" class="text-decoration-none">Evaluation Playground</a> side-by-side with the base model. Once satisfied, visit <a href="/models" class="text-decoration-none">Checkpoints</a> to fuse weights into a standalone 16-bit model or export an Ollama GGUF.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3: CLI -->
+        <div id="cli" class="mb-5 pb-4 border-bottom">
+          <h3 class="fw-bold mb-3">3. Headless CLI Usage</h3>
+          <p class="text-muted">
+            All pipeline stages can be executed headlessly without the web UI for scheduled batch automation and CI/CD pipelines:
+          </p>
+
+          <div class="code-terminal mb-3 shadow-sm">
+<pre class="mb-0"><code># 1. Ingest raw documents and generate synthetic QA pairs
+python -m pipeline.data_prep --input-dir data/raw_documents --chunk-size 1000
+
+# 2. Launch QLoRA training
+python -m pipeline.train --base-model meta-llama/Meta-Llama-3-8B --epochs 3 --batch-size 4 --lr 0.0002
+
+# 3. Fuse LoRA adapter weights with base model
+python -m pipeline.merge --adapter-dir checkpoints/qlora --output-dir merged_models/llama3-doctune
+
+# 4. Quantize to GGUF format
+python -m pipeline.export_gguf --model-dir merged_models/llama3-doctune --quant-format q4_k_m</code></pre>
+          </div>
+        </div>
+
+        <!-- Section 4: API Reference -->
+        <div id="api-reference" class="mb-5 pb-4 border-bottom">
+          <h3 class="fw-bold mb-3">4. REST API Reference</h3>
+          <p class="text-muted">
+            DocTune Studio exposes versioned REST API endpoints for seamless programmatic integration:
+          </p>
+
+          <div class="table-responsive">
+            <table class="table table-bordered bg-body shadow-sm align-middle small">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 15%;">Method</th>
+                  <th style="width: 35%;">Endpoint</th>
+                  <th style="width: 50%;">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="badge text-bg-primary">GET</span></td>
+                  <td><code>/api/v1/telemetry</code></td>
+                  <td>Real-time CPU, RAM, GPU VRAM, and checkpoint summary.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/data-prep/start</code></td>
+                  <td>Starts asynchronous chunking and Teacher QA dataset synthesis.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/training/start</code></td>
+                  <td>Initiates QLoRA training process with specified hyperparameters.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/models/merge</code></td>
+                  <td>Fuses LoRA adapter weights into standalone 16-bit safetensors.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/models/export-gguf</code></td>
+                  <td>Quantizes merged weights to GGUF with automated Modelfile.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/inference/chat</code></td>
+                  <td>Interactive token streaming endpoint against loaded checkpoints.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-primary">GET</span></td>
+                  <td><code>/metrics</code></td>
+                  <td>Prometheus exposition endpoint for Grafana dashboards.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 5: Docker -->
+        <div id="docker" class="mb-4">
+          <h3 class="fw-bold mb-3">5. Docker & Production Deployment</h3>
+          <p class="text-muted">
+            Run DocTune Studio inside an isolated NVIDIA container environment:
+          </p>
+
+          <div class="code-terminal shadow-sm mb-3">
+<pre class="mb-0"><code># docker-compose.yml snippet
+services:
+  doctune-studio:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://doctune:secret@postgres:5432/doctune_db
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - AUTH_ENABLED=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]</code></pre>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

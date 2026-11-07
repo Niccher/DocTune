@@ -91,7 +91,8 @@ def get_pipeline_details():
     }
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/dashboard", response_class=HTMLResponse)
+@router.get("/studio", response_class=HTMLResponse)
 async def dashboard_view(request: Request):
     telemetry = get_system_telemetry()
     pipeline_data = get_pipeline_details()
