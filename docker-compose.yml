@@ -101,6 +101,8 @@ services:
       - S3_ENDPOINT_URL=http://minio:9000
     volumes:
       - ./config:/app/config
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini:ro
       - ./raw_documents:/app/raw_documents
       - ./data:/app/data
       - ./output_qlora:/app/output_qlora
@@ -145,6 +147,8 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       - ./config:/app/config
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini:ro
       - ./raw_documents:/app/raw_documents
       - ./data:/app/data
       - ./output_qlora:/app/output_qlora

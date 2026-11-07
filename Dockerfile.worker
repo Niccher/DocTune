@@ -29,6 +29,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY pipeline/ ./pipeline/
 COPY web/ ./web/
 COPY config/ ./config/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 COPY VERSION .
 
 RUN mkdir -p /app/.scratch /root/.cache/huggingface

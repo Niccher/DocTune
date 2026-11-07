@@ -315,7 +315,7 @@ $MINIO_HEALTHY || { echo ""; warn "MinIO did not report healthy within timeout. 
 # ── 8. Initialize Database Tables & Schema ────────────────────
 section "8. Initializing Database Schema"
 if $PG_HEALTHY; then
-    docker compose exec -T web alembic upgrade head 2>&1 \
+    docker compose exec -T web alembic -c /app/alembic.ini upgrade head 2>&1 \
         && log "Database schema migrated to head via Alembic (versioned migrations applied)" \
         || {
             warn "Alembic upgrade notice; attempting init_db declarative fallback..."
