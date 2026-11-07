@@ -26,6 +26,7 @@ from web.db.session import SessionLocal, get_db, resolve_session
 from web.db.models import UploadedDocument, DatasetSample
 from web.services.storage_service import storage_service
 from web.services.dataset_version_service import dataset_version_service
+from web.services.audit_service import audit_service
 from pydantic import BaseModel
 
 
@@ -60,7 +61,7 @@ def list_raw_documents():
 
     # 2. Disk scan fallback
     files = []
-    patterns = ["*.pdf", "*.docx", "*.csv", "*.PDF", "*.DOCX", "*.CSV"]
+    patterns = ["*.pdf", "*.docx", "*.csv", "*.txt", "*.md", "*.PDF", "*.DOCX", "*.CSV", "*.TXT", "*.MD"]
     found = []
     for pat in patterns:
         found.extend(RAW_DOCS_DIR.glob(pat))
@@ -299,37 +300,90 @@ async def get_teacher_pull_status_api(
 
 
 @router.post("/api/v1/documents/upload")
-async def upload_documents(files: List[UploadFile] = File(...)):
-    RAW_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+async def upload_documents(request: Request, files: List[UploadFile] = File(...)):
+    try:
+        RAW_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.error("Failed to access RAW_DOCS_DIR %s: %s", RAW_DOCS_DIR, e)
+        audit_service.log(
+            action="DOC_UPLOAD",
+            resource_type="document",
+            request=request,
+            status="FAILED",
+            details={"error": f"Storage directory inaccessible: {e}"},
+        )
+        return JSONResponse({"status": "error", "message": f"Storage directory inaccessible: {e}"}, status_code=500)
+
     uploaded = []
-    allowed_exts = {".pdf", ".docx", ".csv"}
+    errors = []
+    allowed_exts = {".pdf", ".docx", ".csv", ".txt", ".md"}
 
     db = SessionLocal() if SessionLocal else None
     try:
         for f in files:
-            ext = Path(f.filename).suffix.lower()
-            if ext in allowed_exts:
-                dest = RAW_DOCS_DIR / f.filename
-                hasher = hashlib.sha256()
+            if not f or not f.filename:
+                continue
+
+            # Strip any directory path prefixes or traversal
+            clean_filename = Path(f.filename).name.strip()
+            if not clean_filename:
+                continue
+
+            ext = Path(clean_filename).suffix.lower()
+            if ext not in allowed_exts:
+                err_msg = f"Skipped '{clean_filename}': unsupported extension '{ext}'"
+                errors.append(err_msg)
+                audit_service.log(
+                    action="DOC_UPLOAD",
+                    resource_type="document",
+                    resource_id=clean_filename,
+                    request=request,
+                    status="FAILED",
+                    details={"error": err_msg},
+                )
+                continue
+
+            dest = RAW_DOCS_DIR / clean_filename
+            hasher = hashlib.sha256()
+
+            try:
+                await f.seek(0)
                 with open(dest, "wb") as out:
-                    while chunk := f.file.read(65536):
+                    while chunk := await f.read(65536):
                         hasher.update(chunk)
                         out.write(chunk)
-                file_hash = hasher.hexdigest()
-                file_size = dest.stat().st_size
-                uploaded.append(f.filename)
+            except Exception as fe:
+                logger.error("Failed writing uploaded file %s to disk: %s", clean_filename, fe)
+                errors.append(f"Failed writing '{clean_filename}': {fe}")
+                audit_service.log(
+                    action="DOC_UPLOAD",
+                    resource_type="document",
+                    resource_id=clean_filename,
+                    request=request,
+                    status="FAILED",
+                    details={"error": str(fe)},
+                )
+                continue
 
-                # Object storage upload (MinIO S3 or transparent .storage fallback)
-                s3_bucket = storage_service.bucket_docs
-                s3_key = f.filename
+            file_hash = hasher.hexdigest()
+            file_size = dest.stat().st_size
+            uploaded.append(clean_filename)
+
+            # Object storage upload (MinIO S3 or transparent .storage fallback)
+            s3_bucket = storage_service.bucket_docs
+            s3_key = clean_filename
+            try:
                 storage_service.upload_file(dest, s3_bucket, s3_key)
+            except Exception as se:
+                logger.warning("MinIO S3 upload notice for %s: %s", clean_filename, se)
 
-                # PostgreSQL metadata record
-                if db:
+            # PostgreSQL metadata record
+            if db:
+                try:
                     doc_id = f"doc_{file_hash[:16]}"
                     existing = db.query(UploadedDocument).filter(UploadedDocument.id == doc_id).first()
                     if existing:
-                        existing.filename = f.filename
+                        existing.filename = clean_filename
                         existing.disk_path = str(dest)
                         existing.size_bytes = file_size
                         existing.status = "READY"
@@ -338,7 +392,7 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                     else:
                         doc_rec = UploadedDocument(
                             id=doc_id,
-                            filename=f.filename,
+                            filename=clean_filename,
                             disk_path=str(dest),
                             file_hash=file_hash,
                             file_format=ext,
@@ -349,15 +403,41 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                         )
                         db.add(doc_rec)
                     db.commit()
+                except Exception as dbe:
+                    logger.warning("Failed saving document metadata to DB for %s: %s", clean_filename, dbe)
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+
+            # Audit record for successful upload
+            audit_service.log(
+                action="DOC_UPLOAD",
+                resource_type="document",
+                resource_id=clean_filename,
+                request=request,
+                status="SUCCESS",
+                details={"size_bytes": file_size, "sha256": file_hash, "format": ext},
+            )
+    except Exception as e:
+        logger.error("Unhandled error during document upload: %s", e, exc_info=True)
+        return JSONResponse({"status": "error", "message": f"Upload failed: {str(e)}"}, status_code=500)
     finally:
         if db:
             db.close()
 
-    return JSONResponse({"status": "success", "uploaded": uploaded})
+    if not uploaded and errors:
+        return JSONResponse({"status": "error", "message": "; ".join(errors)}, status_code=400)
+
+    return JSONResponse({
+        "status": "success",
+        "uploaded": uploaded,
+        "warnings": errors if errors else None,
+    })
 
 
 @router.post("/api/v1/documents/delete")
-async def delete_document(filename: str = Form(...)):
+async def delete_document(request: Request, filename: str = Form(...)):
     target = (RAW_DOCS_DIR / filename).resolve()
     # Prevent directory traversal
     if str(target).startswith(str(RAW_DOCS_DIR.resolve())) and target.exists():
@@ -376,7 +456,23 @@ async def delete_document(filename: str = Form(...)):
             except Exception:
                 pass
 
+        audit_service.log(
+            action="DOC_DELETE",
+            resource_type="document",
+            resource_id=filename,
+            request=request,
+            status="SUCCESS",
+        )
         return JSONResponse({"status": "deleted", "filename": filename})
+
+    audit_service.log(
+        action="DOC_DELETE",
+        resource_type="document",
+        resource_id=filename,
+        request=request,
+        status="FAILED",
+        details={"error": "File not found or invalid path"},
+    )
     return JSONResponse({"status": "error", "message": "File not found or invalid path"}, status_code=400)
 
 
@@ -523,6 +619,19 @@ async def export_curated_dataset(
         # Upload to MinIO/S3 datasets bucket
         storage_service.upload_file(DEFAULT_JSONL, storage_service.bucket_datasets, "private_docs.jsonl")
 
+        audit_service.log(
+            action="DATASET_EXPORT",
+            resource_type="dataset",
+            resource_id=version_entry.get("version_tag") if version_entry else "private_docs.jsonl",
+            request=request,
+            status="SUCCESS",
+            details={
+                "exported_count": count,
+                "version_tag": version_entry.get("version_tag") if version_entry else None,
+                "file_hash": version_entry.get("file_hash") if version_entry else None,
+            },
+        )
+
         return JSONResponse({
             "status": "success",
             "exported_count": count,
@@ -563,9 +672,25 @@ async def activate_dataset_version_api(request: Request):
 
     success = dataset_version_service.activate_version(version_id)
     if not success:
+        audit_service.log(
+            action="VERSION_ACTIVATE",
+            resource_type="dataset_version",
+            resource_id=version_id,
+            request=request,
+            status="FAILED",
+            details={"error": f"Version '{version_id}' not found"},
+        )
         return JSONResponse({"status": "error", "message": f"Version '{version_id}' not found"}, status_code=404)
 
     active = dataset_version_service.get_active_version()
+    audit_service.log(
+        action="VERSION_ACTIVATE",
+        resource_type="dataset_version",
+        resource_id=version_id,
+        request=request,
+        status="SUCCESS",
+        details={"version_id": version_id, "active_tag": active.get("version_tag") if active else None},
+    )
     return {"status": "success", "message": f"Activated dataset version '{version_id}'", "active_version": active}
 
 

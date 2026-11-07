@@ -18,6 +18,7 @@ from web.services.process_manager import process_mgr
 from web.services.queue_manager import queue_manager
 from web.services.sweep_service import sweep_service
 from web.services.dataset_version_service import dataset_version_service
+from web.services.audit_service import audit_service
 from web.templates_config import templates
 from web.celery_app import is_celery_available, HAS_CELERY, app as celery_app
 
@@ -33,6 +34,7 @@ async def training_view(request: Request, model_id: Optional[str] = Query(None))
     cfg_dict = cfg.to_dict()
     if model_id and model_id.strip():
         cfg_dict["model_id"] = model_id.strip()
+
     return templates.TemplateResponse(
         request=request,
         name="training.html",
@@ -52,6 +54,7 @@ async def training_view(request: Request, model_id: Optional[str] = Query(None))
 
 @router.post("/api/v1/training/start")
 async def start_training(
+    request: Request,
     method: str = Form("qlora"),
     model_id: str = Form("meta-llama/Meta-Llama-3-8B-Instruct"),
     epochs: int = Form(3),
@@ -124,6 +127,14 @@ async def start_training(
             "mode": mode,
         }
         res = queue_manager.enqueue(job_spec)
+        audit_service.log(
+            action="RUN_START",
+            resource_type="run",
+            resource_id=run_id,
+            request=request,
+            status="QUEUED",
+            details={"method": method, "model_id": model_id, "position": res["position"], "epochs": epochs, "lr": learning_rate},
+        )
         return JSONResponse({
             "status": "queued",
             "message": f"Job queued at position #{res['position']}",
@@ -157,6 +168,15 @@ async def start_training(
             db.close()
     except Exception:
         pass
+
+    audit_service.log(
+        action="RUN_START",
+        resource_type="run",
+        resource_id=run_id,
+        request=request,
+        status="RUNNING",
+        details={"method": method, "model_id": model_id, "mode": mode, "epochs": epochs, "lr": learning_rate},
+    )
 
     # Launch immediately via Celery or Subprocess
     if mode == "celery" and celery_app:
@@ -211,9 +231,16 @@ async def get_training_queue_api():
 
 
 @router.delete("/api/v1/training/queue/{run_id}", response_class=JSONResponse)
-async def remove_queued_job_api(run_id: str):
+async def remove_queued_job_api(request: Request, run_id: str):
     """Remove a job from the training queue."""
     removed = queue_manager.remove(run_id)
+    audit_service.log(
+        action="QUEUE_CANCEL",
+        resource_type="queue_job",
+        resource_id=run_id,
+        request=request,
+        status="SUCCESS" if removed else "FAILED",
+    )
     if removed:
         return {"status": "success", "message": f"Job {run_id} removed from queue"}
     return JSONResponse({"status": "error", "message": f"Job {run_id} not found in queue"}, status_code=404)
@@ -266,11 +293,20 @@ async def generate_sweep_api(request: Request):
         lora_ranks=ranks,
         epochs_list=epochs,
     )
+    audit_service.log(
+        action="SWEEP_START",
+        resource_type="sweep",
+        resource_id=res.get("sweep_id"),
+        request=request,
+        status="SUCCESS",
+        details={"model_id": model_id, "method": method, "total_combinations": res.get("total_combinations")},
+    )
     return JSONResponse(res)
 
 
 @router.post("/api/v1/training/stop")
-async def stop_training():
+async def stop_training(request: Request):
+    curr_job = state.active_job.job_id if state.active_job else None
     if state.active_job and state.active_job.metadata.get("mode") == "celery":
         celery_id = state.active_job.metadata.get("celery_task_id")
         if celery_id and celery_app:
@@ -280,9 +316,24 @@ async def stop_training():
                 pass
         state.finish_job(JobStatus.ABORTED)
         await state.add_log("--- [ABORTED] Celery task aborted by user ---")
+        audit_service.log(
+            action="RUN_CANCEL",
+            resource_type="run",
+            resource_id=curr_job,
+            request=request,
+            status="SUCCESS",
+            details="Celery task aborted",
+        )
         return JSONResponse({"status": "success", "message": "Celery job revoked"})
 
     aborted = await process_mgr.abort_current_job()
+    audit_service.log(
+        action="RUN_CANCEL",
+        resource_type="run",
+        resource_id=curr_job,
+        request=request,
+        status="SUCCESS" if aborted else "FAILED",
+    )
     if aborted:
         return JSONResponse({"status": "success", "message": "Job abort signal sent"})
     return JSONResponse({"status": "error", "message": "No active process to stop"}, status_code=400)

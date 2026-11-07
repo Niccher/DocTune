@@ -348,10 +348,10 @@ for i in $(seq 1 30); do
 done
 $WEB_READY || { echo ""; warn "Web server did not respond within timeout. Check: docker compose logs web"; }
 
-# ── 11. Container Permissions & Scratch Directory Enforcement ─
-section "11. Enforcing Scratch Directory Permissions"
-docker compose exec -T web sh -c "mkdir -p /app/.scratch /app/config && chmod -R 777 /app/.scratch" 2>&1 \
-    && log "Scratch directory permissions enforced" || true
+# ── 11. Container Permissions & Directory Enforcement ──────────
+section "11. Enforcing Working Directory Permissions"
+docker compose exec -T web sh -c "mkdir -p /app/raw_documents /app/.scratch /app/config /app/data /app/data/datasets && chmod -R 777 /app/raw_documents /app/.scratch /app/data" 2>&1 \
+    && log "Working and scratch directory permissions enforced" || true
 
 # ── 12. Housekeeping, Docker Storage & Cache Clearing ─────────
 section "12. Housekeeping & Docker Cache Pruning"

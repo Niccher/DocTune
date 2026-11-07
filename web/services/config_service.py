@@ -298,6 +298,18 @@ class ConfigService:
         """Return the current configured application name."""
         return self.get_settings().get("server", {}).get("app_name", "DocTune Studio")
 
+    def get_app_version(self) -> str:
+        """Return the current application version from the VERSION file or fallback."""
+        try:
+            version_file = PROJECT_ROOT / "VERSION"
+            if version_file.is_file():
+                v = version_file.read_text(encoding="utf-8").strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+        return "1.3.0"
+
     def get_compute_resources(self) -> Dict[str, Any]:
         """Return active compute resource constraints."""
         return self.get_settings().get("compute_resources", FACTORY_DEFAULTS["compute_resources"])

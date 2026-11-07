@@ -20,6 +20,7 @@ from web.db.session import get_db, SessionLocal, resolve_session
 from web.db.models import Checkpoint
 
 from web.services.hf_model_service import hf_model_service
+from web.services.audit_service import audit_service
 
 router = APIRouter()
 
@@ -285,11 +286,19 @@ async def trigger_merge(
 
 @router.post("/api/v1/models/export-gguf")
 async def trigger_export_gguf(
+    request: Request,
     model_dir: str = Form("output_merged"),
     export_dir: str = Form("output_gguf"),
     model_name: str = Form("doctune-llama3-8b"),
     quantization: str = Form("q4_k_m"),
 ):
+    audit_service.log(
+        action="GGUF_EXPORT",
+        resource_type="model",
+        resource_id=model_name,
+        request=request,
+        details={"model_dir": model_dir, "export_dir": export_dir, "quantization": quantization},
+    )
     if state.active_job is not None:
         return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
 
@@ -524,8 +533,24 @@ async def push_model_to_hub_api(request: Request):
             token=token,
             commit_message=commit_msg,
         )
+        audit_service.log(
+            action="HF_PUSH",
+            resource_type="model",
+            resource_id=repo_id,
+            request=request,
+            status="SUCCESS",
+            details={"model_name": model_name, "private": private, "commit": commit_msg},
+        )
         return JSONResponse(res)
     except Exception as e:
+        audit_service.log(
+            action="HF_PUSH",
+            resource_type="model",
+            resource_id=repo_id,
+            request=request,
+            status="FAILED",
+            details={"error": str(e), "model_name": model_name},
+        )
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 

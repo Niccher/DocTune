@@ -14,6 +14,7 @@ from pipeline.common import PROJECT_ROOT, CONFIG_FILE
 from web.services.config_service import config_service
 from web.services.system_service import get_hardware_bounds
 from web.services.teacher_service import teacher_service
+from web.services.audit_service import audit_service
 from web.templates_config import templates
 
 router = APIRouter(tags=["admin"])
@@ -26,6 +27,7 @@ async def admin_page(request: Request):
     settings = config_service.get_settings()
     hardware_bounds = get_hardware_bounds()
     presets = teacher_service.get_presets()
+    initial_audit_logs = audit_service.list_logs(limit=25)
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
@@ -35,8 +37,29 @@ async def admin_page(request: Request):
             "settings": settings,
             "hardware_bounds": hardware_bounds,
             "presets": presets,
+            "audit_logs": initial_audit_logs,
         },
     )
+
+
+
+@router.get("/api/v1/admin/audit-logs")
+async def get_audit_logs_api(
+    limit: int = 100,
+    offset: int = 0,
+    action: str = None,
+    resource_type: str = None,
+    severity: str = None,
+):
+    """Return paginated operational audit records for compliance and monitoring."""
+    logs = audit_service.list_logs(
+        limit=limit,
+        offset=offset,
+        action=action,
+        resource_type=resource_type,
+        severity=severity,
+    )
+    return {"status": "success", "count": len(logs), "logs": logs}
 
 
 
@@ -53,18 +76,43 @@ async def get_settings_api():
 
 
 @router.post("/api/v1/admin/settings")
-async def save_settings_api(payload: Dict[str, Any]):
+async def save_settings_api(request: Request, payload: Dict[str, Any]):
     """Update and persist system configuration."""
     success, message, updated = config_service.save_settings(payload)
     if not success:
+        audit_service.log(
+            action="CONFIG_UPDATE",
+            resource_type="config",
+            resource_id="settings.json",
+            request=request,
+            status="FAILED",
+            details={"error": message, "modified_keys": list(payload.keys())},
+        )
         raise HTTPException(status_code=400, detail=message)
+
+    audit_service.log(
+        action="CONFIG_UPDATE",
+        resource_type="config",
+        resource_id="settings.json",
+        request=request,
+        status="SUCCESS",
+        details={"modified_keys": list(payload.keys())},
+    )
     return {"status": "success", "message": message, "settings": updated}
 
 
 @router.post("/api/v1/admin/reset")
-async def reset_settings_api():
+async def reset_settings_api(request: Request):
     """Reset configuration to factory defaults."""
     restored = config_service.reset_to_defaults()
+    audit_service.log(
+        action="CONFIG_RESET",
+        resource_type="config",
+        resource_id="settings.json",
+        request=request,
+        status="SUCCESS",
+        details="Restored factory defaults",
+    )
     return {
         "status": "success",
         "message": "Configuration successfully restored to factory defaults.",

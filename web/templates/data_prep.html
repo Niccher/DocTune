@@ -12,9 +12,9 @@
       <div class="card-body">
         <!-- File Input -->
         <form id="uploadForm" class="mb-3">
-          <label class="form-label small fw-semibold">Upload Documents (PDF, DOCX, CSV)</label>
+          <label class="form-label small fw-semibold">Upload Documents (PDF, DOCX, CSV, TXT, MD)</label>
           <div class="input-group">
-            <input type="file" class="form-control" id="fileInput" multiple accept=".pdf,.docx,.csv">
+            <input type="file" class="form-control" id="fileInput" multiple accept=".pdf,.docx,.csv,.txt,.md">
             <button class="btn btn-warning" type="submit" id="uploadBtn">
               <i class="bi bi-upload me-1"></i> Upload
             </button>
@@ -422,7 +422,7 @@
         showToast(`Uploaded ${data.uploaded.length} file(s)`, 'success');
         setTimeout(() => window.location.reload(), 1000);
       } else {
-        showToast('Upload failed', 'error');
+        showToast(data.message || 'Upload failed', 'error');
       }
     } catch (err) {
       showToast('Error uploading: ' + err, 'error');

@@ -68,15 +68,14 @@ def init_db():
                 alembic_cfg = Config(str(alembic_ini_path))
                 command.upgrade(alembic_cfg, "head")
                 logger.info("Database schema migrated to head via Alembic.")
-                return
         except ImportError:
             pass
         except Exception as ae:
-            logger.warning("Alembic upgrade notice (falling back to create_all): %s", ae)
+            logger.warning("Alembic upgrade notice: %s", ae)
 
-        # 2. Declarative fallback
+        # 2. Declarative sync (ensures all tables defined in models exist)
         Base.metadata.create_all(bind=engine)
-        logger.info("Database schema initialized successfully via metadata.")
+        logger.info("Database schema verified via metadata create_all.")
 
         # 3. Ensure newly introduced columns exist on legacy tables
         try:
@@ -87,6 +86,20 @@ def init_db():
                     ("runs", "dataset_hash", "VARCHAR(64)"),
                     ("checkpoints", "dataset_version", "VARCHAR(64)"),
                     ("checkpoints", "dataset_hash", "VARCHAR(64)"),
+                    ("uploaded_documents", "disk_path", "VARCHAR(512)"),
+                    ("uploaded_documents", "file_hash", "VARCHAR(64)"),
+                    ("uploaded_documents", "file_format", "VARCHAR(16)"),
+                    ("uploaded_documents", "status", "VARCHAR(32)"),
+                    ("uploaded_documents", "s3_bucket", "VARCHAR(128)"),
+                    ("uploaded_documents", "s3_key", "VARCHAR(512)"),
+                    ("uploaded_documents", "size_bytes", "BIGINT"),
+                    ("uploaded_documents", "chunk_count", "INTEGER"),
+                    ("audit_logs", "severity", "VARCHAR(16) DEFAULT 'INFO'"),
+                    ("audit_logs", "request_id", "VARCHAR(64)"),
+                    ("audit_logs", "request_method", "VARCHAR(16)"),
+                    ("audit_logs", "endpoint", "VARCHAR(256)"),
+                    ("audit_logs", "user_agent", "VARCHAR(256)"),
+                    ("audit_logs", "duration_ms", "FLOAT"),
                 ]:
                     try:
                         conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))

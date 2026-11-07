@@ -109,6 +109,25 @@
         </ul>
 
         <ul class="navbar-nav ms-auto align-items-center gap-2">
+          <!-- Operator Identity Pill -->
+          <li class="nav-item">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-secondary dropdown-toggle d-flex align-items-center gap-1 rounded-pill px-2 py-1" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Active Operator Identity">
+                <i class="bi bi-person-badge text-info"></i>
+                <span id="navOperatorText" class="small fw-semibold">Operator</span>
+              </button>
+              <div class="dropdown-menu dropdown-menu-end p-3 shadow" style="min-width: 250px;">
+                <h6 class="dropdown-header px-0 text-uppercase small fw-bold">Operator Identity</h6>
+                <p class="text-muted small mb-2">Tag audit logs with your team handle or username.</p>
+                <div class="input-group input-group-sm mb-2">
+                  <span class="input-group-text"><i class="bi bi-person"></i></span>
+                  <input type="text" id="operatorNameInput" class="form-control" placeholder="e.g. Niccher, Alice" />
+                </div>
+                <button type="button" class="btn btn-sm btn-primary w-100" id="saveOperatorBtn">Save Tag</button>
+              </div>
+            </div>
+          </li>
+
           <!-- Job Status Pill -->
           <li class="nav-item">
             <span id="globalJobPill" class="badge rounded-pill px-3 py-2 bg-secondary">
@@ -221,11 +240,12 @@
           <span>&copy; 2026 <strong>{{ get_app_name() }}</strong></span>
 
           <span class="text-secondary">&bull;</span>
-          <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">v1.0.0</span>
+          <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">v{{ get_app_version() }}</span>
           <span class="text-secondary d-none d-md-inline">&bull;</span>
           <span class="text-secondary d-none d-md-inline">Private Document Fine-Tuning Platform</span>
         </div>
         <div class="d-flex align-items-center gap-2">
+          <a href="/metrics" target="_blank" class="badge text-bg-light border text-decoration-none" title="Prometheus metrics exporter"><i class="bi bi-activity text-info me-1"></i>Metrics</a>
           <span class="badge text-bg-light border"><i class="bi bi-lightning-charge text-warning me-1"></i>FastAPI</span>
           <span class="badge text-bg-light border"><i class="bi bi-bootstrap text-primary me-1"></i>AdminLTE v4</span>
           <span class="badge text-bg-light border"><i class="bi bi-fire text-danger me-1"></i>PyTorch</span>
@@ -269,6 +289,43 @@
         themeIcon.className = nextTheme === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
       }
     });
+
+    // ── Operator Identity & Audit Auto-Tagging ────────────────────────────
+    const savedOperator = localStorage.getItem('doctune_operator') || 'Niccher';
+    const opText = document.getElementById('navOperatorText');
+    const opInput = document.getElementById('operatorNameInput');
+    if (opText) opText.innerText = savedOperator;
+    if (opInput) opInput.value = savedOperator;
+
+    document.getElementById('saveOperatorBtn')?.addEventListener('click', () => {
+      const val = (opInput?.value || '').trim() || 'System/Anonymous';
+      localStorage.setItem('doctune_operator', val);
+      document.cookie = `doctune_operator=${encodeURIComponent(val)}; path=/; max-age=31536000`;
+      if (opText) opText.innerText = val;
+      showToast(`Operator identity updated: ${val}`, 'success');
+      const dropdownEl = document.getElementById('navOperatorText')?.closest('.dropdown');
+      if (dropdownEl) {
+        const dd = bootstrap.Dropdown.getInstance(dropdownEl.querySelector('[data-bs-toggle="dropdown"]'));
+        if (dd) dd.hide();
+      }
+    });
+
+    // Automatically inject X-Operator-Name into all fetch requests
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options = {}) {
+      options.headers = options.headers || {};
+      const currentOp = localStorage.getItem('doctune_operator') || 'Niccher';
+      if (options.headers instanceof Headers) {
+        if (!options.headers.has('X-Operator-Name')) {
+          options.headers.append('X-Operator-Name', currentOp);
+        }
+      } else if (Array.isArray(options.headers)) {
+        options.headers.push(['X-Operator-Name', currentOp]);
+      } else {
+        options.headers['X-Operator-Name'] = currentOp;
+      }
+      return originalFetch(url, options);
+    };
 
     // Global Toast Notification Helper
     function showToast(message, type = 'info') {

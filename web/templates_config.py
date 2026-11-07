@@ -12,4 +12,5 @@ templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
 
 # Register dynamic global helpers available across all Jinja2 templates
 templates.env.globals["get_app_name"] = config_service.get_app_name
+templates.env.globals["get_app_version"] = config_service.get_app_version
 templates.env.globals["get_settings"] = config_service.get_settings

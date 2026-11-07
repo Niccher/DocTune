@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from fastapi.testclient import TestClient
 from web.main import app
 from web.state import state, JobType, JobStatus
+from web.services.config_service import config_service
 
 client = TestClient(app)
 
@@ -26,6 +27,7 @@ def test_dashboard_route():
     assert response.status_code == 200
     assert "Overview Dashboard" in response.text
     assert "AdminLTE" in response.text or "LLM Studio" in response.text
+    assert f"v{config_service.get_app_version()}" in response.text
 
 
 def test_data_prep_route():
@@ -240,7 +242,7 @@ def test_healthcheck_api():
     data = res.json()
     assert data["status"] == "healthy"
     assert data["app"] == "DocTune Studio"
-    assert data["version"] == "1.0.0"
+    assert data["version"] == config_service.get_app_version()
 
 
 def test_app_lifespan_startup_and_shutdown():
@@ -780,6 +782,25 @@ def test_document_storage_upload_delete_and_download():
     with SessionLocal() as db:
         doc = db.query(UploadedDocument).filter(UploadedDocument.filename == test_filename).first()
         assert doc is None
+
+    # 5. Test path traversal sanitization and TXT/MD support
+    traversal_name = "../../traversal_test.md"
+    resp_trav = client.post(
+        "/api/v1/documents/upload",
+        files=[("files", (traversal_name, BytesIO(b"# Sample Header\nTest content"), "text/markdown"))],
+    )
+    assert resp_trav.status_code == 200
+    assert "traversal_test.md" in resp_trav.json()["uploaded"]
+    # Clean up
+    client.post("/api/v1/documents/delete", data={"filename": "traversal_test.md"})
+
+    # 6. Test unsupported extension rejection
+    resp_bad = client.post(
+        "/api/v1/documents/upload",
+        files=[("files", ("malicious.exe", BytesIO(b"binary"), "application/octet-stream"))],
+    )
+    assert resp_bad.status_code == 400
+    assert "unsupported extension" in resp_bad.json()["message"]
 
 
 def test_dataset_storage_export_and_download():
@@ -1356,6 +1377,140 @@ def test_rag_benchmark_engine():
     assert len(data["details"]) >= 5
 
 
+def test_prometheus_metrics_endpoint():
+    """Verify Prometheus 0.0.4 metrics exposition endpoint."""
+    res = client.get("/metrics")
+    assert res.status_code == 200
+    assert "text/plain" in res.headers["content-type"]
+    assert "version=0.0.4" in res.headers["content-type"]
+    text = res.text
+
+    # App info and uptime
+    assert "# HELP doctune_app_info" in text
+    assert "# TYPE doctune_app_info gauge" in text
+    assert "doctune_uptime_seconds" in text
+
+    # GPU and host hardware
+    assert "doctune_gpu_count" in text
+    assert "doctune_cpu_cores" in text
+    assert "doctune_cpu_load" in text
+    assert "doctune_ram_memory_used_bytes" in text
+    assert "doctune_disk_storage_free_bytes" in text
+
+    # Pipeline and Queue
+    assert "doctune_pipeline_active_jobs" in text
+    assert "doctune_queue_pending_jobs" in text
+
+    # HTTP requests counter
+    assert "doctune_http_requests_total" in text
+
+    # Verify GPU telemetry line rendering when GPU hardware is detected
+    from unittest.mock import patch
+    fake_gpu = {
+        "has_gpu": True,
+        "device_count": 1,
+        "devices": [{
+            "index": 0,
+            "name": "NVIDIA RTX 4090",
+            "total_gb": 24.0,
+            "used_gb": 8.5,
+            "gpu_util_pct": 72,
+            "temperature_c": 58,
+        }],
+    }
+    with patch("web.services.metrics_service.get_gpu_info", return_value=fake_gpu):
+        res_gpu = client.get("/metrics")
+        gpu_text = res_gpu.text
+        assert 'doctune_gpu_count 1' in gpu_text
+        assert 'doctune_gpu_memory_used_bytes{device="0",gpu="NVIDIA RTX 4090"} 9126805504' in gpu_text
+        assert 'doctune_gpu_temperature_celsius{device="0",gpu="NVIDIA RTX 4090"} 58' in gpu_text
+
+
+def test_audit_logging_and_actor_resolution():
+    """Verify audit logging service, enriched telemetry fields, and API querying."""
+    from web.services.audit_service import audit_service
+
+    # 1. Direct logging test with enriched fields
+    record_id = audit_service.log(
+        action="TEST_ACTION",
+        resource_type="unit_test",
+        resource_id="item_42",
+        actor_ip="10.0.0.99",
+        actor_name="test_operator_alice",
+        status="SUCCESS",
+        severity="WARNING",
+        duration_ms=45.25,
+        request_id="req-test-uuid-123",
+        request_method="POST",
+        endpoint="/api/v1/test",
+        user_agent="DocTune-Tester/1.0",
+        details={"note": "audit logging verified"},
+    )
+    assert record_id is not None
+
+    logs = audit_service.list_logs(limit=10, action="TEST_ACTION")
+    assert len(logs) >= 1
+    found = next((l for l in logs if l["actor_name"] == "test_operator_alice"), None)
+    assert found is not None
+    assert found["action"] == "TEST_ACTION"
+    assert found["actor_ip"] == "10.0.0.99"
+    assert found["status"] == "SUCCESS"
+    assert found["severity"] == "WARNING"
+    assert found["duration_ms"] == 45.25
+    assert found["request_id"] == "req-test-uuid-123"
+    assert found["request_method"] == "POST"
+    assert found["endpoint"] == "/api/v1/test"
+    assert found["user_agent"] == "DocTune-Tester/1.0"
+    assert found["details"]["note"] == "audit logging verified"
+
+    # 2. REST API query endpoint test
+    res = client.get("/api/v1/admin/audit-logs?limit=50")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert "logs" in data
+    assert any(l["action"] == "TEST_ACTION" for l in data["logs"])
+
+    # 3. HTTP Request header auto-resolution (X-Operator-Name, User-Agent, X-Request-ID)
+    res_save = client.post(
+        "/api/v1/admin/settings",
+        json={"server": {"app_name": "DocTune Audited Studio"}},
+        headers={
+            "X-Operator-Name": "operator_charlie",
+            "User-Agent": "TestClient-Browser/2.0",
+            "X-Request-ID": "req-custom-trace-888",
+        },
+    )
+    assert res_save.status_code == 200
+
+    cfg_logs = audit_service.list_logs(limit=10, action="CONFIG_UPDATE")
+    assert len(cfg_logs) >= 1
+    charlie_log = next((l for l in cfg_logs if l["actor_name"] == "operator_charlie"), None)
+    assert charlie_log is not None
+    assert charlie_log["user_agent"] == "TestClient-Browser/2.0"
+    assert charlie_log["request_id"] == "req-custom-trace-888"
+    assert charlie_log["request_method"] == "POST"
+    assert charlie_log["endpoint"] == "/api/v1/admin/settings"
+    assert charlie_log["duration_ms"] is not None
+    assert charlie_log["duration_ms"] >= 0.0
+
+    # 4. Severity & Action filter query test
+    res_filtered = client.get("/api/v1/admin/audit-logs?action=CONFIG_UPDATE")
+    assert res_filtered.status_code == 200
+    assert all(l["action"] == "CONFIG_UPDATE" for l in res_filtered.json()["logs"])
+
+    res_sev = client.get("/api/v1/admin/audit-logs?severity=WARNING")
+    assert res_sev.status_code == 200
+    assert all(l["severity"] == "WARNING" for l in res_sev.json()["logs"])
+
+    # 5. Restore default settings
+    client.post(
+        "/api/v1/admin/settings",
+        json={"server": {"app_name": "DocTune Studio"}},
+        headers={"X-Operator-Name": "operator_charlie"},
+    )
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
@@ -1421,6 +1576,8 @@ if __name__ == "__main__":
     test_experiments_run_comparison_api()
     test_huggingface_push_to_hub_api()
     test_rag_benchmark_engine()
+    test_prometheus_metrics_endpoint()
+    test_audit_logging_and_actor_resolution()
     print("All tests passed successfully!")
 
 

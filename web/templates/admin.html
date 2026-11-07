@@ -74,6 +74,11 @@
           <i class="bi bi-puzzle text-info"></i> Integrations & Alerts
         </button>
       </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link d-flex align-items-center gap-2 py-3" id="tab-audit-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button" role="tab">
+          <i class="bi bi-shield-check text-success"></i> Audit Trail & Metrics
+        </button>
+      </li>
     </ul>
   </div>
 
@@ -457,6 +462,162 @@
           </div>
         </div>
 
+        <!-- TAB 6: AUDIT TRAIL & METRICS -->
+        <div class="tab-pane fade" id="tab-audit" role="tabpanel">
+          <!-- Prometheus Exporter Banner -->
+          <div class="card bg-body-tertiary border mb-4">
+            <div class="card-body p-3">
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div class="d-flex align-items-center gap-3">
+                  <div class="rounded-circle bg-primary-subtle text-primary p-3">
+                    <i class="bi bi-activity fs-3"></i>
+                  </div>
+                  <div>
+                    <h6 class="fw-bold mb-1">Prometheus & Grafana Telemetry Exporter</h6>
+                    <p class="text-muted small mb-0">Scrape real-time GPU VRAM/thermals, training loss, queue depth, host resources, and HTTP API counts.</p>
+                  </div>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                  <a href="/metrics" target="_blank" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1">
+                    <i class="bi bi-box-arrow-up-right"></i> Open /metrics
+                  </a>
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="btnCopyScrapeUrl" title="Copy Scrape Target">
+                    <i class="bi bi-clipboard"></i> Copy Scrape Target
+                  </button>
+                </div>
+              </div>
+              <div class="mt-3 pt-2 border-top">
+                <div class="d-flex flex-wrap gap-3 small text-muted">
+                  <span><strong>Format:</strong> Prometheus 0.0.4 text</span>
+                  <span>&bull;</span>
+                  <span><strong>Scrape Interval:</strong> 15s</span>
+                  <span>&bull;</span>
+                  <span><strong>Endpoint:</strong> <code>/metrics</code></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Audit Log Table & Filters -->
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+              <h6 class="fw-bold text-uppercase small text-muted mb-0">Operations & Compliance Audit Trail</h6>
+              <div class="text-muted small">Append-only operational history tracking mutations, operator identity, and client IPs.</div>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+              <select id="auditSeverityFilter" class="form-select form-select-sm" style="width: 140px;">
+                <option value="">All Severities</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="CRITICAL">CRITICAL</option>
+              </select>
+              <select id="auditActionFilter" class="form-select form-select-sm" style="width: 180px;">
+                <option value="">All Actions</option>
+                <option value="DOC_UPLOAD">Document Uploads</option>
+                <option value="DOC_DELETE">Document Deletions</option>
+                <option value="DATASET_EXPORT">Dataset Exports</option>
+                <option value="VERSION_ACTIVATE">Version Activations</option>
+                <option value="RUN_START">Training Runs Started</option>
+                <option value="RUN_CANCEL">Training Aborted</option>
+                <option value="QUEUE_CANCEL">Queue Cancelled</option>
+                <option value="SWEEP_START">Hyperparameter Sweeps</option>
+                <option value="CONFIG_UPDATE">Settings Updated</option>
+                <option value="CONFIG_RESET">Settings Reset</option>
+                <option value="HF_PUSH">Hugging Face Uploads</option>
+                <option value="GGUF_EXPORT">GGUF Quantizations</option>
+              </select>
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="btnRefreshAuditLogs">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+              </button>
+            </div>
+          </div>
+
+          <div class="table-responsive border rounded bg-body">
+            <table class="table table-hover table-striped align-middle mb-0" id="auditLogsTable">
+              <thead class="table-light small text-uppercase">
+                <tr>
+                  <th style="width: 160px;">Timestamp</th>
+                  <th style="width: 180px;">Severity / Action</th>
+                  <th>Resource & Target</th>
+                  <th style="width: 170px;">Operator / IP</th>
+                  <th style="width: 180px;">Context & Latency</th>
+                  <th style="width: 90px;">Status</th>
+                  <th style="width: 80px;" class="text-end">Details</th>
+                </tr>
+              </thead>
+              <tbody id="auditLogsBody" class="small">
+                {% if audit_logs and audit_logs|length > 0 %}
+                  {% for log in audit_logs %}
+                  <tr>
+                    <td class="text-nowrap text-muted">{{ log.timestamp[:19].replace('T', ' ') if log.timestamp else 'Just now' }}</td>
+                    <td>
+                      <div class="d-flex align-items-center gap-1">
+                        {% if log.severity == 'CRITICAL' %}
+                          <span class="badge bg-danger text-white border-0 fw-bold">CRIT</span>
+                        {% elif log.severity == 'WARNING' %}
+                          <span class="badge bg-warning text-dark border-0 fw-bold">WARN</span>
+                        {% else %}
+                          <span class="badge bg-info-subtle text-info border">INFO</span>
+                        {% endif %}
+                        <span class="badge bg-secondary-subtle text-secondary border font-monospace">{{ log.action }}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="fw-semibold">{{ log.resource_type }}</div>
+                      <div class="text-muted small font-monospace text-truncate" style="max-width: 220px;" title="{{ log.resource_id or '-' }}">{{ log.resource_id or '-' }}</div>
+                    </td>
+                    <td>
+                      <div><strong>{{ log.actor_name or 'System' }}</strong></div>
+                      <div class="text-muted small">{{ log.actor_ip or '127.0.0.1' }}</div>
+                    </td>
+                    <td>
+                      <div>
+                        {% if log.request_method %}
+                          <span class="badge bg-dark-subtle text-dark border font-monospace py-0 px-1">{{ log.request_method }}</span>
+                        {% endif %}
+                        <span class="small font-monospace text-muted text-truncate d-inline-block align-middle" style="max-width: 120px;" title="{{ log.endpoint or '-' }}">{{ log.endpoint or '-' }}</span>
+                      </div>
+                      <div class="text-muted small d-flex align-items-center gap-1 mt-1">
+                        {% if log.duration_ms is not none %}
+                          <span title="Execution Latency"><i class="bi bi-stopwatch"></i> {{ log.duration_ms }}ms</span>
+                        {% endif %}
+                        {% if log.request_id %}
+                          <span class="badge bg-light text-muted border font-monospace py-0" title="Request ID: {{ log.request_id }}">{{ log.request_id[:9] }}..</span>
+                        {% endif %}
+                      </div>
+                    </td>
+                    <td>
+                      {% if log.status == 'SUCCESS' or log.status == 'RUNNING' or log.status == 'QUEUED' %}
+                        <span class="badge bg-success-subtle text-success border border-success-subtle">{{ log.status }}</span>
+                      {% else %}
+                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle">{{ log.status }}</span>
+                      {% endif %}
+                    </td>
+                    <td class="text-end">
+                      <button type="button" class="btn btn-sm btn-outline-secondary btn-view-audit-details py-0 px-2"
+                        data-details='{{ log.details | tojson if log.details is mapping else (log.details or "{}") }}'
+                        data-reqid='{{ log.request_id or "" }}'
+                        data-severity='{{ log.severity or "INFO" }}'
+                        data-status='{{ log.status or "SUCCESS" }}'
+                        data-method='{{ log.request_method or "" }}'
+                        data-endpoint='{{ log.endpoint or "" }}'
+                        data-duration='{{ log.duration_ms if log.duration_ms is not none else "" }}'
+                        data-ua='{{ log.user_agent or "" }}'>
+                        <i class="bi bi-eye"></i> View
+                      </button>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td colspan="7" class="text-center text-muted py-4">No audit events recorded yet. Perform an upload, training run, or settings save to see activity here.</td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
     </form>
   </div>
@@ -470,6 +631,34 @@
       <button type="button" class="btn btn-primary px-4 fw-semibold" id="btnSaveSettings">
         <i class="bi bi-check2-circle me-1"></i> Save Configuration
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Viewing Audit Details -->
+<div class="modal fade" id="auditDetailsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-shield-check me-2 text-primary"></i> Audit Event Telemetry & Payload</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="p-3 mb-3 bg-body-tertiary rounded border small">
+          <div class="row g-2">
+            <div class="col-md-6"><strong>Request ID:</strong> <span id="modalRequestId" class="font-monospace text-muted">-</span></div>
+            <div class="col-md-6"><strong>Severity:</strong> <span id="modalSeverity">-</span></div>
+            <div class="col-md-6"><strong>HTTP Context:</strong> <span id="modalHttpContext" class="font-monospace text-muted">-</span></div>
+            <div class="col-md-6"><strong>Latency:</strong> <span id="modalDuration" class="text-muted">-</span></div>
+            <div class="col-12"><strong>User Agent:</strong> <span id="modalUserAgent" class="text-muted font-monospace text-break">-</span></div>
+          </div>
+        </div>
+        <h6 class="small fw-bold text-uppercase text-muted mb-2">Payload Data:</h6>
+        <pre id="auditDetailsJson" class="bg-body-tertiary p-3 rounded border small font-monospace mb-0" style="max-height: 300px; overflow-y: auto;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
     </div>
   </div>
 </div>
@@ -914,9 +1103,182 @@ document.addEventListener("DOMContentLoaded", function () {
       qaPullContainer.classList.add("d-none");
       pullQaBtn.disabled = false;
       pullQaBtn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Pull Model';
-      showToast("Error: " + e.message, "error");
+      showToast(e.message, "error");
     }
   });
+
+  // ── Operations & Audit Trail Interactive Logic ─────────────────────
+  const copyScrapeBtn = document.getElementById("btnCopyScrapeUrl");
+  if (copyScrapeBtn) {
+    copyScrapeBtn.addEventListener("click", () => {
+      const url = window.location.origin + "/metrics";
+      navigator.clipboard.writeText(url).then(() => {
+        showToast("Copied Prometheus scrape URL to clipboard: " + url, "success");
+      }).catch(() => {
+        showToast("Scrape URL: " + url, "info");
+      });
+    });
+  }
+
+  // View Details Modal Trigger
+  const detailsModalEl = document.getElementById("auditDetailsModal");
+  const detailsModal = detailsModalEl ? new bootstrap.Modal(detailsModalEl) : null;
+  const detailsPre = document.getElementById("auditDetailsJson");
+  const modalReqId = document.getElementById("modalRequestId");
+  const modalSev = document.getElementById("modalSeverity");
+  const modalHttp = document.getElementById("modalHttpContext");
+  const modalDur = document.getElementById("modalDuration");
+  const modalUa = document.getElementById("modalUserAgent");
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".btn-view-audit-details");
+    if (btn && detailsModal) {
+      const raw = btn.getAttribute("data-details");
+      const reqId = btn.getAttribute("data-reqid");
+      const severity = btn.getAttribute("data-severity") || "INFO";
+      const method = btn.getAttribute("data-method");
+      const endpoint = btn.getAttribute("data-endpoint");
+      const duration = btn.getAttribute("data-duration");
+      const ua = btn.getAttribute("data-ua");
+
+      if (modalReqId) modalReqId.innerText = reqId || "N/A";
+      if (modalSev) {
+        if (severity === "CRITICAL") {
+          modalSev.innerHTML = '<span class="badge bg-danger text-white">CRITICAL</span>';
+        } else if (severity === "WARNING") {
+          modalSev.innerHTML = '<span class="badge bg-warning text-dark">WARNING</span>';
+        } else {
+          modalSev.innerHTML = '<span class="badge bg-info-subtle text-info border">INFO</span>';
+        }
+      }
+      if (modalHttp) {
+        modalHttp.innerText = (method || endpoint) ? `${method || ""} ${endpoint || ""}`.trim() : "Internal Task";
+      }
+      if (modalDur) {
+        modalDur.innerText = duration ? `${duration} ms` : "N/A";
+      }
+      if (modalUa) {
+        modalUa.innerText = ua || "Internal System Call / UI";
+      }
+
+      if (detailsPre) {
+        try {
+          const parsed = JSON.parse(raw);
+          detailsPre.innerText = JSON.stringify(parsed, null, 2);
+        } catch (_) {
+          detailsPre.innerText = raw || "No extra payload recorded.";
+        }
+      }
+      detailsModal.show();
+    }
+  });
+
+  // Filter & Refresh Audit Logs
+  const auditActionFilter = document.getElementById("auditActionFilter");
+  const auditSeverityFilter = document.getElementById("auditSeverityFilter");
+  const btnRefreshAudit = document.getElementById("btnRefreshAuditLogs");
+  const auditTbody = document.getElementById("auditLogsBody");
+
+  async function loadAuditLogs() {
+    if (!auditTbody) return;
+    const action = auditActionFilter ? auditActionFilter.value : "";
+    const severity = auditSeverityFilter ? auditSeverityFilter.value : "";
+    let url = `/api/v1/admin/audit-logs?limit=100`;
+    if (action) url += `&action=${encodeURIComponent(action)}`;
+    if (severity) url += `&severity=${encodeURIComponent(severity)}`;
+
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data || !data.logs || data.logs.length === 0) {
+        auditTbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No audit events match current filter.</td></tr>';
+        return;
+      }
+      let html = "";
+      for (const log of data.logs) {
+        const timeStr = log.timestamp ? log.timestamp.slice(0, 19).replace("T", " ") : "Just now";
+        const isSuccess = log.status === "SUCCESS" || log.status === "RUNNING" || log.status === "QUEUED";
+        const statusBadge = isSuccess
+          ? `<span class="badge bg-success-subtle text-success border border-success-subtle">${log.status}</span>`
+          : `<span class="badge bg-danger-subtle text-danger border border-danger-subtle">${log.status}</span>`;
+
+        let sevBadge = '<span class="badge bg-info-subtle text-info border">INFO</span>';
+        if (log.severity === "CRITICAL") {
+          sevBadge = '<span class="badge bg-danger text-white border-0 fw-bold">CRIT</span>';
+        } else if (log.severity === "WARNING") {
+          sevBadge = '<span class="badge bg-warning text-dark border-0 fw-bold">WARN</span>';
+        }
+
+        const methodBadge = log.request_method
+          ? `<span class="badge bg-dark-subtle text-dark border font-monospace py-0 px-1">${log.request_method}</span>`
+          : "";
+        const endpointSpan = log.endpoint
+          ? `<span class="small font-monospace text-muted text-truncate d-inline-block align-middle" style="max-width: 120px;" title="${log.endpoint}">${log.endpoint}</span>`
+          : '<span class="small text-muted">-</span>';
+        const durSpan = (log.duration_ms !== null && log.duration_ms !== undefined)
+          ? `<span title="Execution Latency"><i class="bi bi-stopwatch"></i> ${log.duration_ms}ms</span>`
+          : "";
+        const reqSpan = log.request_id
+          ? `<span class="badge bg-light text-muted border font-monospace py-0" title="Request ID: ${log.request_id}">${log.request_id.slice(0, 9)}..</span>`
+          : "";
+
+        const detailStr = log.details ? (typeof log.details === "object" ? JSON.stringify(log.details) : String(log.details)) : "{}";
+        const escaped = detailStr.replace(/'/g, "&#39;");
+
+        const detailsBtn = `
+          <button type="button" class="btn btn-sm btn-outline-secondary btn-view-audit-details py-0 px-2"
+            data-details='${escaped}'
+            data-reqid='${log.request_id || ""}'
+            data-severity='${log.severity || "INFO"}'
+            data-status='${log.status || "SUCCESS"}'
+            data-method='${log.request_method || ""}'
+            data-endpoint='${log.endpoint || ""}'
+            data-duration='${log.duration_ms !== null && log.duration_ms !== undefined ? log.duration_ms : ""}'
+            data-ua='${(log.user_agent || "").replace(/'/g, "&#39;")}'>
+            <i class="bi bi-eye"></i> View
+          </button>
+        `;
+
+        html += `
+          <tr>
+            <td class="text-nowrap text-muted">${timeStr}</td>
+            <td>
+              <div class="d-flex align-items-center gap-1">
+                ${sevBadge}
+                <span class="badge bg-secondary-subtle text-secondary border font-monospace">${log.action}</span>
+              </div>
+            </td>
+            <td>
+              <div class="fw-semibold">${log.resource_type}</div>
+              <div class="text-muted small font-monospace text-truncate" style="max-width: 220px;" title="${log.resource_id || "-"}">${log.resource_id || "-"}</div>
+            </td>
+            <td>
+              <div><strong>${log.actor_name || "System"}</strong></div>
+              <div class="text-muted small">${log.actor_ip || "127.0.0.1"}</div>
+            </td>
+            <td>
+              <div>${methodBadge} ${endpointSpan}</div>
+              <div class="text-muted small d-flex align-items-center gap-1 mt-1">${durSpan} ${reqSpan}</div>
+            </td>
+            <td>${statusBadge}</td>
+            <td class="text-end">${detailsBtn}</td>
+          </tr>
+        `;
+      }
+      auditTbody.innerHTML = html;
+    } catch (err) {
+      showToast("Failed loading audit logs: " + err.message, "error");
+    }
+  }
+
+  if (auditActionFilter) auditActionFilter.addEventListener("change", loadAuditLogs);
+  if (auditSeverityFilter) auditSeverityFilter.addEventListener("change", loadAuditLogs);
+  if (btnRefreshAudit) {
+    btnRefreshAudit.addEventListener("click", () => {
+      loadAuditLogs();
+      showToast("Audit logs refreshed", "info");
+    });
+  }
 
 });
 </script>

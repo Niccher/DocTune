@@ -12,7 +12,7 @@ def now_utc():
 
 HAS_SQLALCHEMY = False
 try:
-    from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, JSON
+    from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Text, ForeignKey, JSON
     from sqlalchemy.orm import declarative_base, relationship
     Base = declarative_base()
     HAS_SQLALCHEMY = True
@@ -20,7 +20,7 @@ except ImportError:
     class _DummyCol:
         def __init__(self, *args, **kwargs):
             pass
-    Column = Integer = String = Float = DateTime = Text = ForeignKey = JSON = _DummyCol
+    Column = Integer = BigInteger = String = Float = DateTime = Text = ForeignKey = JSON = _DummyCol
     def relationship(*args, **kwargs):
         return None
     Base = object
@@ -110,7 +110,7 @@ class UploadedDocument(Base):
     status = Column(String(32), default="READY")             # READY, PROCESSED, ERROR
     s3_bucket = Column(String(128), nullable=True)
     s3_key = Column(String(512), nullable=True)
-    size_bytes = Column(Integer, default=0)
+    size_bytes = Column(BigInteger, default=0)
     chunk_count = Column(Integer, default=0)
     uploaded_at = Column(DateTime(timezone=True), default=now_utc)
 
@@ -184,8 +184,30 @@ class DatasetVersion(Base):
     version_tag = Column(String(32), nullable=False)        # e.g., v1, v2.1, q4-qa
     file_path = Column(String(512), nullable=False)
     file_hash = Column(String(64), nullable=False, index=True) # SHA-256
-    size_bytes = Column(Integer, default=0)
+    size_bytes = Column(BigInteger, default=0)
     sample_count = Column(Integer, default=0)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=now_utc)
+
+
+class AuditLog(Base):
+    """Immutable audit trail recording state-modifying actions and actor metadata."""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime(timezone=True), default=now_utc, nullable=False, index=True)
+    actor_ip = Column(String(64), nullable=True)
+    actor_name = Column(String(128), default="System/Anonymous", nullable=False)
+    actor_user_id = Column(String(64), nullable=True)
+    action = Column(String(64), nullable=False, index=True)
+    resource_type = Column(String(64), nullable=False)
+    resource_id = Column(String(128), nullable=True)
+    status = Column(String(16), default="SUCCESS", nullable=False)
+    severity = Column(String(16), default="INFO", nullable=False)
+    request_id = Column(String(64), nullable=True, index=True)
+    request_method = Column(String(16), nullable=True)
+    endpoint = Column(String(256), nullable=True)
+    user_agent = Column(String(256), nullable=True)
+    duration_ms = Column(Float, nullable=True)
+    details = Column(Text, nullable=True)
 
