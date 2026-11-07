@@ -501,6 +501,15 @@ class TeacherService:
                                 continue
                             try:
                                 data = json.loads(line)
+                                if "error" in data:
+                                    _pull_tasks[task_key] = {
+                                        "status": "FAILED",
+                                        "progress": 0,
+                                        "error": f"Ollama error: {data['error']}",
+                                        "model": model,
+                                    }
+                                    return
+
                                 status_str = data.get("status", "")
                                 completed = data.get("completed", 0)
                                 total = data.get("total", 0)
@@ -550,13 +559,17 @@ class TeacherService:
 
                 try:
                     from huggingface_hub import hf_hub_download, snapshot_download
-                    parts = model.split("/")
-                    if len(parts) >= 2 and parts[-1].endswith(".gguf"):
-                        repo = "/".join(parts[:-1])
-                        fname = parts[-1]
-                        hf_hub_download(repo_id=repo, filename=fname, local_dir=str(models_dir))
-                    else:
-                        snapshot_download(repo_id=model, local_dir=str(models_dir / parts[-1]), allow_patterns="*.gguf")
+
+                    def _download_hf():
+                        parts = model.split("/")
+                        if len(parts) >= 2 and parts[-1].endswith(".gguf"):
+                            repo = "/".join(parts[:-1])
+                            fname = parts[-1]
+                            hf_hub_download(repo_id=repo, filename=fname, local_dir=str(models_dir))
+                        else:
+                            snapshot_download(repo_id=model, local_dir=str(models_dir / parts[-1]), allow_patterns="*.gguf")
+
+                    await asyncio.to_thread(_download_hf)
 
                     _pull_tasks[task_key] = {
                         "status": "COMPLETED",

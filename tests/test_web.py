@@ -342,6 +342,17 @@ def test_teacher_pull_endpoints():
     assert res_comp.json()["status"] == "COMPLETED"
     assert res_comp.json()["progress"] == 100
 
+    # 5. Verify failed state retrieval
+    _pull_tasks[task_key] = {"status": "FAILED", "progress": 0, "error": "Ollama error: model not found", "model": "test-pull-model"}
+    res_fail = client.get("/api/v1/teacher/pull-status?provider=ollama&model=test-pull-model")
+    assert res_fail.json()["status"] == "FAILED"
+    assert "model not found" in res_fail.json()["error"]
+
+    # 6. Verify non-existent task returns IDLE
+    res_idle = client.get("/api/v1/teacher/pull-status?provider=ollama&model=non-existent-task")
+    assert res_idle.json()["status"] == "IDLE"
+    assert res_idle.json()["progress"] == 0
+
 
 def test_teacher_connection_diagnostics():
     """Verify connection errors return helpful runner start commands."""
