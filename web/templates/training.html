@@ -48,6 +48,42 @@
             <div class="form-text small">Select a suggested model or type any model ID from Hugging Face.</div>
           </div>
 
+          <!-- Dataset Version Selector -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small fw-semibold mb-0">Dataset Snapshot</label>
+              <a href="/data-prep#datasetVersionsCard" class="text-decoration-none small text-info">
+                <i class="bi bi-clock-history me-1"></i>Versions ({{ dataset_versions|length }})
+              </a>
+            </div>
+            <select class="form-select form-select-sm" name="dataset_version" id="dataset_version">
+              <option value="">Active Snapshot (data/private_docs.jsonl)</option>
+              {% for v in dataset_versions %}
+                <option value="{{ v.version_id }}">{{ v.version_tag }} — {{ v.sample_count }} pairs ({{ v.created_at[:10] if v.created_at else '' }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- Resume from Checkpoint -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small fw-semibold mb-0">Resume from Checkpoint</label>
+              {% if resumable_checkpoints %}
+                <span class="badge bg-success-subtle text-success small">{{ resumable_checkpoints|length }} found</span>
+              {% endif %}
+            </div>
+            <select class="form-select form-select-sm" name="resume_checkpoint" id="resume_checkpoint">
+              <option value="">Start from Step 0 (New Run)</option>
+              {% if resumable_checkpoints %}
+                <option value="auto">Auto (Resume Most Recent Checkpoint)</option>
+                {% for chk in resumable_checkpoints %}
+                  <option value="{{ chk.path }}">[{{ chk.method }}] {{ chk.name }} (Step {{ chk.step or '?' }})</option>
+                {% endfor %}
+              {% endif %}
+            </select>
+            <div class="form-text small">Pick an existing checkpoint to continue training without starting over.</div>
+          </div>
+
           <!-- LoRA Rank & Alpha -->
           <div class="row g-2 mb-3">
             <div class="col-6">
@@ -95,7 +131,10 @@
             <button type="submit" class="btn btn-success" id="startTrainBtn">
               <i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning
             </button>
-            <button type="button" class="btn btn-outline-danger" id="abortTrainBtn" onclick="abortTraining()">
+            <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#sweepModal">
+              <i class="bi bi-grid-3x3-gap-fill me-1"></i> Launch Parameter Sweep
+            </button>
+            <button type="button" class="btn btn-outline-danger btn-sm" id="abortTrainBtn" onclick="abortTraining()">
               <i class="bi bi-stop-circle me-1"></i> Abort Running Job
             </button>
           </div>
@@ -109,10 +148,15 @@
     <!-- Real-time ApexChart -->
     <div class="card shadow-sm border-0 mb-3">
       <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-graph-up me-2 text-primary"></i>Real-Time Training Loss Curve</h5>
+        <div>
+          <h5 class="card-title mb-0 fw-bold"><i class="bi bi-graph-up me-2 text-primary"></i>Real-Time Training Loss Curve</h5>
+        </div>
         <div class="d-flex align-items-center gap-3">
           <small class="text-muted">Current Loss: <strong id="currentLossText" class="text-primary">-</strong></small>
           <small class="text-muted">Step: <strong id="currentStepText">-</strong></small>
+          <a href="/experiments" class="btn btn-xs btn-outline-primary">
+            <i class="bi bi-bar-chart-steps me-1"></i>Compare Runs
+          </a>
         </div>
       </div>
       <div class="card-body p-2">
@@ -121,7 +165,7 @@
     </div>
 
     <!-- Live Execution Console -->
-    <div class="card shadow-sm border-0">
+    <div class="card shadow-sm border-0 mb-3">
       <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center">
         <span class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>Live Training Console</span>
         <div>
@@ -129,7 +173,103 @@
         </div>
       </div>
       <div class="card-body p-2 bg-dark rounded-bottom">
-        <div class="terminal-window" id="trainTerminal" style="height: 280px;">Ready. Configure parameters and click "Start Fine-Tuning".</div>
+        <div class="terminal-window" id="trainTerminal" style="height: 250px;">Ready. Configure parameters and click "Start Fine-Tuning".</div>
+      </div>
+    </div>
+
+    <!-- Queued Training Jobs Card -->
+    <div class="card shadow-sm border-0" id="trainingQueueCard">
+      <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center">
+        <span class="small fw-bold text-secondary"><i class="bi bi-list-task me-1 text-primary"></i>Training Job Queue (FIFO)</span>
+        <span class="badge bg-secondary" id="queueCountBadge">{{ queued_jobs|length }} queued</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 40px;">#</th>
+                <th>Run ID</th>
+                <th>Method</th>
+                <th>Model</th>
+                <th>Params</th>
+                <th class="text-end">Action</th>
+              </tr>
+            </thead>
+            <tbody id="queueTableBody">
+              {% if queued_jobs %}
+                {% for q in queued_jobs %}
+                  <tr id="queue-row-{{ q.run_id }}">
+                    <td class="text-muted small fw-bold">{{ loop.index }}</td>
+                    <td class="font-monospace small text-primary">{{ q.run_id }}</td>
+                    <td><span class="badge bg-primary-subtle text-primary">{{ q.method|upper }}</span></td>
+                    <td class="small text-truncate" style="max-width: 150px;">{{ q.model_id }}</td>
+                    <td class="small text-muted">
+                      r={{ q.config.lora_r }}, lr={{ q.config.learning_rate_lora }}
+                    </td>
+                    <td class="text-end">
+                      <button class="btn btn-xs btn-outline-danger" onclick="cancelQueuedJob('{{ q.run_id }}')">
+                        <i class="bi bi-x-circle"></i> Cancel
+                      </button>
+                    </td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr id="emptyQueueRow">
+                  <td colspan="6" class="text-center text-muted py-2 small">No training jobs queued. New runs start immediately when system is idle.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Hyperparameter Grid Sweep -->
+<div class="modal fade" id="sweepModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-grid-3x3-gap-fill text-info me-2"></i>Launch Hyperparameter Sweep</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 small mb-3">
+          Define multiple values to test. The matrix generator will create combinatorial trials and queue them sequentially into the FIFO Job Queue.
+        </div>
+        <form id="sweepForm">
+          <div class="mb-2">
+            <label class="form-label small fw-semibold">Base Model</label>
+            <input type="text" class="form-control form-control-sm font-monospace" id="sweepModelId" value="{{ config.model_id }}">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small fw-semibold">Method</label>
+            <select class="form-select form-select-sm" id="sweepMethod">
+              <option value="qlora">QLoRA (4-bit)</option>
+              <option value="lora">LoRA (16-bit)</option>
+            </select>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small fw-semibold">Learning Rates (comma-separated)</label>
+            <input type="text" class="form-control form-control-sm" id="sweepLRs" value="0.0001, 0.0002" placeholder="e.g. 0.00005, 0.0001, 0.0002">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small fw-semibold">LoRA Ranks (comma-separated)</label>
+            <input type="text" class="form-control form-control-sm" id="sweepRanks" value="16, 32" placeholder="e.g. 8, 16, 32">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Epochs (comma-separated)</label>
+            <input type="text" class="form-control form-control-sm" id="sweepEpochs" value="3" placeholder="e.g. 2, 3">
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-info" id="btnLaunchSweep" onclick="launchSweep()">
+          <i class="bi bi-play-circle me-1"></i> Generate &amp; Queue Sweep
+        </button>
       </div>
     </div>
   </div>
@@ -199,8 +339,13 @@
       const res = await fetch('/api/v1/training/start', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
-        showToast('Training launched successfully!', 'success');
+        if (data.status === 'queued') {
+          showToast(`Job queued at position #${data.position}!`, 'info');
+        } else {
+          showToast('Training launched successfully!', 'success');
+        }
         document.getElementById('trainTerminal').innerText = '';
+        setTimeout(() => window.location.reload(), 1000);
       } else {
         showToast(data.message || 'Failed to start training', 'error');
         btn.disabled = false;
@@ -226,6 +371,62 @@
       }
     } catch (err) {
       showToast('Error: ' + err, 'error');
+    }
+  }
+
+  // Cancel Queued Job
+  async function cancelQueuedJob(runId) {
+    if (!confirm(`Remove queued job ${runId}?`)) return;
+    try {
+      const res = await fetch(`/api/v1/training/queue/${runId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Cancelled job ${runId}`, 'success');
+        const row = document.getElementById(`queue-row-${runId}`);
+        if (row) row.remove();
+        setTimeout(() => window.location.reload(), 600);
+      } else {
+        showToast(data.message || 'Failed to cancel queued job', 'error');
+      }
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error');
+    }
+  }
+
+  // Launch Parameter Sweep
+  async function launchSweep() {
+    const btn = document.getElementById('btnLaunchSweep');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Queuing Matrix...';
+
+    const payload = {
+      model_id: document.getElementById('sweepModelId').value,
+      method: document.getElementById('sweepMethod').value,
+      learning_rates: document.getElementById('sweepLRs').value,
+      lora_ranks: document.getElementById('sweepRanks').value,
+      epochs_list: document.getElementById('sweepEpochs').value,
+    };
+
+    try {
+      const res = await fetch('/api/v1/training/sweeps/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        showToast(`Sweep generated: ${data.total_trials} trials queued!`, 'success');
+        const modal = bootstrap.Modal.getInstance(document.getElementById('sweepModal'));
+        if (modal) modal.hide();
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        showToast(data.message || 'Failed to launch sweep', 'error');
+      }
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-circle me-1"></i> Generate &amp; Queue Sweep';
     }
   }
 

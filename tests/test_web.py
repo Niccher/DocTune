@@ -4,6 +4,7 @@ tests/test_web.py
 Automated test suite verifying route rendering, APIs, and state.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -459,7 +460,11 @@ def test_rehydrate_from_db():
     from web.db.session import SessionLocal, init_db
     from web.db.models import Run, MetricPoint
     init_db()
+    from datetime import datetime, timezone
     with SessionLocal() as db:
+        db.query(MetricPoint).filter(MetricPoint.run_id == "test_rehydrate_run").delete()
+        db.query(Run).filter(Run.id == "test_rehydrate_run").delete()
+        db.commit()
         test_run = Run(
             id="test_rehydrate_run",
             job_type="TRAINING_QLORA",
@@ -467,8 +472,9 @@ def test_rehydrate_from_db():
             model_id="test/model",
             status="COMPLETED",
             final_loss=1.234,
+            created_at=datetime.now(timezone.utc),
         )
-        db.merge(test_run)
+        db.add(test_run)
         test_metric = MetricPoint(
             run_id="test_rehydrate_run",
             step=10,
@@ -1195,6 +1201,161 @@ def test_playground_dpo_export_and_stats():
     assert any(l["chosen"] == "The actual director is Alice Smith" and l["rejected"] == "Hallucinated answer" for l in lines)
 
 
+def test_dataset_versioning_api():
+    """Verify immutable dataset snapshot creation, listing, and activation."""
+    from web.services.dataset_version_service import dataset_version_service
+    from pipeline.common import DEFAULT_JSONL
+
+    orig_content = DEFAULT_JSONL.read_text(encoding="utf-8") if DEFAULT_JSONL.exists() else None
+    test_file = DEFAULT_JSONL.parent / "test_snapshot_src.jsonl"
+    test_file.write_text(json.dumps({"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]}) + "\n")
+    entry = None
+    try:
+        entry = dataset_version_service.create_version_from_file(test_file, tag="test-v99", description="Unit test snapshot")
+        assert entry["version_tag"] == "test-v99"
+        assert entry["sample_count"] == 1
+        assert len(entry["sha256"]) == 64
+
+        # List versions API
+        res = client.get("/api/v1/dataset/versions")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert any(v["version_id"] == entry["version_id"] for v in data["versions"])
+
+        # Activate version API
+        res_act = client.post("/api/v1/dataset/versions/activate", json={"version_id": entry["version_id"]})
+        assert res_act.status_code == 200
+        assert res_act.json()["status"] == "success"
+    finally:
+        if test_file.exists():
+            test_file.unlink()
+        if entry:
+            p = Path(entry["path"])
+            if p.exists():
+                p.unlink()
+            dataset_version_service.delete_version(entry["version_id"])
+        if orig_content is not None:
+            DEFAULT_JSONL.write_text(orig_content, encoding="utf-8")
+
+
+def test_training_queue_and_resumable_checkpoints():
+    """Verify queue management, FIFO ordering, and checkpoint discovery."""
+    from web.state import state, JobInfo, JobType, JobStatus
+    from web.services.queue_manager import queue_manager
+
+    # Checkpoint discovery API
+    res_chk = client.get("/api/v1/training/checkpoints/resumable")
+    assert res_chk.status_code == 200
+    assert res_chk.json()["status"] == "success"
+
+    # Fake an active job in state to force enqueueing
+    fake_job = JobInfo(job_id="busy_job", job_type=JobType.TRAINING_QLORA, status=JobStatus.RUNNING)
+    old_active = state.active_job
+    state.active_job = fake_job
+
+    try:
+        res = client.post("/api/v1/training/start", data={
+            "method": "qlora",
+            "model_id": "meta-llama/Meta-Llama-3-8B-Instruct",
+            "epochs": 2,
+            "batch_size": 2,
+            "grad_accum": 4,
+            "lora_r": 16,
+            "lora_alpha": 32,
+            "learning_rate": 0.0002,
+            "max_seq_length": 512,
+            "resume_checkpoint": "auto",
+        })
+        assert res.status_code == 200
+        q_data = res.json()
+        assert q_data["status"] == "queued"
+        run_id = q_data["job_id"]
+
+        # Check queue API
+        res_q = client.get("/api/v1/training/queue")
+        assert res_q.status_code == 200
+        assert any(j["run_id"] == run_id for j in res_q.json()["queue"])
+
+        # Cancel queued job
+        res_del = client.delete(f"/api/v1/training/queue/{run_id}")
+        assert res_del.status_code == 200
+        assert res_del.json()["status"] == "success"
+    finally:
+        state.active_job = old_active
+
+
+def test_hyperparameter_sweep_generation():
+    """Verify combinatorial hyperparameter grid generation and queue population."""
+    from web.services.queue_manager import queue_manager
+
+    res = client.post("/api/v1/training/sweeps/generate", json={
+        "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+        "method": "qlora",
+        "learning_rates": "0.0001, 0.0002",
+        "lora_ranks": "16, 32",
+        "epochs_list": "2",
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert data["total_trials"] == 4  # 2 LRs * 2 Ranks * 1 Epoch = 4
+    assert len(data["trials"]) == 4
+
+    for t in data["trials"]:
+        queue_manager.remove(t["run_id"])
+
+
+def test_experiments_run_comparison_api():
+    """Verify multi-run comparison endpoint and telemetry alignment."""
+    res_html = client.get("/experiments")
+    assert res_html.status_code == 200
+    assert "Run Comparison" in res_html.text
+
+    res_runs = client.get("/api/v1/experiments/runs")
+    assert res_runs.status_code == 200
+    assert res_runs.json()["status"] == "success"
+
+    res_cmp = client.get("/api/v1/experiments/compare?run_ids=mock_run_1,mock_run_2")
+    assert res_cmp.status_code == 200
+    cmp_data = res_cmp.json()
+    assert cmp_data["status"] == "success"
+    assert len(cmp_data["series"]) >= 2
+    assert len(cmp_data["table"]) >= 2
+
+
+def test_huggingface_push_to_hub_api():
+    """Verify push to hub validation and security checks."""
+    res_err = client.post("/api/v1/models/push-to-hub", json={"model_name": "merged_model", "repo_id": ""})
+    assert res_err.status_code == 400
+
+    res_missing = client.post("/api/v1/models/push-to-hub", json={
+        "model_name": "non_existent_model_xyz",
+        "repo_id": "org/test-model",
+    })
+    assert res_missing.status_code == 404
+
+
+def test_rag_benchmark_engine():
+    """Verify 4-way empirical RAG baseline vs fine-tuning benchmark."""
+    res = client.get("/api/v1/experiments/rag-benchmark")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert "summary" in data
+    summary = data["summary"]
+
+    assert "base_zero_shot" in summary
+    assert "base_rag" in summary
+    assert "finetuned_model" in summary
+    assert "finetuned_rag" in summary
+
+    assert "factual_accuracy_pct" in summary["finetuned_model"]
+    assert "avg_latency_ms" in summary["finetuned_model"]
+    assert "avg_tokens" in summary["finetuned_model"]
+    assert len(data["details"]) >= 5
+
+
 if __name__ == "__main__":
     print("Running tests directly...")
     test_healthcheck_api()
@@ -1254,6 +1415,12 @@ if __name__ == "__main__":
     test_gguf_export_and_modelfile_api()
     test_openai_compatible_inference_api()
     test_playground_dpo_export_and_stats()
+    test_dataset_versioning_api()
+    test_training_queue_and_resumable_checkpoints()
+    test_hyperparameter_sweep_generation()
+    test_experiments_run_comparison_api()
+    test_huggingface_push_to_hub_api()
+    test_rag_benchmark_engine()
     print("All tests passed successfully!")
 
 

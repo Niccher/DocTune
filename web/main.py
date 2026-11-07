@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from pipeline.common import PROJECT_ROOT
-from web.routers import dashboard, data_prep, training, models, playground, admin, inference
+from web.routers import dashboard, data_prep, training, models, playground, admin, inference, experiments
 from web.services.process_manager import process_mgr
 from web.db.session import init_db
 from web.services.storage_service import storage_service
@@ -48,6 +48,7 @@ app.include_router(models.router)
 app.include_router(playground.router)
 app.include_router(admin.router)
 app.include_router(inference.router)
+app.include_router(experiments.router)
 
 
 @app.get("/health")

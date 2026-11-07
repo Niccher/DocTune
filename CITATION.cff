@@ -4,8 +4,8 @@ authors:
   - family-names: "Niccher"
     given-names: "Dominic"
 title: "DocTune Studio: Private Enterprise Document Fine-Tuning Platform for 8B LLMs"
-version: 1.2.0
-date-released: 2026-11-05
+version: 1.3.0
+date-released: 2026-11-07
 url: "https://github.com/Niccher/DocTune"
 repository-code: "https://github.com/Niccher/DocTune"
 keywords:

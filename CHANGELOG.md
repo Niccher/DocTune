@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-07
+
+### Added
+- **Run Comparison & Experiments Studio (`web/routers/experiments.py`, `web/templates/experiments.html`)**:
+  - Overlaid multi-series training loss trajectories with interactive ApexCharts canvas supporting step zoom, linear/log scaling, and tooltips.
+  - Side-by-side hyperparameter diff table comparing learning rate, epochs, batch size, LoRA rank/alpha, BLEU, ROUGE-L, perplexity, and dataset version tags.
+  - Accessible via sidebar navigation at `/experiments` and REST endpoints `GET /api/v1/experiments/runs` and `GET /api/v1/experiments/compare`.
+- **Fault-Tolerant Checkpoint Resumption (`--resume-from-checkpoint`)**:
+  - Integrated Hugging Face `trainer.train(resume_from_checkpoint=...)` across LoRA (`pipeline/train_lora.py`), QLoRA (`pipeline/train_qlora.py`), and Full Fine-Tuning (`pipeline/train_fft.py`).
+  - Added checkpoint discovery endpoint `GET /api/v1/training/checkpoints/resumable` scanning output directories for valid `checkpoint-*` states with epoch, step, and loss telemetry.
+  - Added "Resume from Checkpoint" dropdown selector in `web/templates/training.html`.
+- **Sequential FIFO Training Job Queue (`web/services/queue_manager.py`)**:
+  - Persistent queue manager backed by `.runs/job_queue.json` allowing multi-job scheduling without 409 Conflict rejection.
+  - Automatic job dispatching: hooks into `AppState.finish_job()` to automatically pop and launch the next pending training job upon completion or cancellation.
+  - Queue management endpoints: `GET /api/v1/training/queue`, `POST /api/v1/training/queue/cancel`, and `POST /api/v1/training/queue/clear`.
+  - Live "Training Queue" monitor card in `web/templates/training.html` displaying position, method, and cancel controls.
+- **Hyperparameter Grid Sweeps (`web/services/sweep_service.py`)**:
+  - Automated combinatorial grid search over learning rates, LoRA rank `r` (with proportional `alpha`), epochs, and batch sizes.
+  - Generates individual trial configs tagged with a uniform `sweep_id` and enqueues them into the FIFO queue.
+  - Added endpoint `POST /api/v1/training/sweep/start` and configuration modal in `web/templates/training.html`.
+- **Immutable Dataset Versioning & SHA-256 Provenance (`web/services/dataset_version_service.py`)**:
+  - Full dataset snapshotting with SHA-256 fingerprinting, token estimations, and manifest catalog (`data/datasets/manifest.json`).
+  - Database provenance tracking: added `DatasetVersion` model and `dataset_version` / `dataset_hash` columns to `Run` and `Checkpoint` models in `web/db/models.py`.
+  - Dynamic zero-downtime database auto-migration in `web/db/session.py`.
+  - Added endpoints `GET /api/v1/dataset/versions` and `POST /api/v1/dataset/versions/activate`.
+  - UI version history table in `data_prep.html` and snapshot selector in `training.html`.
+- **Push Model to Hugging Face Hub (`web/services/hf_model_service.py`, `web/routers/models.py`)**:
+  - Direct upload of fine-tuned adapters, merged weights, or GGUF files to Hugging Face Hub using `HfApi.upload_folder`.
+  - Private repository creation switch (`private=True`) and automated Markdown Model Card (`README.md`) generation with training metadata.
+  - Added endpoint `POST /api/v1/models/push-to-hub` and modal UI in `web/templates/models.html`.
+- **Empirical RAG vs. Fine-Tuning Benchmark Engine (`pipeline/rag_benchmark.py`)**:
+  - Standalone evaluation engine evaluating domain test suites across 4 configurations: Base Model, Base + RAG, DocTune Fine-Tuned, and Fine-Tuned + RAG.
+  - Quantitative metrics: Factual Accuracy (%), Hallucination / Refusal Rate (%), Response Latency (ms), and Prompt Token Overhead.
+  - Added endpoint `POST /api/v1/experiments/rag-benchmark` and benchmark dashboard in `web/templates/experiments.html`.
+- **Enterprise PII Redaction (`pipeline/pii_redactor.py`, `web/routers/data_prep.py`)**:
+  - Dual-engine redaction module integrating Microsoft Presidio with regex pattern fallback for SSN, emails, phone numbers, credit cards, IP addresses, and API credentials.
+  - Added live preview endpoint `POST /api/v1/data-prep/preview-redaction` and UI test sandbox in `data_prep.html`.
+- **GGUF Export & Ollama Modelfile Generation (`pipeline/export_gguf.py`, `web/routers/models.py`)**:
+  - Automatic quantized GGUF export (`Q4_K_M`, `Q5_K_M`, `Q8_0`, `F16`) with architecture-aware chat templates and stop tokens.
+  - One-click registration with local Ollama daemon via `POST /api/v1/models/ollama/register`.
+  - Added endpoints `POST /api/v1/models/export-gguf` and `GET /api/v1/models/modelfile`.
+- **OpenAI-Compatible Inference API (`web/services/inference_service.py`, `web/routers/inference.py`)**:
+  - Standard `/v1/chat/completions` endpoint supporting non-streaming JSON and streaming Server-Sent Events (`stream: true`).
+  - Standard `/v1/models` catalog endpoint returning loaded models and checkpoints in OpenAI list format.
+- **DPO / ORPO Preference Fine-Tuning from Human Feedback (`pipeline/train_dpo.py`, `web/routers/playground.py`)**:
+  - Training loop utilizing TRL `DPOTrainer` with Sigmoid DPO loss on user thumbs-up / thumbs-down ratings.
+  - Added feedback export endpoint `POST /api/v1/playground/dpo/export` and training trigger `POST /api/v1/playground/dpo/start`.
+
 ## [1.2.0] - 2026-11-05
 
 ### Added

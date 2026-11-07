@@ -42,7 +42,7 @@ class MetricLoggingCallback(TrainerCallback):
             print(f"[METRIC_JSON] {json.dumps(payload)}", flush=True)
 
 
-def train(cfg: Config, callbacks: Optional[list] = None) -> Path:
+def train(cfg: Config, callbacks: Optional[list] = None, resume_from_checkpoint: Optional[str] = None) -> Path:
     if torch is None or SFTTrainer is None:
         raise ImportError("Core ML stack (torch, transformers, peft, trl) is not installed. Run: pip install -r requirements.txt")
 
@@ -56,6 +56,8 @@ def train(cfg: Config, callbacks: Optional[list] = None) -> Path:
     print(f"LoRA alpha   : {cfg.lora_alpha}", flush=True)
     print(f"Epochs       : {cfg.num_train_epochs}", flush=True)
     print(f"Batch size   : {cfg.per_device_train_batch_size} (grad_accum={cfg.gradient_accumulation_steps})", flush=True)
+    if resume_from_checkpoint:
+        print(f"Resume from  : {resume_from_checkpoint}", flush=True)
     print("=" * 70, flush=True)
 
     if not Path(cfg.dataset_path).exists():
@@ -137,7 +139,16 @@ def train(cfg: Config, callbacks: Optional[list] = None) -> Path:
     # 9. Train
     print("\nStarting QLoRA training...", flush=True)
     start_time = time.time()
-    trainer.train()
+
+    resume_arg = None
+    if resume_from_checkpoint:
+        if str(resume_from_checkpoint).lower() in ("true", "auto", "1", "latest"):
+            resume_arg = True
+        else:
+            resume_arg = str(resume_from_checkpoint)
+        print(f"Resuming training state from checkpoint: {resume_arg}", flush=True)
+
+    trainer.train(resume_from_checkpoint=resume_arg)
 
     elapsed = time.time() - start_time
     print(f"\nQLoRA finished in {elapsed / 3600:.2f} hours ({elapsed:.0f} seconds)", flush=True)
@@ -152,17 +163,18 @@ def train(cfg: Config, callbacks: Optional[list] = None) -> Path:
     return cfg.output_qlora
 
 
-def main(config_path: Optional[str] = None):
+def main(config_path: Optional[str] = None, resume_checkpoint: Optional[str] = None):
     if config_path and Path(config_path).exists():
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = Config.from_dict(json.load(f))
     else:
         cfg = Config()
-    train(cfg)
+    train(cfg, resume_from_checkpoint=resume_checkpoint)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="QLoRA Fine-Tuning")
     parser.add_argument("--config-json", type=str, default=None, help="Path to JSON configuration file")
+    parser.add_argument("--resume-from-checkpoint", type=str, default=None, help="Path to checkpoint directory or 'auto'")
     args = parser.parse_args()
-    main(config_path=args.config_json)
+    main(config_path=args.config_json, resume_checkpoint=args.resume_from_checkpoint)

@@ -37,6 +37,8 @@ class Run(Base):
     model_id = Column(String(256), nullable=False)
     status = Column(String(32), default="PENDING", index=True)  # PENDING, RUNNING, COMPLETED, FAILED, ABORTED
     dataset_path = Column(String(512), nullable=True)
+    dataset_version = Column(String(64), nullable=True)
+    dataset_hash = Column(String(64), nullable=True)
     epochs = Column(Integer, nullable=True)
     batch_size = Column(Integer, nullable=True)
     learning_rate = Column(Float, nullable=True)
@@ -84,6 +86,8 @@ class Checkpoint(Base):
     s3_key = Column(String(512), nullable=True)
     size_mb = Column(Float, default=0.0)
     step = Column(Integer, nullable=True)
+    dataset_version = Column(String(64), nullable=True)
+    dataset_hash = Column(String(64), nullable=True)
     val_loss = Column(Float, nullable=True)
     bleu_score = Column(Float, nullable=True)
     rouge_score = Column(Float, nullable=True)
@@ -170,3 +174,18 @@ class PlaygroundLog(Base):
     notes = Column(Text, nullable=True)
     latency_ms = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), default=now_utc)
+
+
+class DatasetVersion(Base):
+    """Immutable tagged snapshots of instruction tuning datasets for lineage tracking."""
+    __tablename__ = "dataset_versions"
+
+    id = Column(String(64), primary_key=True)               # e.g., ds_v1_172345678_a1b2c3d4
+    version_tag = Column(String(32), nullable=False)        # e.g., v1, v2.1, q4-qa
+    file_path = Column(String(512), nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True) # SHA-256
+    size_bytes = Column(Integer, default=0)
+    sample_count = Column(Integer, default=0)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=now_utc)
+

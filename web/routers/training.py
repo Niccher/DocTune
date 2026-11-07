@@ -15,6 +15,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pipeline.common import PROJECT_ROOT, Config
 from web.state import state, JobType, JobStatus
 from web.services.process_manager import process_mgr
+from web.services.queue_manager import queue_manager
+from web.services.sweep_service import sweep_service
+from web.services.dataset_version_service import dataset_version_service
 from web.templates_config import templates
 from web.celery_app import is_celery_available, HAS_CELERY, app as celery_app
 
@@ -39,6 +42,10 @@ async def training_view(request: Request, model_id: Optional[str] = Query(None))
             "config": cfg_dict,
             "active_job": state.active_job.to_dict() if state.active_job else None,
             "loss_history": state.loss_history,
+            "queued_jobs": queue_manager.get_queue(),
+            "resumable_checkpoints": queue_manager.discover_resumable_checkpoints(),
+            "dataset_versions": dataset_version_service.list_versions(),
+            "active_dataset_version": dataset_version_service.get_active_version(),
         },
     )
 
@@ -55,10 +62,9 @@ async def start_training(
     lora_dropout: float = Form(0.05),
     learning_rate: float = Form(0.0002),
     max_seq_length: int = Form(1024),
+    resume_checkpoint: Optional[str] = Form(None),
+    dataset_version: Optional[str] = Form(None),
 ):
-    if state.active_job is not None:
-        return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
-
     # Enforce safe parameter boundaries
     epochs = max(1, min(int(epochs), 50))
     batch_size = max(1, min(int(batch_size), 32))
@@ -81,8 +87,16 @@ async def start_training(
         max_seq_length=max_seq_length,
     )
 
+    # Lineage: Resolve custom dataset version if specified
+    ds_entry = None
+    if dataset_version and dataset_version.strip():
+        ds_entry = dataset_version_service.get_version(dataset_version.strip())
+        if ds_entry and Path(ds_entry["path"]).exists():
+            cfg.dataset_path = Path(ds_entry["path"])
+
     # Save run config
-    run_cfg_path = RUNS_DIR / f"config_{int(time.time())}.json"
+    run_id = f"run_{method.lower()}_{int(time.time())}"
+    run_cfg_path = RUNS_DIR / f"config_{run_id}.json"
     with open(run_cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg.to_dict(), f, indent=2)
 
@@ -91,15 +105,37 @@ async def start_training(
         "lora": (JobType.TRAINING_LORA, "pipeline.train_lora"),
         "fft": (JobType.TRAINING_FFT, "pipeline.train_fft"),
     }
-
     job_type, script_module = method_map.get(method.lower(), (JobType.TRAINING_QLORA, "pipeline.train_qlora"))
 
-    # Dual execution: Use Celery if worker cluster & Redis are available, else fallback to local subprocess
-    if is_celery_available() and celery_app:
-        run_id = f"run_{method.lower()}_{int(time.time())}"
-        try:
-            from web.db.session import SessionLocal
-            from web.db.models import Run
+    mode = "celery" if (is_celery_available() and celery_app) else "subprocess"
+
+    # If another job is currently active, enqueue in FIFO queue
+    if state.active_job is not None:
+        job_spec = {
+            "run_id": run_id,
+            "job_type": job_type.value,
+            "method": method.lower(),
+            "model_id": model_id,
+            "config": cfg.to_dict(),
+            "config_file": str(run_cfg_path),
+            "resume_checkpoint": resume_checkpoint,
+            "dataset_version": ds_entry.get("version_tag") if ds_entry else None,
+            "dataset_hash": ds_entry.get("sha256") if ds_entry else None,
+            "mode": mode,
+        }
+        res = queue_manager.enqueue(job_spec)
+        return JSONResponse({
+            "status": "queued",
+            "message": f"Job queued at position #{res['position']}",
+            "job_id": run_id,
+            "position": res["position"],
+        })
+
+    # Record Run in DB
+    try:
+        from web.db.session import SessionLocal
+        from web.db.models import Run
+        if SessionLocal:
             db = SessionLocal()
             new_run = Run(
                 id=run_id,
@@ -107,25 +143,35 @@ async def start_training(
                 model_id=model_id,
                 method=method.upper(),
                 dataset_path=str(cfg.dataset_path),
+                dataset_version=ds_entry.get("version_tag") if ds_entry else None,
+                dataset_hash=ds_entry.get("sha256") if ds_entry else None,
                 epochs=epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
-                status="PENDING",
+                status="RUNNING",
                 config_json=cfg.to_dict(),
-                mode="celery",
+                mode=mode,
             )
             db.add(new_run)
             db.commit()
             db.close()
-        except Exception:
-            pass
+    except Exception:
+        pass
 
+    # Launch immediately via Celery or Subprocess
+    if mode == "celery" and celery_app:
         job = state.set_job(
             job_type=job_type,
-            metadata={"method": method, "model_id": model_id, "run_id": run_id, "mode": "celery", "config_file": str(run_cfg_path)},
+            metadata={
+                "method": method,
+                "model_id": model_id,
+                "run_id": run_id,
+                "mode": "celery",
+                "config_file": str(run_cfg_path),
+                "resume_checkpoint": resume_checkpoint,
+            },
         )
-        await state.add_log(f"--- [DISPATCH] Job {run_id} ({job_type.value}) dispatched to Celery worker cluster ---")
-
+        await state.add_log(f"--- [DISPATCH] Job {run_id} ({job_type.value}) dispatched to Celery ---")
         celery_task = celery_app.send_task(
             "web.celery_app.task_train_model",
             args=[run_id, method, model_id, cfg.to_dict()],
@@ -134,43 +180,93 @@ async def start_training(
         job.metadata["celery_task_id"] = celery_task.id
         return JSONResponse({"status": "started", "job_id": run_id})
 
-    # Subprocess execution fallback
-    run_id = f"run_{method.lower()}_{int(time.time())}"
-    try:
-        from web.db.session import SessionLocal
-        from web.db.models import Run
-        db = SessionLocal()
-        new_run = Run(
-            id=run_id,
-            job_type=job_type.value,
-            model_id=model_id,
-            method=method.upper(),
-            dataset_path=str(cfg.dataset_path),
-            epochs=epochs,
-            batch_size=batch_size,
-            learning_rate=learning_rate,
-            status="PENDING",
-            config_json=cfg.to_dict(),
-            mode="subprocess",
-        )
-        db.add(new_run)
-        db.commit()
-        db.close()
-    except Exception:
-        pass
-
+    # Subprocess execution
     args = ["--config-json", str(run_cfg_path)]
+    if resume_checkpoint and resume_checkpoint.strip():
+        args.extend(["--resume-from-checkpoint", str(resume_checkpoint.strip())])
 
     await process_mgr.run_pipeline_script(
         job_type=job_type,
         script_module=script_module,
         args=args,
         cwd=PROJECT_ROOT,
-        metadata={"method": method, "model_id": model_id, "run_id": run_id, "mode": "subprocess", "config_file": str(run_cfg_path)},
+        metadata={
+            "method": method,
+            "model_id": model_id,
+            "run_id": run_id,
+            "mode": "subprocess",
+            "config_file": str(run_cfg_path),
+            "resume_checkpoint": resume_checkpoint,
+        },
     )
 
-    job_id = state.active_job.job_id if state.active_job else "job_training"
+    job_id = state.active_job.job_id if state.active_job else run_id
     return JSONResponse({"status": "started", "job_id": job_id})
+
+
+@router.get("/api/v1/training/queue", response_class=JSONResponse)
+async def get_training_queue_api():
+    """Return all currently queued training jobs."""
+    return {"status": "success", "queue": queue_manager.get_queue()}
+
+
+@router.delete("/api/v1/training/queue/{run_id}", response_class=JSONResponse)
+async def remove_queued_job_api(run_id: str):
+    """Remove a job from the training queue."""
+    removed = queue_manager.remove(run_id)
+    if removed:
+        return {"status": "success", "message": f"Job {run_id} removed from queue"}
+    return JSONResponse({"status": "error", "message": f"Job {run_id} not found in queue"}, status_code=404)
+
+
+@router.get("/api/v1/training/checkpoints/resumable", response_class=JSONResponse)
+async def list_resumable_checkpoints_api():
+    """Return list of existing checkpoint directories that can be resumed."""
+    checkpoints = queue_manager.discover_resumable_checkpoints()
+    return {"status": "success", "checkpoints": checkpoints}
+
+
+@router.post("/api/v1/training/sweeps/generate", response_class=JSONResponse)
+async def generate_sweep_api(request: Request):
+    """Generate and queue a combinatorial hyperparameter sweep matrix."""
+    body = {}
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+    else:
+        form = await request.form()
+        body = dict(form)
+
+    model_id = body.get("model_id", "meta-llama/Meta-Llama-3-8B-Instruct")
+    method = body.get("method", "qlora")
+
+    # Parse comma-separated or list values
+    def parse_float_list(val, default):
+        if not val:
+            return default
+        if isinstance(val, list):
+            return [float(x) for x in val]
+        return [float(x.strip()) for x in str(val).split(",") if x.strip()]
+
+    def parse_int_list(val, default):
+        if not val:
+            return default
+        if isinstance(val, list):
+            return [int(x) for x in val]
+        return [int(x.strip()) for x in str(val).split(",") if x.strip()]
+
+    lrs = parse_float_list(body.get("learning_rates"), [0.0001, 0.0002])
+    ranks = parse_int_list(body.get("lora_ranks"), [16, 32])
+    epochs = parse_int_list(body.get("epochs_list"), [3])
+
+    res = sweep_service.generate_grid_sweep(
+        model_id=model_id,
+        method=method,
+        learning_rates=lrs,
+        lora_ranks=ranks,
+        epochs_list=epochs,
+    )
+    return JSONResponse(res)
 
 
 @router.post("/api/v1/training/stop")

@@ -88,6 +88,17 @@ class AppState:
                 self.recent_jobs.pop()
             self.active_job = None
 
+            # Auto-advance queued jobs if any
+            try:
+                from web.services.queue_manager import queue_manager
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(queue_manager.dispatch_next())
+                except RuntimeError:
+                    pass
+            except Exception:
+                pass
+
     async def connect_ws(self, ws: WebSocket):
         await ws.accept()
         self.ws_clients.add(ws)

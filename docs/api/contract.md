@@ -199,3 +199,115 @@ Full-duplex WebSocket stream for real-time loss telemetry and terminal logging.
     ```json
     "[METRIC_JSON] {\"step\": 20, \"loss\": 1.35, \"epoch\": 0.4}"
     ```
+
+---
+
+## 8. OpenAI-Compatible Inference API
+
+Standard drop-in inference endpoints allowing external tools, LangChain, LlamaIndex, or OpenAI SDKs to interact with trained DocTune models.
+
+### `POST /v1/chat/completions`
+Generates chat completions with optional streaming.
+* **Payload**:
+  ```json
+  {
+    "model": "doctune-merged",
+    "messages": [
+      {"role": "user", "content": "What is the primary failover protocol for Facility B?"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 512,
+    "stream": false
+  }
+  ```
+* **Streaming**: When `stream: true`, responses are emitted as standard Server-Sent Events (`data: {"choices": [{"delta": {"content": "..."}}]}`).
+
+### `GET /v1/models`
+Returns list of available models and merged checkpoints in OpenAI catalog format.
+
+---
+
+## 9. Experiments, Run Comparison & RAG Benchmarks
+
+### `GET /api/v1/experiments/runs?limit=50`
+Returns recent training runs decorated with hyperparameters, final loss, status, duration, and dataset version tags.
+
+### `GET /api/v1/experiments/compare?run_ids=run_1,run_2`
+Returns aligned multi-series step-loss curves and comparative hyperparameter diff tables across selected runs.
+
+### `POST /api/v1/experiments/rag-benchmark`
+Executes empirical 4-way evaluation comparing Base Model, Base + RAG, DocTune Fine-Tuned, and Fine-Tuned + RAG across Accuracy (%), Hallucination Rate (%), Latency (ms), and Token Cost.
+
+---
+
+## 10. Training Queue, Sweeps & Resumption
+
+### `GET /api/v1/training/checkpoints/resumable`
+Scans output directories for valid `checkpoint-*` folders with step numbers, last loss, and epoch progress.
+
+### `GET /api/v1/training/queue`
+Returns the FIFO training job queue.
+
+### `POST /api/v1/training/queue/cancel`
+Cancels a queued job by `run_id`.
+
+### `POST /api/v1/training/queue/clear`
+Clears all queued jobs.
+
+### `POST /api/v1/training/sweep/start`
+Generates a combinatorial hyperparameter grid sweep over learning rates, LoRA ranks, and epochs, enqueuing trials sequentially into the FIFO queue.
+* **Payload**:
+  ```json
+  {
+    "model_id": "meta-llama/Meta-Llama-3-8B-Instruct",
+    "method": "qlora",
+    "learning_rates": [0.0001, 0.0002],
+    "lora_ranks": [16, 32],
+    "epochs_list": [3]
+  }
+  ```
+
+---
+
+## 11. Dataset Versioning & Provenance
+
+### `GET /api/v1/dataset/versions`
+Lists all immutable dataset snapshots with SHA-256 fingerprints, sample counts, and active status.
+
+### `POST /api/v1/dataset/versions/activate`
+Activates a historical dataset version by `version_id`, copying it to the active training dataset path.
+
+---
+
+## 12. Hugging Face Hub & Model Publishing
+
+### `POST /api/v1/models/push-to-hub`
+Pushes local fine-tuned adapters or merged weights to Hugging Face Hub as a public or private repository with automated Model Card generation.
+* **Payload**:
+  ```json
+  {
+    "model_name": "output_lora",
+    "repo_id": "username/doctune-llama3-enterprise",
+    "private": true,
+    "token": "hf_..."
+  }
+  ```
+
+### `POST /api/v1/models/export-gguf`
+Converts merged models to GGUF format with quantization (`q4_k_m`, `q5_k_m`, `q8_0`, `f16`) and generates Ollama `Modelfile`.
+
+### `POST /api/v1/models/ollama/register`
+Registers the exported GGUF model with the local Ollama daemon.
+
+---
+
+## 13. Human Feedback & DPO Alignment
+
+### `GET /api/v1/playground/dpo/stats`
+Returns total counts of positive ratings, negative ratings, and recorded user corrections.
+
+### `POST /api/v1/playground/dpo/export`
+Extracts rated playground interactions into preference training JSONL pairs (`{"prompt": "...", "chosen": "...", "rejected": "..."}`).
+
+### `POST /api/v1/playground/dpo/start`
+Starts a DPO / ORPO preference alignment training run on the exported preference pairs.

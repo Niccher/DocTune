@@ -77,6 +77,24 @@ def init_db():
         # 2. Declarative fallback
         Base.metadata.create_all(bind=engine)
         logger.info("Database schema initialized successfully via metadata.")
+
+        # 3. Ensure newly introduced columns exist on legacy tables
+        try:
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                for table_name, col_name, col_type in [
+                    ("runs", "dataset_version", "VARCHAR(64)"),
+                    ("runs", "dataset_hash", "VARCHAR(64)"),
+                    ("checkpoints", "dataset_version", "VARCHAR(64)"),
+                    ("checkpoints", "dataset_hash", "VARCHAR(64)"),
+                ]:
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     except Exception as e:
         logger.warning("Database initialization notice (will retry on connect): %s", e)
 

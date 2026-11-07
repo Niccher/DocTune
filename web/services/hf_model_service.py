@@ -346,5 +346,58 @@ class HFModelService:
             logger.error("Download failed for %s: %s", clean_id, e)
             _download_tasks[clean_id] = {"status": "FAILED", "progress": 0, "error": str(e)}
 
+    def push_model_to_hub(
+        self,
+        folder_path: Path,
+        repo_id: str,
+        private: bool = True,
+        token: Optional[str] = None,
+        commit_message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Upload model weights, adapters, and model card to Hugging Face Hub."""
+        settings = config_service.get_settings()
+        effective_token = (
+            token.strip()
+            if token and token.strip()
+            else (settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN"))
+        )
+        if not effective_token:
+            raise ValueError("Hugging Face API token is required to push repositories. Set it in Admin or provide in the form.")
+
+        if not folder_path.exists():
+            raise FileNotFoundError(f"Local model path not found: {folder_path}")
+
+        # Ensure Model Card exists
+        readme_path = folder_path / "README.md"
+        if not readme_path.exists():
+            model_card = (
+                f"---\n"
+                f"library_name: peft\n"
+                f"tags:\n"
+                f"- doctune\n"
+                f"- fine-tuning\n"
+                f"- enterprise\n"
+                f"---\n\n"
+                f"# {repo_id}\n\n"
+                f"Fine-tuned model weights trained on private documents using [DocTune Studio](https://github.com/Niccher/DocTune).\n"
+            )
+            readme_path.write_text(model_card, encoding="utf-8")
+
+        from huggingface_hub import HfApi, create_repo
+        api = HfApi(token=effective_token)
+        create_repo(repo_id=repo_id, token=effective_token, private=private, exist_ok=True)
+        api.upload_folder(
+            folder_path=str(folder_path),
+            repo_id=repo_id,
+            commit_message=commit_message or "Upload fine-tuned weights from DocTune Studio",
+            token=effective_token,
+        )
+        return {
+            "status": "success",
+            "repo_id": repo_id,
+            "private": private,
+            "url": f"https://huggingface.co/{repo_id}",
+        }
+
 
 hf_model_service = HFModelService()

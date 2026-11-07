@@ -464,3 +464,68 @@ async def get_model_download_status(model_id: str):
         "path": status_data.get("path"),
     })
 
+
+@router.post("/api/v1/models/push-to-hub", response_class=JSONResponse)
+async def push_model_to_hub_api(request: Request):
+    """Upload trained LoRA adapters or merged models directly to a Hugging Face Hub repository."""
+    body = {}
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+    else:
+        form = await request.form()
+        body = dict(form)
+
+    model_name = body.get("model_name", "merged_model").strip()
+    repo_id = body.get("repo_id", "").strip()
+    private_val = body.get("private", True)
+    if isinstance(private_val, str):
+        private = private_val.lower() in ("true", "1", "yes")
+    else:
+        private = bool(private_val)
+    token = body.get("token") or None
+    commit_msg = body.get("commit_message") or None
+
+    if not repo_id:
+        return JSONResponse({"status": "error", "message": "repo_id is required (e.g. 'username/model-name')"}, status_code=400)
+
+    # Resolve local model directory
+    cfg = Config()
+    candidate_paths = [
+        PROJECT_ROOT / "models" / model_name,
+        cfg.output_merged,
+        cfg.output_qlora,
+        cfg.output_lora,
+        cfg.output_fft,
+    ]
+    target_path = None
+    for p in candidate_paths:
+        if p.exists() and (p / "adapter_config.json").exists() or (p / "config.json").exists():
+            target_path = p
+            break
+        elif p.name == model_name and p.exists():
+            target_path = p
+            break
+
+    if not target_path or not target_path.exists():
+        # Check subdirectories
+        sub = PROJECT_ROOT / "models"
+        matched = list(sub.glob(f"**/{model_name}"))
+        if matched:
+            target_path = matched[0]
+        else:
+            return JSONResponse({"status": "error", "message": f"Model '{model_name}' not found locally to upload"}, status_code=404)
+
+    try:
+        res = hf_model_service.push_model_to_hub(
+            folder_path=target_path,
+            repo_id=repo_id,
+            private=private,
+            token=token,
+            commit_message=commit_msg,
+        )
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+

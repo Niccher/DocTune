@@ -10,18 +10,32 @@ DocTune Studio divides storage into **Structured Relational Metadata (PostgreSQL
 erDiagram
     RUNS ||--o{ METRIC_POINTS : logs
     RUNS ||--o{ CHECKPOINTS : produces
+    DATASET_VERSIONS ||--o{ RUNS : trains
 
     RUNS {
         string id PK "Unique UUID / Timestamp"
         string job_type "TRAINING_QLORA / TRAINING_LORA / DATA_PREP"
         string method "qlora / lora / fft"
         string model_id "Base Model ID e.g. Llama-3-8B"
-        string status "PENDING / RUNNING / COMPLETED / FAILED / ABORTED"
+        string status "PENDING / RUNNING / QUEUED / COMPLETED / FAILED / ABORTED"
+        string dataset_version "Version tag e.g. v1"
+        string dataset_hash "SHA-256 fingerprint"
         json config_json "Hyperparameter snapshot"
         text error_message "Traceback on failure"
         datetime created_at
         datetime started_at
         datetime completed_at
+    }
+
+    DATASET_VERSIONS {
+        string id PK "Version ID e.g. ds_v1_1794070_hash8"
+        string version_tag "User or auto tag e.g. v1"
+        string file_path "Absolute path to snapshot JSONL"
+        string file_hash "Full SHA-256 content checksum"
+        int size_bytes "Snapshot file size"
+        int sample_count "Validated sample count"
+        text description "Snapshot notes"
+        datetime created_at
     }
 
     METRIC_POINTS {
@@ -40,12 +54,24 @@ erDiagram
         string run_id FK "References runs.id"
         string name "Descriptive name"
         string adapter_type "qlora / lora / merged"
+        string dataset_version "Version tag snapshot"
+        string dataset_hash "SHA-256 fingerprint"
         string s3_bucket "S3 bucket name"
         string s3_key "Object key inside bucket"
         float size_mb "Size in Megabytes"
         float bleu_score "BLEU score"
         float rouge_score "ROUGE-L score"
         float perplexity "Perplexity metric"
+        datetime created_at
+    }
+
+    PLAYGROUND_LOGS {
+        string id PK "Log UUID"
+        text prompt "Evaluation prompt"
+        text base_model_response "Base model output"
+        text fine_tuned_response "Fine-tuned model output"
+        string rating "positive / negative"
+        text user_correction "Ground truth / DPO correction"
         datetime created_at
     }
 

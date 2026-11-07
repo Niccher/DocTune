@@ -22,6 +22,9 @@ wandb/
 
 # Raw and proprietary document inputs
 raw_documents/
+data/datasets/*.jsonl
+data/datasets/manifest.json
+!data/datasets/.gitkeep
 
 # Logs and system files
 *.log

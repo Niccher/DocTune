@@ -160,9 +160,14 @@
                   <li><strong>Size:</strong> {{ checkpoints.merged.size_mb }} MB</li>
                   <li><strong>Files:</strong> {{ checkpoints.merged.files_count }}</li>
                 </ul>
-                <button type="button" class="btn btn-sm btn-outline-primary w-100" data-bs-toggle="modal" data-bs-target="#ggufExportModal">
-                  <i class="bi bi-cpu me-1"></i> Export to GGUF / Ollama
-                </button>
+                <div class="d-flex flex-column gap-2">
+                  <button type="button" class="btn btn-sm btn-outline-primary w-100" data-bs-toggle="modal" data-bs-target="#ggufExportModal">
+                    <i class="bi bi-cpu me-1"></i> Export to GGUF / Ollama
+                  </button>
+                  <button type="button" class="btn btn-sm btn-outline-warning w-100" data-bs-toggle="modal" data-bs-target="#hfPushModal" onclick="preparePushModal('merged_model')">
+                    <i class="bi bi-cloud-arrow-up me-1"></i> Push to Hugging Face Hub
+                  </button>
+                </div>
               {% else %}
                 <p class="small text-muted mb-3">Merge adapter weights to create a standalone model.</p>
               {% endif %}
@@ -327,6 +332,46 @@ ollama run my-private-model</code></pre>
         </div>
 
         <div id="ollamaStatusBox" class="d-none alert alert-info py-2 small mb-0"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Push to Hugging Face Hub Modal -->
+<div class="modal fade" id="hfPushModal" tabindex="-1" aria-labelledby="hfPushModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold" id="hfPushModalLabel"><i class="bi bi-cloud-arrow-up text-warning me-2"></i>Push Model to Hugging Face Hub</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="hfPushForm">
+          <input type="hidden" id="hfPushModelName" name="model_name" value="merged_model">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Target Repository ID</label>
+            <input type="text" class="form-control form-control-sm font-monospace" id="hfRepoId" name="repo_id" placeholder="e.g. username/my-doctune-llama3" required>
+            <div class="form-text small">Your Hugging Face username and destination model repository name.</div>
+          </div>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="hfPrivateRepo" name="private" checked>
+            <label class="form-check-label small fw-semibold" for="hfPrivateRepo">
+              <i class="bi bi-lock-fill text-warning me-1"></i> Private Repository (Enterprise Recommended)
+            </label>
+            <div class="form-text small">Keeps your weights strictly confidential within your HF account or organization.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Commit Message</label>
+            <input type="text" class="form-control form-control-sm" name="commit_message" placeholder="Upload fine-tuned model weights from DocTune Studio">
+          </div>
+          <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-warning btn-sm" id="btnRunHFPush">
+              <i class="bi bi-cloud-arrow-up me-1"></i> Upload to Hub
+            </button>
+          </div>
+        </form>
+        <div id="hfPushStatusBox" class="d-none alert alert-info py-2 small mt-3 mb-0"></div>
       </div>
     </div>
   </div>
@@ -668,5 +713,49 @@ ollama run my-private-model</code></pre>
       statusBox.innerHTML = 'Error: ' + err.message;
     }
   }
+
+  // ── Hugging Face Hub Push Handlers ──────────────────────────────
+  function preparePushModal(modelName) {
+    document.getElementById('hfPushModelName').value = modelName;
+    const repoInput = document.getElementById('hfRepoId');
+    if (!repoInput.value) {
+      repoInput.value = `doctune-${modelName.replace('_', '-')}`;
+    }
+    const box = document.getElementById('hfPushStatusBox');
+    box.classList.add('d-none');
+  }
+
+  document.getElementById('hfPushForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btnRunHFPush');
+    const box = document.getElementById('hfPushStatusBox');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Uploading...';
+    box.classList.remove('d-none');
+    box.className = 'alert alert-info py-2 small mt-3 mb-0';
+    box.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Preparing repo and uploading model weights to Hugging Face...';
+
+    const formData = new FormData(e.target);
+    try {
+      const res = await fetch('/api/v1/models/push-to-hub', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        box.className = 'alert alert-success py-2 small mt-3 mb-0';
+        box.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> Model uploaded! <a href="${data.url}" target="_blank" class="alert-link text-decoration-none">View on Hugging Face <i class="bi bi-box-arrow-up-right"></i></a>`;
+        showToast('Model pushed to Hugging Face successfully!', 'success');
+      } else {
+        box.className = 'alert alert-danger py-2 small mt-3 mb-0';
+        box.innerHTML = `<i class="bi bi-x-circle-fill me-1"></i> ${data.message || 'Push failed'}`;
+        showToast(data.message || 'Failed to push model', 'error');
+      }
+    } catch (err) {
+      box.className = 'alert alert-danger py-2 small mt-3 mb-0';
+      box.innerHTML = 'Error: ' + err.message;
+      showToast('Error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-cloud-arrow-up me-1"></i> Upload to Hub';
+    }
+  });
 </script>
 {% endblock %}

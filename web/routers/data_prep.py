@@ -25,6 +25,7 @@ from web.celery_app import is_celery_available, app as celery_app
 from web.db.session import SessionLocal, get_db, resolve_session
 from web.db.models import UploadedDocument, DatasetSample
 from web.services.storage_service import storage_service
+from web.services.dataset_version_service import dataset_version_service
 from pydantic import BaseModel
 
 
@@ -181,6 +182,8 @@ async def data_prep_view(request: Request, page: int = Query(1, ge=1)):
             "total_pages": total_pages,
             "settings": settings,
             "presets": presets,
+            "dataset_versions": dataset_version_service.list_versions(),
+            "active_dataset_version": dataset_version_service.get_active_version(),
             "active_job": state.active_job.to_dict() if state.active_job else None,
         },
     )
@@ -468,11 +471,29 @@ async def update_sample_status(request: Request, sample_id: str, db: Session = D
 
 
 @router.post("/api/v1/dataset/export-jsonl")
-async def export_curated_dataset(db: Session = Depends(get_db)):
-    """Export all approved and edited samples from PostgreSQL to private_docs.jsonl."""
+async def export_curated_dataset(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Export all approved and edited samples from PostgreSQL to private_docs.jsonl and create an immutable tagged version."""
     active_db, should_close = resolve_session(db)
     if not active_db:
         return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=503)
+
+    tag = None
+    description = None
+    try:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            body = await request.json()
+            tag = body.get("tag")
+            description = body.get("description")
+        else:
+            form = await request.form()
+            tag = form.get("tag")
+            description = form.get("description")
+    except Exception:
+        pass
 
     try:
         samples = active_db.query(DatasetSample).filter(DatasetSample.status != "REJECTED").order_by(DatasetSample.created_at.asc()).all()
@@ -491,6 +512,14 @@ async def export_curated_dataset(db: Session = Depends(get_db)):
                 f.write(json.dumps({"messages": msgs}) + "\n")
                 count += 1
 
+        # Create immutable version snapshot with SHA-256 fingerprint
+        version_entry = dataset_version_service.create_version_from_file(
+            DEFAULT_JSONL,
+            tag=tag,
+            description=description,
+            set_active=True,
+        )
+
         # Upload to MinIO/S3 datasets bucket
         storage_service.upload_file(DEFAULT_JSONL, storage_service.bucket_datasets, "private_docs.jsonl")
 
@@ -498,12 +527,46 @@ async def export_curated_dataset(db: Session = Depends(get_db)):
             "status": "success",
             "exported_count": count,
             "path": str(DEFAULT_JSONL),
+            "version": version_entry,
             "s3_bucket": storage_service.bucket_datasets,
             "s3_key": "private_docs.jsonl",
         })
     finally:
         if should_close and active_db:
             active_db.close()
+
+
+@router.get("/api/v1/dataset/versions", response_class=JSONResponse)
+async def list_dataset_versions_api():
+    """List all immutable dataset snapshots, checksums, and active status."""
+    return {
+        "status": "success",
+        "versions": dataset_version_service.list_versions(),
+        "active_version": dataset_version_service.get_active_version(),
+    }
+
+
+@router.post("/api/v1/dataset/versions/activate", response_class=JSONResponse)
+async def activate_dataset_version_api(request: Request):
+    """Set a specific dataset version snapshot as active for training runs."""
+    body = {}
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+    else:
+        form = await request.form()
+        body = dict(form)
+
+    version_id = body.get("version_id", "")
+    if not version_id:
+        return JSONResponse({"status": "error", "message": "version_id is required"}, status_code=400)
+
+    success = dataset_version_service.activate_version(version_id)
+    if not success:
+        return JSONResponse({"status": "error", "message": f"Version '{version_id}' not found"}, status_code=404)
+
+    active = dataset_version_service.get_active_version()
+    return {"status": "success", "message": f"Activated dataset version '{version_id}'", "active_version": active}
 
 
 @router.get("/api/v1/dataset/download-url")
