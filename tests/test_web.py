@@ -1708,9 +1708,15 @@ def test_authentication_and_user_flows():
     assert res_forgot.status_code == 200
     forgot_data = res_forgot.json()
     assert forgot_data["status"] == "success"
-    reset_token = forgot_data["token"]
+    # Token and reset_url are strictly omitted from response to prevent account takeover (SEC-01)
+    assert forgot_data.get("token") is None
+    assert forgot_data.get("reset_url") is None
+
+    # Fetch token directly from user record in test environment
+    user_rec = auth_service.get_user_by_email("test_member@example.com")
+    assert user_rec is not None
+    reset_token = user_rec.reset_token
     assert reset_token is not None
-    assert forgot_data["reset_url"] is not None
 
     # Reset password with token
     res_reset = client.post(

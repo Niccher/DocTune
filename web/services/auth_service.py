@@ -49,9 +49,16 @@ class AuthService:
         self._fallback_secret = secrets.token_hex(32)
 
     def get_secret_key(self) -> str:
-        """Retrieve persistent signing secret key from settings."""
+        """Retrieve persistent signing secret key from environment or settings."""
+        import os
+        env_secret = os.environ.get("SECRET_KEY") or os.environ.get("AUTH_SECRET_KEY")
+        if env_secret and env_secret.strip() and "change-this" not in env_secret.lower():
+            return env_secret.strip()
         cfg = config_service.get_auth_config()
-        return cfg.get("secret_key") or self._fallback_secret
+        key = cfg.get("secret_key")
+        if key and key.strip() and key != "doctune-default-secure-secret-key-change-in-production":
+            return key.strip()
+        return self._fallback_secret
 
     def create_session_token(self, user_id: int) -> str:
         """Generate a signed, tamper-proof session token."""

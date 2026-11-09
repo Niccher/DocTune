@@ -5,6 +5,7 @@ Authentication endpoints for user registration, login, logout,
 password recovery, and user session state in DocTune Studio.
 """
 
+import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, Response, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -14,17 +15,29 @@ from web.services.audit_service import audit_service
 from web.services.config_service import config_service
 from web.templates_config import templates
 
+logger = logging.getLogger("doctune.auth")
 router = APIRouter(tags=["authentication"])
 
 
 # ── UI Route Handlers ─────────────────────────────────────────────────────────
 
+def _safe_next_url(url: Optional[str]) -> str:
+    """Validate and sanitize redirect URL to prevent open redirect vulnerabilities."""
+    if not url or not isinstance(url, str):
+        return "/dashboard"
+    trimmed = url.strip()
+    if not trimmed.startswith("/") or trimmed.startswith("//") or "\\" in trimmed or trimmed == "/":
+        return "/dashboard"
+    return trimmed
+
+
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, next: str = "/"):
+async def login_page(request: Request, next: str = "/dashboard"):
     """Render the user login page."""
+    safe_next = _safe_next_url(next)
     user = getattr(request.state, "user", None)
     if user:
-        return RedirectResponse(url=next or "/", status_code=status.HTTP_302_FOUND)
+        return RedirectResponse(url=safe_next, status_code=status.HTTP_302_FOUND)
 
     user_count = auth_service.count_users()
     if user_count == 0:
@@ -36,7 +49,7 @@ async def login_page(request: Request, next: str = "/"):
         name="auth/login.html",
         context={
             "page_title": "Sign In — DocTune Studio",
-            "next_url": next or "/",
+            "next_url": safe_next,
             "app_name": config_service.get_app_name(),
             "user_count": user_count,
         },
@@ -260,6 +273,9 @@ async def forgot_password_api(request: Request):
     base = str(request.base_url).rstrip("/")
     reset_url = f"{base}/reset-password?token={token}" if token else None
 
+    if token and reset_url:
+        logger.warning("[AUTH RECOVERY] Password reset requested for '%s'. Reset Link: %s", email, reset_url)
+
     audit_service.log(
         action="AUTH_RESET_REQ",
         resource_type="auth",
@@ -270,9 +286,7 @@ async def forgot_password_api(request: Request):
 
     return JSONResponse({
         "status": "success",
-        "message": msg,
-        "token": token,
-        "reset_url": reset_url,
+        "message": "If an account is associated with this email, recovery instructions have been recorded to the server console.",
     })
 
 

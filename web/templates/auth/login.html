@@ -181,7 +181,11 @@
           if (data.user) {
             localStorage.setItem('doctune_operator', data.user.full_name || data.user.username);
           }
-          const nextUrl = new URLSearchParams(window.location.search).get('next') || '/';
+          const rawNext = new URLSearchParams(window.location.search).get('next') || '';
+          let nextUrl = '/dashboard';
+          if (rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//') && !rawNext.includes('\\') && rawNext !== '/') {
+            nextUrl = rawNext;
+          }
           window.location.href = nextUrl;
         } else {
           alertMsg.innerText = data.message || 'Authentication failed. Please verify credentials.';

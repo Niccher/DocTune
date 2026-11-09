@@ -206,7 +206,7 @@
           if (data.user) {
             localStorage.setItem('doctune_operator', data.user.full_name || data.user.username);
           }
-          window.location.href = '/';
+          window.location.href = '/dashboard';
         } else {
           alertMsg.innerText = data.message || 'Registration failed.';
           alertBox.classList.remove('d-none');

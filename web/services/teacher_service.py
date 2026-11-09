@@ -225,6 +225,29 @@ class TeacherService:
                     trimmed = f"{trimmed}/v1beta/openai"
         return trimmed
 
+    @staticmethod
+    def should_verify_ssl(url: str) -> bool:
+        """
+        Validate whether SSL certificates should be verified for the given URL.
+        Allows unverified TLS only for local loopback or explicit local/internal endpoints.
+        Enforces TLS verification for public cloud providers to prevent MitM attacks.
+        """
+        if not url:
+            return True
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            if parsed.scheme == "http":
+                return False
+            host = (parsed.hostname or "").lower()
+            if host in ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"):
+                return False
+            if host.endswith(".local") or host.endswith(".internal"):
+                return False
+            return True
+        except Exception:
+            return True
+
     @classmethod
     async def fetch_available_models(
         cls,
@@ -245,7 +268,7 @@ class TeacherService:
 
         discovered: List[str] = []
 
-        async with httpx.AsyncClient(timeout=timeout_sec, verify=False) as client:
+        async with httpx.AsyncClient(timeout=timeout_sec, verify=cls.should_verify_ssl(clean_url)) as client:
             # 1. If provider is Ollama, probe native /api/tags endpoint first
             if provider == "ollama":
                 # Strip trailing /v1 to reach root port
@@ -390,7 +413,7 @@ class TeacherService:
         start_time = time.perf_counter()
 
         try:
-            async with httpx.AsyncClient(timeout=timeout_sec, verify=False) as client:
+            async with httpx.AsyncClient(timeout=timeout_sec, verify=cls.should_verify_ssl(clean_url)) as client:
                 # 1. Fetch available models
                 models = await cls.fetch_available_models(
                     provider=provider,

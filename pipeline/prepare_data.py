@@ -212,7 +212,17 @@ Document excerpt:
                 with httpx.Client(timeout=60.0) as http_c:
                     anth_res = http_c.post(endpoint, json=req_body, headers=req_headers)
                     anth_res.raise_for_status()
-                    content = anth_res.json()["content"][0]["text"]
+                    res_json = anth_res.json()
+                    blocks = res_json.get("content", [])
+                    content = ""
+                    if isinstance(blocks, list):
+                        for block in blocks:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                content = block.get("text", "")
+                                break
+                            elif isinstance(block, dict) and "text" in block:
+                                content = block.get("text", "")
+                                break
             else:
                 try:
                     response = client.chat.completions.create(
@@ -330,14 +340,13 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         output_file.unlink()
         print(f"Removed previous {output_file}")
 
-    # 1. Sync documents from MinIO/S3 object storage if configured
     try:
         from web.services.storage_service import storage_service
         synced_count = storage_service.sync_bucket_to_dir(storage_service.bucket_docs, docs_dir)
         if synced_count > 0:
             print(f"[STORAGE] Synchronized {synced_count} documents from S3 bucket: {storage_service.bucket_docs}")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[STORAGE NOTICE] Document sync from S3 skipped or failed: {e}")
 
     patterns = ["*.pdf", "*.docx", "*.csv", "*.PDF", "*.DOCX", "*.CSV"]
     all_files = []
@@ -376,8 +385,8 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
             from web.services.storage_service import storage_service
             storage_service.upload_file(output_file, storage_service.bucket_datasets, output_file.name)
             print(f"[STORAGE] Uploaded dataset artifact {output_file.name} to S3 bucket: {storage_service.bucket_datasets}")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[STORAGE NOTICE] Dataset upload to S3 skipped or failed: {e}")
 
     print("\n" + "=" * 60)
     print(f"Finished. Wrote {total_pairs} instruction pairs → {output_file}")
