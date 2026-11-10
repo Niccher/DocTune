@@ -1,0 +1,26 @@
+# ==============================================================================
+# DocTune Studio — NVIDIA GPU Hardware Acceleration Override
+# ==============================================================================
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# ==============================================================================
+
+services:
+  celery_worker:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  llama_server:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

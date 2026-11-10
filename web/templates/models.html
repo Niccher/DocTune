@@ -261,11 +261,11 @@
   <div class="card-body">
     <div class="row g-3">
       <div class="col-12 col-md-6">
-        <h6 class="fw-bold mb-1">Serve with vLLM (High-throughput inference)</h6>
-        <pre class="bg-dark text-light p-3 rounded small mb-0"><code>vllm serve ./output_merged --dtype bfloat16 --port 8000</code></pre>
+        <h6 class="fw-bold mb-1"><i class="bi bi-cpu me-1 text-primary"></i>Serve with llama.cpp (Default / CPU & GPU)</h6>
+        <pre class="bg-dark text-light p-3 rounded small mb-0"><code>llama-server -m ./artifacts/runs/&lt;run_id&gt;/model-q4_k_m.gguf --port 8080 -c 4096</code></pre>
       </div>
       <div class="col-12 col-md-6">
-        <h6 class="fw-bold mb-1">Serve with Ollama</h6>
+        <h6 class="fw-bold mb-1"><i class="bi bi-terminal me-1 text-info"></i>Serve with Ollama</h6>
         <pre class="bg-dark text-light p-3 rounded small mb-0"><code>ollama create my-private-model -f ./Modelfile
 ollama run my-private-model</code></pre>
       </div>

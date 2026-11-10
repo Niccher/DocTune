@@ -9,10 +9,11 @@ import json
 import time
 from typing import Optional
 from pathlib import Path
-from fastapi import APIRouter, Request, Form, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, Form, Query, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from pipeline.common import PROJECT_ROOT, Config
+from pipeline.common import PROJECT_ROOT, Config, get_run_artifacts_dir, ARTIFACTS_ROOT
+from web.core.ids import generate_run_id, generate_job_id
 from web.state import state, JobType, JobStatus
 from web.services.process_manager import process_mgr
 from web.services.queue_manager import queue_manager
@@ -21,11 +22,9 @@ from web.services.dataset_version_service import dataset_version_service
 from web.services.audit_service import audit_service
 from web.templates_config import templates
 from web.celery_app import is_celery_available, HAS_CELERY, app as celery_app
+from web.routers.auth import require_project_role, get_project_id
 
 router = APIRouter()
-
-RUNS_DIR = PROJECT_ROOT / ".runs"
-RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/training", response_class=HTMLResponse)
@@ -67,6 +66,7 @@ async def start_training(
     max_seq_length: int = Form(1024),
     resume_checkpoint: Optional[str] = Form(None),
     dataset_version: Optional[str] = Form(None),
+    _role=Depends(require_project_role("operator")),
 ):
     # Enforce safe parameter boundaries
     epochs = max(1, min(int(epochs), 50))
@@ -90,16 +90,27 @@ async def start_training(
         max_seq_length=max_seq_length,
     )
 
+    project_id = getattr(request.state, "project_id", "proj_default")
+    user = getattr(request.state, "user", None)
+    user_id = user.id if user else None
+
     # Lineage: Resolve custom dataset version if specified
     ds_entry = None
     if dataset_version and dataset_version.strip():
         ds_entry = dataset_version_service.get_version(dataset_version.strip())
         if ds_entry and Path(ds_entry["path"]).exists():
             cfg.dataset_path = Path(ds_entry["path"])
+            cfg.dataset_version_id = ds_entry.get("version_tag")
+            cfg.dataset_sha256 = ds_entry.get("sha256")
 
-    # Save run config
-    run_id = f"run_{method.lower()}_{int(time.time())}"
-    run_cfg_path = RUNS_DIR / f"config_{run_id}.json"
+    # Generate collision-resistant run ID and isolated artifact workspace
+    run_id = generate_run_id(method)
+    run_dir = get_run_artifacts_dir(run_id)
+    cfg.run_id = run_id
+    cfg.output_dir = run_dir
+
+    # Save run config inside isolated run artifact tree
+    run_cfg_path = run_dir / "config.json"
     with open(run_cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg.to_dict(), f, indent=2)
 
@@ -112,27 +123,49 @@ async def start_training(
 
     mode = "celery" if (is_celery_available() and celery_app) else "subprocess"
 
-    # If another job is currently active, enqueue in FIFO queue
+    job_spec = {
+        "job_id": generate_job_id(method),
+        "run_id": run_id,
+        "display_name": f"{model_id.split('/')[-1]}-{method.upper()}",
+        "project_id": project_id,
+        "user_id": user_id,
+        "job_type": job_type.value,
+        "method": method.lower(),
+        "model_id": model_id,
+        "config": cfg.to_dict(),
+        "config_file": str(run_cfg_path),
+        "artifacts_root": str(ARTIFACTS_ROOT),
+        "output_dir": str(run_dir),
+        "resume_checkpoint": resume_checkpoint,
+        "dataset_version_id": ds_entry.get("version_tag") if ds_entry else None,
+        "dataset_sha256": ds_entry.get("sha256") if ds_entry else None,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "mode": mode,
+    }
+
+    # Enforce project queue quota (Finding I-07)
+    active_project_jobs = len([j for j in queue_manager.list_queue() if j.get("project_id") == project_id])
+    if active_project_jobs >= 20:
+        return JSONResponse(
+            {"status": "error", "message": "Project quota exceeded: maximum 20 queued training jobs allowed per project."},
+            status_code=429,
+        )
+
+    # If another job is currently active, enqueue in database-backed FIFO queue
     if state.active_job is not None:
-        job_spec = {
-            "run_id": run_id,
-            "job_type": job_type.value,
-            "method": method.lower(),
-            "model_id": model_id,
-            "config": cfg.to_dict(),
-            "config_file": str(run_cfg_path),
-            "resume_checkpoint": resume_checkpoint,
-            "dataset_version": ds_entry.get("version_tag") if ds_entry else None,
-            "dataset_hash": ds_entry.get("sha256") if ds_entry else None,
-            "mode": mode,
-        }
-        res = queue_manager.enqueue(job_spec)
+        res = queue_manager.enqueue(job_spec, project_id=project_id, user_id=user_id)
+        if res.get("status") == "error":
+            return JSONResponse({"status": "error", "message": res.get("message")}, status_code=500)
+
         audit_service.log(
             action="RUN_START",
             resource_type="run",
             resource_id=run_id,
             request=request,
             status="QUEUED",
+            actor_user_id=str(user_id) if user_id else None,
             details={"method": method, "model_id": model_id, "position": res["position"], "epochs": epochs, "lr": learning_rate},
         )
         return JSONResponse({
@@ -142,14 +175,16 @@ async def start_training(
             "position": res["position"],
         })
 
-    # Record Run in DB
+    # Record Run in DB (strictly fail with 500 if database persistence fails - B-07)
     try:
         from web.db.session import SessionLocal
-        from web.db.models import Run
+        from web.db.models import Run, Job
         if SessionLocal:
             db = SessionLocal()
             new_run = Run(
                 id=run_id,
+                project_id=project_id,
+                created_by=user_id,
                 job_type=job_type.value,
                 model_id=model_id,
                 method=method.upper(),
@@ -164,10 +199,30 @@ async def start_training(
                 mode=mode,
             )
             db.add(new_run)
+
+            new_job = Job(
+                id=job_spec["job_id"],
+                project_id=project_id,
+                owner_id=user_id,
+                run_id=run_id,
+                type=job_type.value,
+                status="RUNNING",
+                spec_json=job_spec,
+                started_at=datetime.now(timezone.utc) if "datetime" in globals() else None,
+            )
+            from web.db.models import now_utc
+            new_job.started_at = now_utc()
+            new_job.heartbeat_at = now_utc()
+            db.add(new_job)
+
             db.commit()
             db.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Failed persisting run to database: %s", e)
+        return JSONResponse(
+            {"status": "error", "message": f"Database failure persisting run record: {str(e)}"},
+            status_code=500,
+        )
 
     audit_service.log(
         action="RUN_START",
@@ -175,6 +230,7 @@ async def start_training(
         resource_id=run_id,
         request=request,
         status="RUNNING",
+        actor_user_id=str(user_id) if user_id else None,
         details={"method": method, "model_id": model_id, "mode": mode, "epochs": epochs, "lr": learning_rate},
     )
 
@@ -224,6 +280,7 @@ async def start_training(
     return JSONResponse({"status": "started", "job_id": job_id})
 
 
+
 @router.get("/api/v1/training/queue", response_class=JSONResponse)
 async def get_training_queue_api():
     """Return all currently queued training jobs."""
@@ -231,7 +288,7 @@ async def get_training_queue_api():
 
 
 @router.delete("/api/v1/training/queue/{run_id}", response_class=JSONResponse)
-async def remove_queued_job_api(request: Request, run_id: str):
+async def remove_queued_job_api(request: Request, run_id: str, _role=Depends(require_project_role("operator"))):
     """Remove a job from the training queue."""
     removed = queue_manager.remove(run_id)
     audit_service.log(
@@ -254,7 +311,7 @@ async def list_resumable_checkpoints_api():
 
 
 @router.post("/api/v1/training/sweeps/generate", response_class=JSONResponse)
-async def generate_sweep_api(request: Request):
+async def generate_sweep_api(request: Request, _role=Depends(require_project_role("operator"))):
     """Generate and queue a combinatorial hyperparameter sweep matrix."""
     body = {}
     content_type = request.headers.get("content-type", "")
@@ -305,7 +362,7 @@ async def generate_sweep_api(request: Request):
 
 
 @router.post("/api/v1/training/stop")
-async def stop_training(request: Request):
+async def stop_training(request: Request, _role=Depends(require_project_role("operator"))):
     curr_job = state.active_job.job_id if state.active_job else None
     if state.active_job and state.active_job.metadata.get("mode") == "celery":
         celery_id = state.active_job.metadata.get("celery_task_id")
@@ -337,6 +394,42 @@ async def stop_training(request: Request):
     if aborted:
         return JSONResponse({"status": "success", "message": "Job abort signal sent"})
     return JSONResponse({"status": "error", "message": "No active process to stop"}, status_code=400)
+
+
+@router.get("/api/v1/hardware", response_class=JSONResponse)
+async def get_hardware_profile_api():
+    """Return host hardware detection profile."""
+    from pipeline.hardware import get_hardware_profile
+    hw = get_hardware_profile()
+    return {"status": "success", "hardware": hw.to_dict()}
+
+
+@router.post("/api/v1/estimate", response_class=JSONResponse)
+async def estimate_training_vram_api(request: Request):
+    """Calculate VRAM requirement and training feasibility."""
+    from pipeline.estimator import estimate_vram_and_feasibility
+    body = {}
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+    else:
+        form = await request.form()
+        body = dict(form)
+
+    model_id = body.get("model_id", "meta-llama/Meta-Llama-3-8B-Instruct")
+    method = body.get("method", "qlora")
+    seq_length = int(body.get("max_seq_length", 1024))
+    batch_size = int(body.get("batch_size", 4))
+    lora_r = int(body.get("lora_r", 16))
+
+    estimate = estimate_vram_and_feasibility(
+        model_id=model_id,
+        method=method,
+        seq_length=seq_length,
+        batch_size=batch_size,
+        lora_r=lora_r,
+    )
+    return JSONResponse({"status": "success", "estimate": estimate})
 
 
 @router.websocket("/ws/stream")

@@ -26,6 +26,16 @@
             <div class="form-text small" id="methodHint">QLoRA fits easily on consumer GPUs (9–13 GB VRAM).</div>
           </div>
 
+          <!-- Quick Presets -->
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Guided Presets</label>
+            <div class="d-flex gap-1">
+              <button type="button" class="btn btn-outline-secondary btn-sm flex-fill" onclick="applyPreset('fast')">⚡ Fast LoRA</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm flex-fill" onclick="applyPreset('standard')">🎯 Std QLoRA</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm flex-fill" onclick="applyPreset('deep')">🔬 Deep</button>
+            </div>
+          </div>
+
           <!-- Base Model ID -->
           <div class="mb-3">
             <div class="d-flex justify-content-between align-items-center mb-1">
@@ -121,9 +131,23 @@
           </div>
 
           <!-- Sequence Length -->
-          <div class="mb-4">
+          <div class="mb-3">
             <label class="form-label small fw-semibold">Max Sequence Length</label>
-            <input type="number" class="form-control form-control-sm" name="max_seq_length" value="{{ config.max_seq_length }}" min="128" max="8192">
+            <input type="number" class="form-control form-control-sm" name="max_seq_length" id="input_seq_length" value="{{ config.max_seq_length }}" min="128" max="8192">
+          </div>
+
+          <!-- Pre-Flight VRAM & Feasibility Card -->
+          <div class="card bg-body-tertiary border-0 mb-3 p-2 rounded shadow-none">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="small fw-bold"><i class="bi bi-cpu me-1 text-primary"></i>Pre-Flight VRAM Check</span>
+              <span id="feasibilityBadge" class="badge bg-secondary-subtle text-secondary small">Estimating...</span>
+            </div>
+            <div class="small text-muted" id="vramEstimateText">
+              Estimated: <strong id="estVram">-</strong> | Target Device: <strong id="estDevice">-</strong>
+            </div>
+            <div id="vramWarning" class="small text-danger mt-1 d-none">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i><span id="vramWarningText"></span>
+            </div>
           </div>
 
           <!-- Controls -->
@@ -162,6 +186,16 @@
       <div class="card-body p-2">
         <div id="lossChart" style="min-height: 250px;"></div>
       </div>
+    </div>
+
+    <!-- Structured Error Diagnostic Banner -->
+    <div id="errorDiagnosticBanner" class="alert alert-danger d-none mb-3 py-2 px-3 small shadow-sm border-danger-subtle">
+      <div class="fw-bold d-flex align-items-center mb-1">
+        <i class="bi bi-exclamation-octagon-fill me-2 text-danger"></i>
+        <span id="diagTitle">Training Error Diagnosed</span>
+      </div>
+      <div id="diagDescription" class="mb-2 text-dark"></div>
+      <div class="p-2 rounded bg-body-tertiary border text-primary small font-monospace" id="diagAction"></div>
     </div>
 
     <!-- Live Execution Console -->
@@ -205,7 +239,7 @@
                     <td><span class="badge bg-primary-subtle text-primary">{{ q.method|upper }}</span></td>
                     <td class="small text-truncate" style="max-width: 150px;">{{ q.model_id }}</td>
                     <td class="small text-muted">
-                      r={{ q.config.lora_r }}, lr={{ q.config.learning_rate_lora }}
+                      r={{ q.config.lora_r if (q.config and q.config.lora_r is defined) else (q.lora_r if q.lora_r is defined else '?') }}, lr={{ q.config.learning_rate_lora if (q.config and q.config.learning_rate_lora is defined) else (q.learning_rate if q.learning_rate is defined else '?') }}
                     </td>
                     <td class="text-end">
                       <button class="btn btn-xs btn-outline-danger" onclick="cancelQueuedJob('{{ q.run_id }}')">
@@ -451,6 +485,7 @@
         term.innerText += msg.line + '\n';
         term.scrollTop = term.scrollHeight;
       }
+      checkErrorDiagnostic(msg.line);
     } else if (msg.type === 'metric') {
       const pt = { x: msg.data.step, y: msg.data.loss };
       seriesData.push(pt);
@@ -459,5 +494,115 @@
       document.getElementById('currentStepText').innerText = msg.data.step;
     }
   };
+
+  // Guided Training Presets
+  function applyPreset(name) {
+    if (name === 'fast') {
+      document.getElementById('m_lora').checked = true;
+      document.querySelector('input[name="lora_r"]').value = 16;
+      document.querySelector('input[name="lora_alpha"]').value = 32;
+      document.querySelector('input[name="epochs"]').value = 1;
+      document.querySelector('input[name="learning_rate"]').value = '0.0002';
+      document.querySelector('input[name="batch_size"]').value = 2;
+      document.querySelector('input[name="grad_accum"]').value = 4;
+    } else if (name === 'standard') {
+      document.getElementById('m_qlora').checked = true;
+      document.querySelector('input[name="lora_r"]').value = 64;
+      document.querySelector('input[name="lora_alpha"]').value = 128;
+      document.querySelector('input[name="epochs"]').value = 3;
+      document.querySelector('input[name="learning_rate"]').value = '0.0002';
+      document.querySelector('input[name="batch_size"]').value = 2;
+      document.querySelector('input[name="grad_accum"]').value = 8;
+    } else if (name === 'deep') {
+      document.getElementById('m_qlora').checked = true;
+      document.querySelector('input[name="lora_r"]').value = 128;
+      document.querySelector('input[name="lora_alpha"]').value = 256;
+      document.querySelector('input[name="epochs"]').value = 5;
+      document.querySelector('input[name="learning_rate"]').value = '0.0001';
+      document.querySelector('input[name="batch_size"]').value = 1;
+      document.querySelector('input[name="grad_accum"]').value = 16;
+    }
+    estimateVRAM();
+  }
+
+  // Pre-flight VRAM estimation
+  let estTimer = null;
+  async function estimateVRAM() {
+    clearTimeout(estTimer);
+    estTimer = setTimeout(async () => {
+      try {
+        const modelId = document.querySelector('input[name="model_id"]')?.value || 'meta-llama/Meta-Llama-3-8B-Instruct';
+        const method = document.querySelector('input[name="method"]:checked')?.value || 'qlora';
+        const batchSize = parseInt(document.querySelector('input[name="batch_size"]')?.value || '2', 10);
+        const seqLen = parseInt(document.getElementById('input_seq_length')?.value || '2048', 10);
+
+        const res = await fetch('/api/v1/estimate', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            model_id: modelId,
+            method: method,
+            batch_size: batchSize,
+            max_seq_length: seqLen,
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          const est = data.estimate;
+          document.getElementById('estVram').innerText = est.estimated_vram_gb + ' GB';
+          document.getElementById('estDevice').innerText = est.hardware.device.toUpperCase() + (est.hardware.total_vram_gb ? ` (${est.hardware.total_vram_gb} GB)` : '');
+
+          const badge = document.getElementById('feasibilityBadge');
+          const warningEl = document.getElementById('vramWarning');
+          const warningText = document.getElementById('vramWarningText');
+
+          if (est.feasible) {
+            badge.className = 'badge bg-success-subtle text-success small';
+            badge.innerText = 'FEASIBLE';
+            warningEl.classList.add('d-none');
+          } else {
+            badge.className = 'badge bg-danger-subtle text-danger small';
+            badge.innerText = 'HIGH OOM RISK';
+            warningText.innerText = est.recommendation || 'Estimated memory exceeds available hardware.';
+            warningEl.classList.remove('d-none');
+          }
+        }
+      } catch (e) {
+        console.warn('VRAM estimate err:', e);
+      }
+    }, 300);
+  }
+
+  function checkErrorDiagnostic(line) {
+    const banner = document.getElementById('errorDiagnosticBanner');
+    const title = document.getElementById('diagTitle');
+    const desc = document.getElementById('diagDescription');
+    const action = document.getElementById('diagAction');
+
+    if (/CUDA out of memory/i.test(line)) {
+      banner.classList.remove('d-none');
+      title.innerText = 'CUDA Out Of Memory (OOM)';
+      desc.innerText = 'The model parameters and batch activations exceeded available GPU VRAM.';
+      action.innerText = 'Remedy: Switch to QLoRA (4-bit), set batch_size=1, and increase gradient_accumulation_steps to 8 or 16.';
+    } else if (/401 Client Error|gated repo|authorization/i.test(line)) {
+      banner.classList.remove('d-none');
+      title.innerText = 'Gated Model Authentication Error';
+      desc.innerText = 'Hugging Face rejected access to this model repository (Token required or agreement unsigned).';
+      action.innerText = 'Remedy: Provide HUGGING_FACE_HUB_TOKEN in .env or switch to an ungated model like Qwen/Qwen2.5-3B-Instruct.';
+    } else if (/Loss is NaN|Gradient explosion/i.test(line)) {
+      banner.classList.remove('d-none');
+      title.innerText = 'Numerical Instability (NaN Loss)';
+      desc.innerText = 'Training loss diverged to NaN due to excessively high learning rate.';
+      action.innerText = 'Remedy: Lower learning rate to 5e-5 or 1e-4 and enable max_grad_norm=0.3 clipping.';
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    estimateVRAM();
+    document.querySelectorAll('#trainForm input, #trainForm select').forEach(el => {
+      el.addEventListener('change', estimateVRAM);
+      el.addEventListener('keyup', estimateVRAM);
+    });
+  });
 </script>
 {% endblock %}

@@ -31,7 +31,7 @@
                       <input type="checkbox" class="form-check-input run-compare-checkbox" value="{{ r.id }}" onchange="updateComparison()">
                     </td>
                     <td>
-                      <div class="fw-semibold small font-monospace text-primary text-truncate" style="max-width: 140px;" title="{{ r.id }}">{{ r.id }}</div>
+                      <a href="/runs/{{ r.id }}" class="fw-semibold small font-monospace text-primary text-truncate text-decoration-none d-block" style="max-width: 140px;" title="View Run Details">{{ r.id }}</a>
                       <span class="badge bg-primary-subtle text-primary" style="font-size: 0.7rem;">{{ r.method|upper }}</span>
                       <span class="text-muted small" style="font-size: 0.72rem;">lr={{ r.learning_rate }}</span>
                     </td>

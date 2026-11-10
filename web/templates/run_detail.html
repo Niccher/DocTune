@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-0">
+  <!-- Header / Breadcrumb -->
+  <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+    <div>
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb mb-1">
+          <li class="breadcrumb-item"><a href="/dashboard" class="text-decoration-none">Dashboard</a></li>
+          <li class="breadcrumb-item"><a href="/experiments" class="text-decoration-none">Experiments</a></li>
+          <li class="breadcrumb-item active font-monospace" aria-current="page">{{ run.id }}</li>
+        </ol>
+      </nav>
+      <h3 class="fw-bold mb-0 d-flex align-items-center gap-2">
+        <span class="font-monospace text-primary">{{ run.id }}</span>
+        {% if run.status == 'COMPLETED' %}
+          <span class="badge bg-success-subtle text-success fs-6"><i class="bi bi-check-circle me-1"></i>Completed</span>
+        {% elif run.status == 'RUNNING' %}
+          <span class="badge bg-warning-subtle text-warning fs-6 status-badge-running"><i class="bi bi-arrow-repeat me-1"></i>Running</span>
+        {% elif run.status == 'FAILED' %}
+          <span class="badge bg-danger-subtle text-danger fs-6"><i class="bi bi-x-circle me-1"></i>Failed</span>
+        {% elif run.status == 'CANCELLED' %}
+          <span class="badge bg-secondary-subtle text-secondary fs-6"><i class="bi bi-slash-circle me-1"></i>Cancelled</span>
+        {% else %}
+          <span class="badge bg-secondary-subtle text-secondary fs-6">{{ run.status }}</span>
+        {% endif %}
+      </h3>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="/experiments" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>All Runs
+      </a>
+      {% if run.status == 'COMPLETED' %}
+        <a href="/playground?run_id={{ run.id }}" class="btn btn-outline-primary">
+          <i class="bi bi-chat-dots me-1"></i>Test in Playground
+        </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Diagnostic Remediation Card (H-03) -->
+  {% if run.status == 'FAILED' or diagnostic %}
+  <div class="card border-danger shadow-sm mb-4">
+    <div class="card-header bg-danger-subtle text-danger py-3 d-flex align-items-center gap-2">
+      <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+      <h5 class="card-title mb-0 fw-bold">
+        Run Failure Diagnostic: {{ diagnostic.title if diagnostic else (run.error_code or "Execution Failed") }}
+      </h5>
+      {% if diagnostic and diagnostic.code %}
+        <span class="badge bg-danger ms-auto font-monospace">{{ diagnostic.code }}</span>
+      {% elif run.error_code %}
+        <span class="badge bg-danger ms-auto font-monospace">{{ run.error_code }}</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      <div class="mb-3">
+        <h6 class="fw-bold text-secondary mb-1">Root Cause</h6>
+        <p class="mb-0 text-dark">
+          {{ diagnostic.message if diagnostic else (run.error_details or "The training process exited with an error. Review the worker logs below.") }}
+        </p>
+      </div>
+      <div class="p-3 bg-body-tertiary rounded border">
+        <h6 class="fw-bold text-primary mb-1"><i class="bi bi-lightbulb me-1"></i>Actionable Remediation</h6>
+        <p class="mb-0 text-secondary">
+          {{ diagnostic.hint if diagnostic else "Reduce per-device batch size, ensure adequate GPU VRAM or switch to 4-bit QLoRA." }}
+        </p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row g-4 mb-4">
+    <!-- Telemetry Loss Curve Chart (H-04) -->
+    <div class="col-12 col-xl-8">
+      <div class="card shadow-sm border-0 h-100">
+        <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+          <h5 class="card-title mb-0 fw-bold"><i class="bi bi-graph-up me-2 text-primary"></i>Training Telemetry</h5>
+          <span class="badge bg-secondary-subtle text-secondary" id="metricsCountBadge">{{ metrics|length }} steps recorded</span>
+        </div>
+        <div class="card-body">
+          <div id="lossChartContainer" style="min-height: 320px;">
+            {% if not metrics %}
+              <div class="d-flex flex-column align-items-center justify-content-center text-muted py-5" style="height: 300px;">
+                <i class="bi bi-activity fs-1 mb-2"></i>
+                <p class="mb-0">No loss metrics recorded yet for this run.</p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Run Summary & Metadata -->
+    <div class="col-12 col-xl-4">
+      <div class="card shadow-sm border-0 h-100">
+        <div class="card-header bg-body border-0 py-3">
+          <h5 class="card-title mb-0 fw-bold"><i class="bi bi-info-circle me-2 text-primary"></i>Configuration & Lineage</h5>
+        </div>
+        <div class="card-body p-0">
+          <ul class="list-group list-group-flush small">
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Method</span>
+              <span class="fw-bold badge bg-primary-subtle text-primary">{{ run.method|upper if run.method else 'QLORA' }}</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Base Model</span>
+              <span class="fw-semibold text-truncate font-monospace" style="max-width: 200px;" title="{{ run.model_id }}">{{ run.model_id }}</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Epochs</span>
+              <span class="fw-semibold">{{ run.epochs or 3 }}</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Batch Size</span>
+              <span class="fw-semibold">{{ run.batch_size or 2 }}</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Learning Rate</span>
+              <span class="fw-semibold font-monospace">{{ run.learning_rate or 0.0002 }}</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Final Loss</span>
+              <span class="fw-bold text-success">{{ '%.4f'|format(run.final_loss) if run.final_loss is not none else 'N/A' }}</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Duration</span>
+              <span class="fw-semibold">{{ run.duration_sec }}s</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Dataset Version</span>
+              <span class="fw-semibold badge bg-secondary-subtle text-secondary">{{ run.dataset_version or 'Default' }}</span>
+            </li>
+            {% if run.dataset_hash %}
+            <li class="list-group-item d-flex justify-content-between">
+              <span class="text-muted">Dataset SHA-256</span>
+              <span class="font-monospace text-muted" style="font-size: 0.72rem;">{{ run.dataset_hash[:16] }}...</span>
+            </li>
+            {% endif %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deploy & API Integration Snippets (H-06) -->
+  <div class="card shadow-sm border-0 mb-4">
+    <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+      <h5 class="card-title mb-0 fw-bold"><i class="bi bi-code-slash me-2 text-primary"></i>Deploy & Integration Snippets</h5>
+      {% if run.status == 'COMPLETED' %}
+        <button class="btn btn-sm btn-success" onclick="deployRun('{{ run.id }}')">
+          <i class="bi bi-rocket-takeoff me-1"></i>Deploy Checkpoint
+        </button>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      <p class="small text-muted mb-3">
+        Use these snippets to integrate this tuned adapter into your downstream applications via standard OpenAI-compatible endpoints or the local <code>llama.cpp</code> runtime.
+      </p>
+
+      <ul class="nav nav-pills mb-3" id="snippetTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active btn-sm" id="tab-curl" data-bs-toggle="pill" data-bs-target="#pane-curl" type="button" role="tab">cURL</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link btn-sm" id="tab-python-sdk" data-bs-toggle="pill" data-bs-target="#pane-python-sdk" type="button" role="tab">Python (OpenAI SDK)</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link btn-sm" id="tab-requests" data-bs-toggle="pill" data-bs-target="#pane-requests" type="button" role="tab">Python (Requests)</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link btn-sm" id="tab-llamacpp" data-bs-toggle="pill" data-bs-target="#pane-llamacpp" type="button" role="tab">llama-server CLI</button>
+        </li>
+      </ul>
+
+      <div class="tab-content" id="snippetTabContent">
+        <!-- cURL -->
+        <div class="tab-pane fade show active" id="pane-curl" role="tabpanel">
+          <div class="position-relative">
+            <pre class="bg-dark text-light p-3 rounded font-monospace small mb-0" id="curlCode"><code>curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer dt_live_YOUR_API_KEY" \
+  -d '{
+    "model": "{{ run.id }}",
+    "messages": [
+      {"role": "user", "content": "Explain fine-tuning in simple terms."}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 256
+  }'</code></pre>
+            <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" onclick="copySnippet('curlCode')">
+              <i class="bi bi-clipboard"></i> Copy
+            </button>
+          </div>
+        </div>
+
+        <!-- Python OpenAI SDK -->
+        <div class="tab-pane fade" id="pane-python-sdk" role="tabpanel">
+          <div class="position-relative">
+            <pre class="bg-dark text-light p-3 rounded font-monospace small mb-0" id="pythonSdkCode"><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="dt_live_YOUR_API_KEY",
+)
+
+response = client.chat.completions.create(
+    model="{{ run.id }}",
+    messages=[
+        {"role": "user", "content": "Explain fine-tuning in simple terms."}
+    ],
+    temperature=0.7,
+    max_tokens=256,
+)
+
+print(response.choices[0].message.content)</code></pre>
+            <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" onclick="copySnippet('pythonSdkCode')">
+              <i class="bi bi-clipboard"></i> Copy
+            </button>
+          </div>
+        </div>
+
+        <!-- Python Requests -->
+        <div class="tab-pane fade" id="pane-requests" role="tabpanel">
+          <div class="position-relative">
+            <pre class="bg-dark text-light p-3 rounded font-monospace small mb-0" id="requestsCode"><code>import requests
+
+url = "http://localhost:8000/v1/chat/completions"
+headers = {
+    "Authorization": "Bearer dt_live_YOUR_API_KEY",
+    "Content-Type": "application/json",
+}
+payload = {
+    "model": "{{ run.id }}",
+    "messages": [
+        {"role": "user", "content": "Explain fine-tuning in simple terms."}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 256,
+}
+
+res = requests.post(url, json=payload, headers=headers)
+print(res.json()["choices"][0]["message"]["content"])</code></pre>
+            <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" onclick="copySnippet('requestsCode')">
+              <i class="bi bi-clipboard"></i> Copy
+            </button>
+          </div>
+        </div>
+
+        <!-- llama-server CLI -->
+        <div class="tab-pane fade" id="pane-llamacpp" role="tabpanel">
+          <div class="position-relative">
+            <pre class="bg-dark text-light p-3 rounded font-monospace small mb-0" id="llamacppCode"><code># Start llama-server with the base model and dynamic LoRA adapter attachment
+llama-server \
+  -m ./models/base-model-q4_k_m.gguf \
+  --lora-init-without-apply \
+  --lora ./artifacts/runs/{{ run.id }}/adapter-lora.gguf \
+  --port 8080 \
+  -c 4096</code></pre>
+            <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" onclick="copySnippet('llamacppCode')">
+              <i class="bi bi-clipboard"></i> Copy
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ApexCharts Script -->
+{% if metrics %}
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    const rawData = [
+      {% for m in metrics %}
+        { x: {{ m.step }}, y: {{ '%.4f'|format(m.loss) }} },
+      {% endfor %}
+    ];
+
+    const options = {
+      series: [{
+        name: 'Training Loss',
+        data: rawData
+      }],
+      chart: {
+        type: 'line',
+        height: 320,
+        animations: { enabled: true },
+        toolbar: { show: true }
+      },
+      colors: ['#0d6efd'],
+      stroke: { curve: 'smooth', width: 2 },
+      markers: { size: rawData.length > 50 ? 0 : 3 },
+      xaxis: {
+        title: { text: 'Step' },
+        type: 'numeric'
+      },
+      yaxis: {
+        title: { text: 'Loss' },
+        labels: { formatter: (val) => val.toFixed(4) }
+      },
+      tooltip: {
+        x: { formatter: (val) => 'Step ' + val },
+        y: { formatter: (val) => val.toFixed(4) }
+      }
+    };
+
+    const chart = new ApexCharts(document.querySelector("#lossChartContainer"), options);
+    chart.render();
+  });
+</script>
+{% endif %}
+
+<script>
+function copySnippet(elementId) {
+  const codeEl = document.getElementById(elementId);
+  if (!codeEl) return;
+  navigator.clipboard.writeText(codeEl.innerText.trim()).then(() => {
+    alert("Snippet copied to clipboard!");
+  });
+}
+
+function deployRun(runId) {
+  if (!confirm(`Deploy checkpoint from ${runId} to active llama.cpp inference engine?`)) return;
+  fetch('/api/v1/inference/deploy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_id: runId, name: 'Tuned Adapter' })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === 'success' || data.deployment_id) {
+      alert("Deployment created successfully! You can now test it in the Playground.");
+      window.location.href = `/playground?run_id=${runId}`;
+    } else {
+      alert("Deployment notice: " + (data.message || JSON.stringify(data)));
+    }
+  })
+  .catch(err => alert("Deployment request failed: " + err));
+}
+</script>
+{% endblock %}

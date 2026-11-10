@@ -43,25 +43,14 @@ class MetricLoggingCallback(TrainerCallback):
 
 
 def train(cfg: Config, callbacks: Optional[list] = None, resume_from_checkpoint: Optional[str] = None) -> Path:
-    if torch is None or SFTTrainer is None:
-        raise ImportError("Core ML stack (torch, transformers, peft, trl) is not installed. Run: pip install -r requirements.txt")
-
-    print("=" * 70, flush=True)
-    print("QLoRA FINE-TUNING (4-bit)", flush=True)
-    print("=" * 70, flush=True)
-    print(f"Model        : {cfg.model_id}", flush=True)
-    print(f"Dataset      : {cfg.dataset_path}", flush=True)
-    print(f"Output dir   : {cfg.output_qlora}", flush=True)
-    print(f"LoRA rank    : {cfg.lora_r}", flush=True)
-    print(f"LoRA alpha   : {cfg.lora_alpha}", flush=True)
-    print(f"Epochs       : {cfg.num_train_epochs}", flush=True)
-    print(f"Batch size   : {cfg.per_device_train_batch_size} (grad_accum={cfg.gradient_accumulation_steps})", flush=True)
-    if resume_from_checkpoint:
-        print(f"Resume from  : {resume_from_checkpoint}", flush=True)
-    print("=" * 70, flush=True)
-
-    if not Path(cfg.dataset_path).exists():
-        raise FileNotFoundError(f"Dataset not found at {cfg.dataset_path}. Run prepare_data first.")
+    """Execute QLoRA fine-tuning using unified runner."""
+    from pipeline.trainer.runner import run_training
+    return run_training(
+        cfg=cfg,
+        method="qlora",
+        callbacks=callbacks,
+        resume_from_checkpoint=resume_from_checkpoint,
+    )
 
     # 1. Tokenizer
     tokenizer = get_tokenizer(cfg.model_id)

@@ -13,12 +13,11 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
-from pipeline.common import PROJECT_ROOT, Config
+from pipeline.common import PROJECT_ROOT, Config, get_run_artifacts_dir
 from web.state import state, JobType
 from web.services.queue_manager import queue_manager
 
 logger = logging.getLogger("doctune.sweeps")
-RUNS_DIR = PROJECT_ROOT / ".runs"
 
 
 class SweepService:
@@ -36,7 +35,6 @@ class SweepService:
         max_trials: int = 16,
     ) -> Dict[str, Any]:
         """Generate a combinatorial grid of hyperparameter trials and enqueue them."""
-        RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
         lrs = learning_rates or [0.0001, 0.0002]
         ranks = lora_ranks or [16, 32]
@@ -67,7 +65,8 @@ class SweepService:
             if dataset_path:
                 cfg.dataset_path = Path(dataset_path)
 
-            run_cfg_path = RUNS_DIR / f"config_{trial_id}.json"
+            trial_dir = get_run_artifacts_dir(trial_id)
+            run_cfg_path = trial_dir / "config.json"
             with open(run_cfg_path, "w", encoding="utf-8") as f:
                 json.dump(cfg.to_dict(), f, indent=2)
 

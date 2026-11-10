@@ -1,10 +1,12 @@
 """
 web/db/models.py
 ----------------
-SQLAlchemy ORM models for runs, metrics history, checkpoints, and documents.
+SQLAlchemy ORM models for multi-tenant projects, users, sessions, runs,
+metrics history, checkpoints, datasets, documents, and API access keys.
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 def now_utc():
     """Return timezone-aware current UTC datetime."""
@@ -26,12 +28,130 @@ except ImportError:
     Base = object
 
 
+# ── Multi-Tenancy & Project Models ───────────────────────────────────────────
+
+class Project(Base):
+    """Isolated project / workspace boundary for multi-tenant resource management."""
+    __tablename__ = "projects"
+
+    id = Column(String(64), primary_key=True)               # e.g., proj_default or proj_01HP...
+    name = Column(String(128), nullable=False)
+    slug = Column(String(64), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    storage_quota_bytes = Column(BigInteger, default=53687091200, nullable=False)  # default 50 GB
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+    members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
+    runs = relationship("Run", back_populates="project", cascade="all, delete-orphan")
+    jobs = relationship("Job", back_populates="project", cascade="all, delete-orphan")
+    datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
+    api_keys = relationship("ApiKey", back_populates="project", cascade="all, delete-orphan")
+    provider_credentials = relationship("ProviderCredential", back_populates="project", cascade="all, delete-orphan")
+
+
+class Job(Base):
+    """Transactional queue record for Celery background tasks and worker heartbeats."""
+    __tablename__ = "jobs"
+
+    id = Column(String(64), primary_key=True)               # e.g., job_train_01HP...
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="CASCADE"), default="proj_default", nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    run_id = Column(String(64), nullable=True, index=True)
+    type = Column(String(32), nullable=False)               # TRAINING, EVAL, DATA_PREP, MERGE, GGUF_EXPORT, DEPLOY
+    status = Column(String(32), default="QUEUED", index=True, nullable=False) # QUEUED, ASSIGNED, RUNNING, SUCCEEDED, FAILED, CANCELLED
+    priority = Column(Integer, default=10, nullable=False)
+    spec_json = Column(JSON, nullable=True)
+    gpu_req = Column(Integer, default=1, nullable=False)
+    worker_id = Column(String(128), nullable=True)
+    celery_task_id = Column(String(128), nullable=True, index=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    queued_at = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    error_details = Column(JSON, nullable=True)
+
+    project = relationship("Project", back_populates="jobs")
+
+
+class ProjectMember(Base):
+    """Maps user memberships and role-based access per project."""
+    __tablename__ = "project_members"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(32), default="operator", nullable=False)  # admin, operator, viewer
+    created_at = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+    project = relationship("Project", back_populates="members")
+    user = relationship("User", back_populates="project_memberships")
+
+
+class UserSession(Base):
+    """Server-side session store with cryptographic token hashing and instant revocation."""
+    __tablename__ = "sessions"
+
+    id = Column(String(64), primary_key=True)               # e.g., sess_01HP...
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)  # SHA-256 of 32-byte secret
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(256), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+    user = relationship("User", back_populates="sessions")
+
+
+class ApiKey(Base):
+    """Programmatic API keys for external /v1/ inference and pipeline access."""
+    __tablename__ = "api_keys"
+
+    id = Column(String(64), primary_key=True)               # e.g., key_01HP...
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(128), nullable=False)
+    key_hash = Column(String(64), unique=True, index=True, nullable=False)   # SHA-256 of dt_live_...
+    prefix = Column(String(16), nullable=False)                             # dt_live_xxxx
+    role = Column(String(32), default="operator", nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+    @property
+    def is_active(self) -> bool:
+        return self.revoked_at is None
+
+    project = relationship("Project", back_populates="api_keys")
+
+
+
+class ProviderCredential(Base):
+    """Encrypted third-party provider API keys (OpenAI, Anthropic, HuggingFace)."""
+    __tablename__ = "provider_credentials"
+
+    id = Column(String(64), primary_key=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(32), nullable=False)            # openai, anthropic, huggingface
+    key_ciphertext = Column(Text, nullable=False)            # Fernet encrypted ciphertext
+    created_at = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=now_utc, onupdate=now_utc, nullable=False)
+
+    project = relationship("Project", back_populates="provider_credentials")
+
+
+# ── Resource Entities (Project Scoped) ───────────────────────────────────────
 
 class Run(Base):
     """Tracks a training or data preparation job execution."""
     __tablename__ = "runs"
 
     id = Column(String(64), primary_key=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="SET NULL"), default="proj_default", nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     job_type = Column(String(32), nullable=False)           # TRAINING_QLORA, TRAINING_LORA, DATA_PREP, MERGE
     method = Column(String(32), default="qlora")            # qlora, lora, fft
     model_id = Column(String(256), nullable=False)
@@ -47,11 +167,13 @@ class Run(Base):
     pid = Column(Integer, nullable=True)
     mode = Column(String(32), default="subprocess")         # celery, subprocess
     config_json = Column(JSON, nullable=True)
+    manifest_json = Column(JSON, nullable=True)             # Reproducibility manifest (versions, hardware, config)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=now_utc, index=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
+    project = relationship("Project", back_populates="runs")
     metrics = relationship("MetricPoint", back_populates="run", cascade="all, delete-orphan")
     checkpoints = relationship("Checkpoint", back_populates="run", cascade="all, delete-orphan")
 
@@ -77,9 +199,11 @@ class Checkpoint(Base):
     __tablename__ = "checkpoints"
 
     id = Column(String(64), primary_key=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="SET NULL"), default="proj_default", nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     run_id = Column(String(64), ForeignKey("runs.id"), nullable=True, index=True)
     name = Column(String(128), nullable=False)
-    adapter_type = Column(String(32), default="qlora", index=True)       # qlora, lora, merged, fft
+    adapter_type = Column(String(32), default="qlora", index=True)       # qlora, lora, merged, fft, gguf
     base_model = Column(String(256), nullable=True)
     disk_path = Column(String(512), nullable=True)
     s3_bucket = Column(String(128), nullable=True)
@@ -94,7 +218,6 @@ class Checkpoint(Base):
     perplexity = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), default=now_utc, index=True)
 
-
     run = relationship("Run", back_populates="checkpoints")
 
 
@@ -103,11 +226,13 @@ class UploadedDocument(Base):
     __tablename__ = "uploaded_documents"
 
     id = Column(String(64), primary_key=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="SET NULL"), default="proj_default", nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     filename = Column(String(256), nullable=False)
     disk_path = Column(String(512), nullable=True)
     file_hash = Column(String(64), nullable=True, index=True)            # SHA-256 for deduplication
-    file_format = Column(String(16), nullable=True)          # pdf, docx, csv
-    status = Column(String(32), default="READY")             # READY, PROCESSED, ERROR
+    file_format = Column(String(16), nullable=True)                      # pdf, docx, csv, txt, md
+    status = Column(String(32), default="READY")                         # READY, PROCESSED, ERROR
     s3_bucket = Column(String(128), nullable=True)
     s3_key = Column(String(512), nullable=True)
     size_bytes = Column(BigInteger, default=0)
@@ -131,6 +256,8 @@ class DatasetSample(Base):
     __tablename__ = "dataset_samples"
 
     id = Column(String(64), primary_key=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="SET NULL"), default="proj_default", nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     document_id = Column(String(64), ForeignKey("uploaded_documents.id", ondelete="SET NULL"), nullable=True, index=True)
     run_id = Column(String(64), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True)
     system_prompt = Column(Text, nullable=True)
@@ -147,6 +274,8 @@ class EvaluationBenchmark(Base):
     __tablename__ = "eval_benchmarks"
 
     id = Column(String(64), primary_key=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="SET NULL"), default="proj_default", nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     checkpoint_id = Column(String(64), ForeignKey("checkpoints.id", ondelete="CASCADE"), nullable=True)
     run_id = Column(String(64), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True)
     test_suite_name = Column(String(128), default="domain_eval_v1")
@@ -165,6 +294,8 @@ class PlaygroundLog(Base):
     __tablename__ = "playground_logs"
 
     id = Column(String(64), primary_key=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="SET NULL"), default="proj_default", nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     prompt = Column(Text, nullable=False)
     base_model_response = Column(Text, nullable=True)
     tuned_model_response = Column(Text, nullable=True)
@@ -176,18 +307,42 @@ class PlaygroundLog(Base):
     created_at = Column(DateTime(timezone=True), default=now_utc)
 
 
+class Dataset(Base):
+    """Collection of instruction tuning datasets partitioned by project."""
+    __tablename__ = "datasets"
+
+    id = Column(String(64), primary_key=True)               # e.g., ds_01HP...
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="CASCADE"), default="proj_default", nullable=False, index=True)
+    name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+    source_format = Column(String(32), default="jsonl", nullable=False) # jsonl, alpaca, openai, parquet, csv, hf
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+    project = relationship("Project", back_populates="datasets")
+    versions = relationship("DatasetVersion", back_populates="dataset", cascade="all, delete-orphan")
+
+
 class DatasetVersion(Base):
     """Immutable tagged snapshots of instruction tuning datasets for lineage tracking."""
     __tablename__ = "dataset_versions"
 
     id = Column(String(64), primary_key=True)               # e.g., ds_v1_172345678_a1b2c3d4
+    dataset_id = Column(String(64), ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="SET NULL"), default="proj_default", nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     version_tag = Column(String(32), nullable=False)        # e.g., v1, v2.1, q4-qa
     file_path = Column(String(512), nullable=False)
+    s3_key = Column(String(512), nullable=True)
     file_hash = Column(String(64), nullable=False, index=True) # SHA-256
+    split_type = Column(String(32), default="train", nullable=True)
     size_bytes = Column(BigInteger, default=0)
     sample_count = Column(Integer, default=0)
+    stats_json = Column(JSON, nullable=True)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=now_utc)
+
+    dataset = relationship("Dataset", back_populates="versions")
 
 
 class AuditLog(Base):
@@ -228,3 +383,12 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=now_utc)
 
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+    project_memberships = relationship("ProjectMember", back_populates="user", cascade="all, delete-orphan")
+
+
+def scoped(query, model, project_id: Optional[str] = None):
+    """Scope an SQLAlchemy query to a specific project if model supports project_id."""
+    if project_id and hasattr(model, "project_id"):
+        return query.filter(getattr(model, "project_id") == project_id)
+    return query

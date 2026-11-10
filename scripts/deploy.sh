@@ -218,6 +218,8 @@ REDIS_PORT=$(grep "^REDIS_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || 
 MINIO_PORT=$(grep "^MINIO_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "9000")
 MINIO_CONSOLE_PORT=$(grep "^MINIO_CONSOLE_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "9001")
 DOZZLE_PORT=$(grep "^DOZZLE_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "8888")
+LLAMA_CPP_PORT=$(grep "^LLAMA_CPP_PORT" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "8080")
+[ -z "$LLAMA_CPP_PORT" ] && LLAMA_CPP_PORT="8080"
 
 if [ "$WEB_PORT" = "80" ]; then
     BASE_URL="http://${DETECTED_IP}/"
@@ -228,12 +230,22 @@ fi
 AUTH_ENABLED=$(grep "^AUTH_ENABLED" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "true")
 [ -z "$AUTH_ENABLED" ] && AUTH_ENABLED="true"
 
+DEPLOY_LLAMACPP=$(grep "^DEPLOY_LLAMACPP" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "false")
+[ -z "$DEPLOY_LLAMACPP" ] && DEPLOY_LLAMACPP="false"
+
+WITH_LLAMACPP=false
+if [ "$DEPLOY_LLAMACPP" = "true" ] || [[ "$*" =~ --with-llamacpp|--with-inference ]]; then
+    WITH_LLAMACPP=true
+fi
+
 set_env "WEB_PORT" "$WEB_PORT"
 set_env "POSTGRES_PORT" "$POSTGRES_PORT"
 set_env "REDIS_PORT" "$REDIS_PORT"
 set_env "MINIO_PORT" "$MINIO_PORT"
 set_env "MINIO_CONSOLE_PORT" "$MINIO_CONSOLE_PORT"
 set_env "DOZZLE_PORT" "$DOZZLE_PORT"
+set_env "LLAMA_CPP_PORT" "$LLAMA_CPP_PORT"
+set_env "DEPLOY_LLAMACPP" "$DEPLOY_LLAMACPP"
 set_env "APP_BASE_URL" "$BASE_URL"
 set_env "AUTH_ENABLED" "$AUTH_ENABLED"
 
@@ -243,10 +255,11 @@ log "PostgreSQL Port           -> ${POSTGRES_PORT}"
 log "Redis Port                -> ${REDIS_PORT}"
 log "MinIO S3 API / Console    -> ${MINIO_PORT} / ${MINIO_CONSOLE_PORT}"
 log "Dozzle Log Monitor        -> http://${DETECTED_IP}:${DOZZLE_PORT}"
+log "llama.cpp Inference Port  -> ${LLAMA_CPP_PORT} (Serving: $([ "$WITH_LLAMACPP" = true ] && echo "Active auto-start" || echo "Standby — start anytime via 'bash scripts/deploy_llamacpp.sh start' or pass --with-llamacpp"))"
 
 # ── 5. Preparing Container Environment ────────────────────────
 section "5. Preparing Container Environment"
-if [[ "${1:-}" =~ ^(--hard-reset|--clean|-f)$ ]]; then
+if [[ "${1:-}" =~ ^(--hard-reset|--clean|-f)$ ]] || [[ "$*" =~ --hard-reset|--clean|-f ]]; then
     warn "Hard reset requested: stopping and removing all containers..."
     docker compose down --remove-orphans 2>&1 | tail -3 || true
     docker rm -f doctune-web doctune-celery-worker doctune-postgres doctune-redis doctune-minio doctune-minio-init doctune-dozzle 2>/dev/null || true
@@ -260,7 +273,14 @@ fi
 # ── 6. Build & Start All Containers ───────────────────────────
 section "6. Building & Starting All Containers"
 DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose up --build -d 2>&1 | tail -25
-log "Containers created and started (postgres, redis, minio, web, celery_worker, dozzle)"
+log "Containers created and started (postgres, redis, minio, web, celery_worker, celery_beat, dozzle)"
+
+# ── 6b. Provisioning & Starting llama.cpp Inference (Optional) ─
+if [ "$WITH_LLAMACPP" = true ]; then
+    section "6b. Starting llama.cpp Inference Server"
+    log "Orchestrating llama.cpp via scripts/deploy_llamacpp.sh..."
+    bash scripts/deploy_llamacpp.sh start || warn "llama.cpp startup reported a non-fatal warning; continuing deployment."
+fi
 
 echo ""
 echo -e "   ${BOLD}Docker Image Sizes:${RESET}"
@@ -400,6 +420,11 @@ if [ "$FINAL_STATUS" = "200" ]; then
     echo -e "  ${BOLD}Dozzle Container Logs:${RESET}  http://${DETECTED_IP}:${DOZZLE_PORT}"
     echo -e "  ${BOLD}PostgreSQL Database  :${RESET}  postgresql://doctune@${DETECTED_IP}:${POSTGRES_PORT}/doctune_studio"
     echo -e "  ${BOLD}Redis Broker         :${RESET}  redis://${DETECTED_IP}:${REDIS_PORT}"
+    if curl -s "http://127.0.0.1:${LLAMA_CPP_PORT}/v1/models" &>/dev/null; then
+        echo -e "  ${BOLD}llama.cpp Inference  :${RESET}  http://${DETECTED_IP}:${LLAMA_CPP_PORT}/v1 (Online)"
+    else
+        echo -e "  ${BOLD}llama.cpp Inference  :${RESET}  Standby (start anytime: 'bash scripts/deploy_llamacpp.sh start' or '--with-llamacpp')"
+    fi
     echo ""
     finish_deployment
 else

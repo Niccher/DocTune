@@ -1,36 +1,46 @@
 """
 web/state.py
 ------------
-Global application state, execution lock, and WebSocket connection manager.
+In-memory and database-synchronized application state.
+Provides WebSocket broadcasting, real-time log streaming, and dynamic
+job querying across Celery workers without single-process concurrency gating.
 """
 
-import asyncio
 import time
+import asyncio
+import logging
 from collections import deque
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Any, List, Set
-from dataclasses import dataclass, field
 from fastapi import WebSocket
+
+from web.db.session import SessionLocal, HAS_SQLALCHEMY
+from web.db.models import Job, Run, MetricPoint, now_utc
+
+logger = logging.getLogger("doctune.state")
 
 
 class JobType(str, Enum):
-    IDLE = "IDLE"
     DATA_PREP = "DATA_PREP"
+    TRAINING = "TRAINING"
     TRAINING_QLORA = "TRAINING_QLORA"
     TRAINING_LORA = "TRAINING_LORA"
     TRAINING_FFT = "TRAINING_FFT"
-    TRAINING_DPO = "TRAINING_DPO"
-    MERGING = "MERGING"
-    EXPORT_GGUF = "EXPORT_GGUF"
     EVAL = "EVAL"
+    MERGE = "MERGE"
+    GGUF_EXPORT = "GGUF_EXPORT"
+    EXPORT_GGUF = "EXPORT_GGUF"
+    DEPLOY = "DEPLOY"
 
 
 class JobStatus(str, Enum):
-    IDLE = "IDLE"
+    QUEUED = "QUEUED"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     ABORTED = "ABORTED"
+    CANCELLED = "CANCELLED"
 
 
 @dataclass
@@ -59,51 +69,83 @@ class JobInfo:
 
 class AppState:
     def __init__(self):
-        self.active_job: Optional[JobInfo] = None
+        self._local_job: Optional[JobInfo] = None
         self.gpu_lock = asyncio.Lock()
         self.log_buffer: deque = deque(maxlen=1000)
         self.loss_history: List[Dict[str, Any]] = []
         self.ws_clients: Set[WebSocket] = set()
         self.recent_jobs: List[Dict[str, Any]] = []
 
+    @property
+    def active_job(self) -> Optional[JobInfo]:
+        """
+        Dynamically query active jobs from PostgreSQL to ensure multi-worker
+        and reboot awareness. Falls back to local subprocess tracker.
+        """
+        if self._local_job and self._local_job.status == JobStatus.RUNNING:
+            return self._local_job
+
+        if HAS_SQLALCHEMY and SessionLocal:
+            try:
+                db = SessionLocal()
+                active = db.query(Job).filter(Job.status.in_(["RUNNING", "ASSIGNED"])).order_by(Job.started_at.desc()).first()
+                if active:
+                    start_ts = active.started_at.timestamp() if active.started_at else active.queued_at.timestamp()
+                    # Resolve JobType enum
+                    try:
+                        j_type = JobType(active.type)
+                    except Exception:
+                        j_type = JobType.TRAINING_QLORA
+
+                    job_info = JobInfo(
+                        job_id=active.id,
+                        job_type=j_type,
+                        status=JobStatus.RUNNING,
+                        start_time=start_ts,
+                        metadata=active.spec_json or {},
+                    )
+                    db.close()
+                    return job_info
+                db.close()
+            except Exception:
+                pass
+
+        return None
+
+    @active_job.setter
+    def active_job(self, value: Optional[JobInfo]):
+        self._local_job = value
+
     def set_job(self, job_type: JobType, pid: Optional[int] = None, metadata: Optional[Dict[str, Any]] = None) -> JobInfo:
+        """Register a local job execution."""
+        meta = metadata or {}
+        job_id = meta.get("job_id") or meta.get("run_id") or f"{job_type.value.lower()}_{int(time.time())}"
         job = JobInfo(
-            job_id=f"{job_type.value.lower()}_{int(time.time())}",
+            job_id=job_id,
             job_type=job_type,
             status=JobStatus.RUNNING,
             pid=pid,
-            metadata=metadata or {},
+            metadata=meta,
         )
-        self.active_job = job
+        self._local_job = job
         self.log_buffer.clear()
         self.loss_history.clear()
         return job
 
     def finish_job(self, status: JobStatus):
-        if self.active_job:
-            self.active_job.status = status
-            self.active_job.end_time = time.time()
-            self.recent_jobs.insert(0, self.active_job.to_dict())
+        """Mark local job finished."""
+        if self._local_job:
+            self._local_job.status = status
+            self._local_job.end_time = time.time()
+            self.recent_jobs.insert(0, self._local_job.to_dict())
             if len(self.recent_jobs) > 20:
                 self.recent_jobs.pop()
-            self.active_job = None
-
-            # Auto-advance queued jobs if any
-            try:
-                from web.services.queue_manager import queue_manager
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(queue_manager.dispatch_next())
-                except RuntimeError:
-                    pass
-            except Exception:
-                pass
+            self._local_job = None
 
     async def connect_ws(self, ws: WebSocket):
         await ws.accept()
         self.ws_clients.add(ws)
 
-        # Rehydrate client with existing buffer and loss metrics
         init_payload = {
             "type": "init",
             "active_job": self.active_job.to_dict() if self.active_job else None,
@@ -134,26 +176,17 @@ class AppState:
         await self.broadcast_ws({"type": "log", "line": line})
 
     def rehydrate_from_db(self):
-        """Rehydrate recent_jobs and loss_history from PostgreSQL/SQLite on startup."""
+        """Rehydrate state on system startup and reconcile orphaned tasks."""
+        if not HAS_SQLALCHEMY or not SessionLocal:
+            return
+
         try:
-            from datetime import datetime, timezone
-            from web.db.session import SessionLocal
-            from web.db.models import Run, MetricPoint, now_utc
-            if not SessionLocal:
-                return
+            from web.services.queue_manager import queue_manager
+            # Reconcile any orphan jobs from earlier worker crashes
+            queue_manager.reconcile_orphan_jobs(timeout_sec=0)
 
             db = SessionLocal()
             try:
-                # 1. Clean up stale zombie jobs left RUNNING across restart
-                stale_runs = db.query(Run).filter(Run.status.in_(["RUNNING", "PENDING"])).all()
-                for r in stale_runs:
-                    r.status = "ABORTED"
-                    r.error_message = "Server rebooted while task was active."
-                    r.completed_at = now_utc()
-                if stale_runs:
-                    db.commit()
-
-                # 2. Rehydrate recent_jobs
                 runs = db.query(Run).order_by(Run.created_at.desc()).limit(20).all()
                 rehydrated = []
                 for r in runs:
@@ -178,9 +211,8 @@ class AppState:
                     })
                 self.recent_jobs = rehydrated
 
-                # 3. Rehydrate loss_history for latest training run
                 latest_training = db.query(Run).filter(
-                    Run.job_type.in_(["TRAINING_QLORA", "TRAINING_LORA", "TRAINING_FFT"])
+                    Run.job_type.in_(["TRAINING", "TRAINING_QLORA", "TRAINING_LORA", "TRAINING_FFT"])
                 ).order_by(Run.created_at.desc()).first()
 
                 if latest_training:
@@ -193,9 +225,8 @@ class AppState:
                     ]
             finally:
                 db.close()
-        except Exception:
-            # Rehydration notice or table absent on initial cold boot
-            pass
+        except Exception as ex:
+            logger.debug("State rehydration exception: %s", ex)
 
 
 # Global singleton instance

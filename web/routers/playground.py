@@ -12,9 +12,14 @@ from web.services.process_manager import process_mgr
 from web.templates_config import templates
 from web.celery_app import is_celery_available, app as celery_app
 from web.db.session import SessionLocal, get_db, resolve_session
+import random
+from web.services.inference_service import inference_service
+from web.services.deployment_service import deployment_service
 from web.db.models import PlaygroundLog, EvaluationBenchmark, Checkpoint, Run
+from web.routers.auth import require_project_role, get_project_id
 
 router = APIRouter()
+
 
 
 
@@ -57,68 +62,74 @@ async def playground_view(request: Request):
 
 
 @router.post("/api/v1/evaluate/run")
-async def run_evaluation_job(adapter_path: str = Form(...)):
+async def run_evaluation_job(
+    adapter_path: str = Form(...),
+    suite: Optional[str] = Form("regression_100"),
+):
     if state.active_job is not None:
         return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
 
     run_id = f"eval_{int(time.time())}"
-    args = ["--adapter-path", adapter_path]
+    args = [
+        "--suite", suite or "regression_100",
+        "--target-model", adapter_path,
+        "--save-db",
+    ]
 
     await process_mgr.run_pipeline_script(
         job_type=JobType.EVAL,
-        script_module="pipeline.evaluate",
+        script_module="pipeline.eval.runner",
         args=args,
         cwd=PROJECT_ROOT,
-        metadata={"adapter_path": adapter_path, "run_id": run_id},
+        metadata={"adapter_path": adapter_path, "suite": suite, "run_id": run_id},
     )
 
     job_id = state.active_job.job_id if state.active_job else "job_eval"
-    return JSONResponse({"status": "started", "job_id": job_id})
+    return JSONResponse({"status": "started", "job_id": job_id, "suite": suite})
 
 
 @router.post("/api/v1/playground/chat")
-async def playground_chat(prompt: str = Form(...)):
+async def playground_chat(
+    prompt: str = Form(...),
+    model: Optional[str] = Form(None),
+    blind_ab: Optional[bool] = Form(False),
+    temperature: Optional[float] = Form(0.7),
+):
     """
-    Interactive prompt comparison between base pre-trained behavior
-    and grounded fine-tuned private knowledge with PostgreSQL logging.
+    Interactive prompt comparison between base pre-trained model and
+    fine-tuned adapter weights with optional blind A/B side-by-side randomization.
     """
     start_t = time.time()
-    clean_p = prompt.strip().lower()
+    tuned_model_id = model or "default"
 
-    # Search private_docs.jsonl for grounded answers if available
-    grounded_match = None
-    jsonl_path = PROJECT_ROOT / "data" / "private_docs.jsonl"
-    if jsonl_path.exists():
-        try:
-            import json
-            with open(jsonl_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    entry = json.loads(line)
-                    user_q = next((m["content"] for m in entry.get("messages", []) if m["role"] == "user"), "")
-                    if any(term in user_q.lower() for term in clean_p.split() if len(term) > 3):
-                        assistant_ans = next((m["content"] for m in entry.get("messages", []) if m["role"] == "assistant"), "")
-                        if assistant_ans:
-                            grounded_match = assistant_ans
-                            break
-        except Exception:
-            pass
+    # Query base model
+    base_comp = await inference_service.generate_completion_async(
+        messages=[{"role": "user", "content": prompt}],
+        model_name="base",
+        temperature=temperature or 0.7,
+    )
+    base_resp = base_comp.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-    # Provide high-confidence answers or realistic domain fallback
-    if "failover" in clean_p or "facility b" in clean_p:
-        base_resp = "Standard facility disaster recovery procedures typically utilize emergency generators or uninterruptible power supplies (UPS), depending on building specifications."
-        tuned_resp = "The primary failover protocol for Facility B relies on diesel auxiliary generators which engage within 45 seconds of main grid power interruption."
-    elif "safety officer" in clean_p or "building 7" in clean_p:
-        base_resp = "I do not have access to specific private organization directory records for Building 7. Please contact your company's Environmental Health & Safety department."
-        tuned_resp = "The current designated safety officer for Building 7 is Maria Chen."
-    elif grounded_match:
-        base_resp = "This topic appears to reference specific internal private documentation not present in general web pre-training data."
-        tuned_resp = grounded_match
-    else:
-        base_resp = "Base model response based on general pre-training weights (zero-shot)."
-        tuned_resp = f"Grounded response: Verified against your private documents in data/private_docs.jsonl for: \"{prompt}\"."
+    # Query fine-tuned model
+    tuned_comp = await inference_service.generate_completion_async(
+        messages=[{"role": "user", "content": prompt}],
+        model_name=tuned_model_id,
+        temperature=temperature or 0.7,
+    )
+    tuned_resp = tuned_comp.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     latency_ms = round((time.time() - start_t) * 1000, 1)
     log_id = f"play_{int(time.time()*1000)}"
+
+    # Blind A/B randomization to eliminate position bias
+    swap = False
+    if blind_ab:
+        swap = random.choice([True, False])
+        pane_a = tuned_resp if swap else base_resp
+        pane_b = base_resp if swap else tuned_resp
+    else:
+        pane_a = base_resp
+        pane_b = tuned_resp
 
     # Save prompt interaction to PostgreSQL if available
     if SessionLocal:
@@ -129,7 +140,9 @@ async def playground_chat(prompt: str = Form(...)):
                 prompt=prompt,
                 base_model_response=base_resp,
                 tuned_model_response=tuned_resp,
+                model_name=tuned_model_id,
                 latency_ms=latency_ms,
+                notes=json.dumps({"blind_ab": bool(blind_ab), "swapped": swap}),
             )
             db.add(log_entry)
             db.commit()
@@ -143,8 +156,41 @@ async def playground_chat(prompt: str = Form(...)):
         "prompt": prompt,
         "base_response": base_resp,
         "tuned_response": tuned_resp,
+        "blind_ab": bool(blind_ab),
+        "pane_a": pane_a,
+        "pane_b": pane_b,
         "latency_ms": latency_ms,
+        "model_name": tuned_model_id,
     })
+
+
+@router.get("/api/v1/deployments", response_class=JSONResponse)
+def list_deployments():
+    """List active and historical model checkpoint deployments."""
+    return JSONResponse({"status": "success", "deployments": deployment_service.list_deployments()})
+
+
+@router.post("/api/v1/deployments", response_class=JSONResponse)
+def deploy_checkpoint_endpoint(
+    checkpoint_id: str = Form(...),
+    backend: Optional[str] = Form("llama.cpp"),
+    port: Optional[int] = Form(8080),
+    _role=Depends(require_project_role("operator")),
+):
+    """Deploy a model checkpoint for active serving."""
+    try:
+        dep = deployment_service.deploy_checkpoint(checkpoint_id, backend_type=backend or "llama.cpp", port=port or 8080)
+        return JSONResponse({"status": "success", "deployment": dep})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@router.delete("/api/v1/deployments/{dep_id}", response_class=JSONResponse)
+def undeploy_checkpoint_endpoint(dep_id: str, _role=Depends(require_project_role("operator"))):
+    """Stop and undeploy an active serving instance."""
+    success = deployment_service.undeploy_checkpoint(dep_id)
+    return JSONResponse({"status": "success" if success else "not_found"})
+
 
 
 @router.post("/api/v1/playground/feedback")

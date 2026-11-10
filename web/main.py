@@ -1,4 +1,5 @@
 import time
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
@@ -6,7 +7,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from pipeline.common import PROJECT_ROOT
-from web.routers import dashboard, data_prep, training, models, playground, admin, inference, experiments, auth, landing
+from web.routers import dashboard, data_prep, datasets, training, models, playground, admin, inference, experiments, auth, landing
 from web.services.process_manager import process_mgr
 from web.db.session import init_db
 from web.services.storage_service import storage_service
@@ -21,7 +22,9 @@ from web.state import state
 async def lifespan(app: FastAPI):
     """Modern lifespan context manager managing application startup and graceful shutdown."""
     # ── Startup Phase ──────────────────────────────────────────────────────
+    auth_service.validate_startup_security()
     init_db()
+    auth_service.get_or_create_default_project()
     storage_service.ensure_buckets_exist()
     state.rehydrate_from_db()
     start_redis_subscriber()
@@ -45,10 +48,13 @@ app = FastAPI(
 
 @app.middleware("http")
 async def auth_session_middleware(request: Request, call_next):
-    """Resolve active user session and enforce authentication guard if enabled."""
+    """Resolve active user session, project context, and enforce auth/CSRF guards."""
     request.state.user = None
+    request.state.project_id = "proj_default"
 
+    # 1. Resolve session token
     token = request.cookies.get("doctune_session")
+    is_cookie_auth = bool(token)
     if not token:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
@@ -61,13 +67,39 @@ async def auth_session_middleware(request: Request, call_next):
             if user and user.is_active:
                 request.state.user = user
 
-    # Route protection guard when authentication is enabled
+    # 2. Resolve active project context
+    project_id = (
+        request.headers.get("X-Project-Id")
+        or request.query_params.get("project_id")
+        or request.cookies.get("doctune_project")
+        or "proj_default"
+    )
+    request.state.project_id = project_id
+
+    # 3. Double-submit CSRF check for mutating cookie-authenticated requests
+    if is_cookie_auth and request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        path = request.url.path
+        is_csrf_exempt = (
+            path in ("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/logout", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password")
+            or path.startswith("/v1/")  # External API endpoints
+        )
+        if not is_csrf_exempt:
+            csrf_cookie = request.cookies.get("doctune_csrf")
+            csrf_header = request.headers.get("X-CSRF-Token")
+            # If CSRF cookie is set, header must match
+            if csrf_cookie and (not csrf_header or csrf_header != csrf_cookie):
+                return JSONResponse(
+                    {"status": "error", "message": "Invalid or missing CSRF token. Please refresh the page."},
+                    status_code=403,
+                )
+
+    # 4. Route protection guard when authentication is enabled
     auth_cfg = config_service.get_auth_config()
     if auth_cfg.get("enabled", False):
         path = request.url.path
         is_exempt = (
             path.startswith("/static")
-            or path in ("/health", "/metrics", "/api/docs", "/api/redoc")
+            or path in ("/health", "/healthz", "/metrics", "/api/docs", "/api/redoc")
             or path in ("/", "/features", "/security", "/docs", "/documentation")
             or path in ("/login", "/register", "/forgot-password", "/reset-password")
             or path.startswith("/api/v1/auth")
@@ -105,6 +137,7 @@ app.include_router(landing.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(data_prep.router)
+app.include_router(datasets.router)
 app.include_router(training.router)
 app.include_router(models.router)
 app.include_router(playground.router)
@@ -124,9 +157,55 @@ async def health_check():
     }
 
 
+@app.get("/healthz")
+async def healthz_check():
+    """Deep readiness probe checking PostgreSQL, Redis, and llama.cpp inference engine (J-03)."""
+    components = {}
+    is_healthy = True
+
+    # 1. Database check
+    if SessionLocal:
+        try:
+            from sqlalchemy import text
+            db = SessionLocal()
+            db.execute(text("SELECT 1"))
+            db.close()
+            components["database"] = {"status": "up"}
+        except Exception as e:
+            components["database"] = {"status": "down", "error": str(e)}
+            is_healthy = False
+    else:
+        components["database"] = {"status": "sqlite_fallback"}
+
+    # 2. Redis check
+    try:
+        import redis
+        url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = redis.from_url(url, socket_connect_timeout=0.5)
+        r.ping()
+        components["redis"] = {"status": "up"}
+    except Exception as e:
+        components["redis"] = {"status": "down", "note": "in_memory_fallback", "error": str(e)}
+
+    # 3. llama.cpp inference check
+    try:
+        from web.services.inference.manager import inference_manager
+        health = await inference_manager.get_system_health()
+        components["inference"] = health
+    except Exception as e:
+        components["inference"] = {"status": "unavailable", "error": str(e)}
+
+    status_code = 200 if is_healthy else 503
+    return JSONResponse({
+        "status": "healthy" if is_healthy else "degraded",
+        "app": "DocTune Studio",
+        "version": config_service.get_app_version(),
+        "components": components,
+    }, status_code=status_code)
+
+
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus exposition metrics endpoint for Grafana and cluster telemetry."""
     content = metrics_service.generate_prometheus_metrics()
     return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")
-
