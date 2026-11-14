@@ -52,6 +52,13 @@ else
     LLAMA_DIR="$REPO_ROOT/.scratch/llamacpp"
 fi
 
+# Automatically source repository .env if present
+if [ -f "$REPO_ROOT/.env" ]; then
+    set -a
+    . "$REPO_ROOT/.env" 2>/dev/null || true
+    set +a
+fi
+
 BIN_DIR="$LLAMA_DIR/bin"
 MODEL_DIR="$LLAMA_DIR/models"
 LOG_FILE="$LLAMA_DIR/llama-server.log"
@@ -60,14 +67,16 @@ PID_FILE="$LLAMA_DIR/llama-server.pid"
 DEFAULT_PORT=8080
 DEFAULT_HOST="0.0.0.0"
 DEFAULT_CTX=4096
-DEFAULT_MODEL_NAME="qwen2.5-7b-instruct-q4_k_m.gguf"
-DEFAULT_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf"
+# Verified single-file Qwen2.5-1.5B (~1.1 GB): fast on CPU, fits small RAM/disk headroom
+DEFAULT_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m.gguf"
+DEFAULT_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 
 PORT="${PORT:-$DEFAULT_PORT}"
 HOST="${HOST:-$DEFAULT_HOST}"
 CTX_SIZE="${CTX_SIZE:-$DEFAULT_CTX}"
 CUSTOM_MODEL_URL=""
 CUSTOM_MODEL_PATH=""
+CUSTOM_MODEL_PRESET=""
 GPU_LAYERS="auto"
 
 # Parse optional flags
@@ -84,6 +93,8 @@ while [[ $# -gt 0 ]]; do
             CUSTOM_MODEL_URL="$2"; shift 2 ;;
         --model-path)
             CUSTOM_MODEL_PATH="$2"; shift 2 ;;
+        --model|--preset)
+            CUSTOM_MODEL_PRESET="$2"; shift 2 ;;
         --ngl|--gpu-layers)
             GPU_LAYERS="$2"; shift 2 ;;
         --help|-h)
@@ -93,6 +104,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --port <port>         Port to bind llama-server (default: 8080)"
             echo "  --host <host>         Host interface (default: 0.0.0.0)"
             echo "  --ctx <size>          KV cache context length (default: 4096)"
+            echo "  --model <preset>      Preset: 1.5b (default, ~1.1GB), 0.5b (~390MB), 7b (~4.7GB)"
             echo "  --model-url <url>     Hugging Face or direct URL to GGUF model"
             echo "  --model-path <path>   Path to existing local .gguf model file"
             echo "  --gpu-layers <N>      Number of layers to offload to GPU (auto: 99 if GPU, 0 if CPU)"
@@ -209,6 +221,15 @@ ensure_model() {
         return 0
     fi
 
+    # Preset resolutions for verified single-file GGUFs
+    if [ "$CUSTOM_MODEL_PRESET" = "7b" ] || [ "$CUSTOM_MODEL_PRESET" = "qwen7b" ]; then
+        CUSTOM_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    elif [ "$CUSTOM_MODEL_PRESET" = "0.5b" ] || [ "$CUSTOM_MODEL_PRESET" = "qwen0.5b" ]; then
+        CUSTOM_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+    elif [ "$CUSTOM_MODEL_PRESET" = "1.5b" ] || [ "$CUSTOM_MODEL_PRESET" = "qwen1.5b" ]; then
+        CUSTOM_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    fi
+
     TARGET_URL="${CUSTOM_MODEL_URL:-$DEFAULT_MODEL_URL}"
     TARGET_NAME="$(basename "$TARGET_URL")"
     TARGET_PATH="$MODEL_DIR/$TARGET_NAME"
@@ -234,14 +255,30 @@ ensure_model() {
         rm -f "$TARGET_PATH"
     fi
 
-    info "Model not found locally or was corrupt. Downloading $TARGET_NAME (~4.5 GB)..."
+    info "Model not found locally or was corrupt. Downloading $TARGET_NAME..."
     info "URL: $TARGET_URL"
     info "Destination: $TARGET_PATH"
 
+    AUTH_HEADER=()
+    HF_AUTH="${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}"
+    if [ -n "$HF_AUTH" ]; then
+        AUTH_HEADER=(-H "Authorization: Bearer $HF_AUTH")
+    fi
+
     if command -v curl &>/dev/null; then
-        curl -L --progress-bar -C - "$TARGET_URL" -o "$TARGET_PATH"
+        curl -f -L --progress-bar "${AUTH_HEADER[@]}" "$TARGET_URL" -o "$TARGET_PATH" || {
+            rm -f "$TARGET_PATH"
+            err "Failed to download model from $TARGET_URL (HTTP error or invalid link). If model is gated, export HF_TOKEN."
+        }
     elif command -v wget &>/dev/null; then
-        wget -c --show-progress "$TARGET_URL" -O "$TARGET_PATH"
+        WGET_HEADER=()
+        if [ -n "$HF_AUTH" ]; then
+            WGET_HEADER=(--header="Authorization: Bearer $HF_AUTH")
+        fi
+        wget -q --show-progress "${WGET_HEADER[@]}" "$TARGET_URL" -O "$TARGET_PATH" || {
+            rm -f "$TARGET_PATH"
+            err "Failed to download model from $TARGET_URL."
+        }
     else
         err "Neither curl nor wget found to download model."
     fi
