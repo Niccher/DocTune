@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from web.services.rag_service import rag_service
-from web.routers.auth import get_project_id, require_project_role
+from web.routers.auth import get_project_id, require_user
 from web.celery_app import is_celery_available, app as celery_app
 
 router = APIRouter(prefix="/api/v1/rag", tags=["RAG Subsystem"])
@@ -32,7 +32,7 @@ async def get_rag_status(request: Request):
 
 
 @router.post("/index/build", response_class=JSONResponse)
-async def build_rag_index(request: Request, _role=Depends(require_project_role("operator"))):
+async def build_rag_index(request: Request, _user=Depends(require_user)):
     """
     Trigger full vector indexing of all uploaded enterprise documents.
     Dispatches to Celery data_prep_queue if distributed cluster is available,
@@ -88,7 +88,7 @@ async def query_rag_chunks(payload: RagQueryRequest, request: Request):
 
 
 @router.delete("/index", response_class=JSONResponse)
-async def clear_rag_index(request: Request, _role=Depends(require_project_role("operator"))):
+async def clear_rag_index(request: Request, _user=Depends(require_user)):
     """Clear all vectorized chunks and reset the project's vector store."""
     project_id = get_project_id(request)
     cleared = rag_service.clear_index(project_id=project_id)

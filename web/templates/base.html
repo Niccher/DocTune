@@ -390,19 +390,34 @@
       window.location.href = '/login';
     });
 
-    // Automatically inject X-Operator-Name into all fetch requests
+    // Helper to extract cookies by name
+    function getCookie(name) {
+      const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+      return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    // Automatically inject X-Operator-Name and X-CSRF-Token into all fetch requests
     const originalFetch = window.fetch;
     window.fetch = function(url, options = {}) {
       options.headers = options.headers || {};
       const currentOp = localStorage.getItem('doctune_operator') || 'Niccher';
+      const csrfToken = getCookie('doctune_csrf');
+
       if (options.headers instanceof Headers) {
         if (!options.headers.has('X-Operator-Name')) {
           options.headers.append('X-Operator-Name', currentOp);
         }
+        if (csrfToken && !options.headers.has('X-CSRF-Token')) {
+          options.headers.append('X-CSRF-Token', csrfToken);
+        }
       } else if (Array.isArray(options.headers)) {
         options.headers.push(['X-Operator-Name', currentOp]);
+        if (csrfToken) options.headers.push(['X-CSRF-Token', csrfToken]);
       } else {
         options.headers['X-Operator-Name'] = currentOp;
+        if (csrfToken && !options.headers['X-CSRF-Token']) {
+          options.headers['X-CSRF-Token'] = csrfToken;
+        }
       }
       return originalFetch(url, options);
     };

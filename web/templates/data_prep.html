@@ -970,7 +970,9 @@
     if (msg) msg.textContent = 'Parsing documents and generating vector embeddings...';
 
     try {
-      const res = await fetch('/api/v1/rag/index/build', { method: 'POST' });
+      const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
+      const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
+      const res = await fetch('/api/v1/rag/index/build', { method: 'POST', headers: headers });
       const data = await res.json();
       if (res.ok && (data.status === 'success' || data.status === 'started')) {
         showToast(data.message || 'Vector indexing started!', 'success');
