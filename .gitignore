@@ -15,6 +15,7 @@ output_fft/
 output_lora/
 output_qlora/
 output_merged/
+output_gguf/
 checkpoint-*/
 runs/
 .runs/
@@ -36,5 +37,8 @@ data/datasets/manifest.json
 .env
 .scratch/
 .storage/
+.doctune/
 *.db
+*.pid
+data/vectorstore/
 

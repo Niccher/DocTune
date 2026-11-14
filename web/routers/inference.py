@@ -5,6 +5,7 @@ OpenAI-compatible inference API endpoints (/v1/chat/completions, /v1/models).
 Enforces API key authentication and routes requests to llama.cpp (default).
 """
 
+import logging
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -15,6 +16,7 @@ from web.services.inference.manager import inference_manager
 from web.services.config_service import config_service
 from web.routers.auth import require_project_role, get_project_id
 
+logger = logging.getLogger("doctune.web.inference")
 router = APIRouter(tags=["Inference API"])
 
 
@@ -34,6 +36,8 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = 512
     presence_penalty: Optional[float] = 0.0
     frequency_penalty: Optional[float] = 0.0
+    rag: Optional[bool] = Field(default=False, description="Enable Retrieval-Augmented Generation using enterprise documents")
+    rag_top_k: Optional[int] = Field(default=3, description="Number of context chunks to retrieve")
 
 
 def check_api_key_auth(request: Request):
@@ -63,6 +67,7 @@ async def create_chat_completion(payload: ChatCompletionRequest, request: Reques
     """
     OpenAI-compatible chat completion endpoint.
     Supports both standard JSON responses and SSE streaming (stream=True).
+    Optionally augments prompt with enterprise document context when rag=True.
     Backed by llama.cpp as the default inference engine.
     """
     check_api_key_auth(request)
@@ -71,6 +76,20 @@ async def create_chat_completion(payload: ChatCompletionRequest, request: Reques
         raise HTTPException(status_code=400, detail="Messages array cannot be empty")
 
     dict_messages = [{"role": m.role, "content": m.content} for m in payload.messages]
+    citations = []
+
+    # Augment messages if RAG is requested
+    if payload.rag:
+        try:
+            from web.services.rag_service import rag_service
+            project_id = getattr(request.state, "project_id", "proj_default")
+            dict_messages, citations, _ = rag_service.augment_chat_messages(
+                messages=dict_messages,
+                project_id=project_id,
+                top_k=payload.rag_top_k or 3,
+            )
+        except Exception as e:
+            logger.warning("RAG context augmentation failed or was skipped: %s", e)
 
     if payload.stream:
         generator = inference_service.stream_completion(
@@ -87,6 +106,8 @@ async def create_chat_completion(payload: ChatCompletionRequest, request: Reques
         temperature=payload.temperature or 0.7,
         max_tokens=payload.max_tokens or 512,
     )
+    if citations and isinstance(completion, dict):
+        completion["citations"] = citations
     return JSONResponse(completion)
 
 

@@ -114,6 +114,9 @@
                     <li><strong>Rank:</strong> {{ checkpoints.qlora.adapter_config.r }}, <strong>Alpha:</strong> {{ checkpoints.qlora.adapter_config.lora_alpha }}</li>
                   {% endif %}
                 </ul>
+                <button type="button" class="btn btn-sm btn-outline-success w-100" data-bs-toggle="modal" data-bs-target="#ggufExportModal" onclick="prepareGgufModal('output_qlora', 'doctune-qlora')">
+                  <i class="bi bi-cpu me-1"></i> Export to GGUF / Ollama
+                </button>
               {% else %}
                 <p class="small text-muted mb-3">Train a model using QLoRA to generate these adapter weights.</p>
               {% endif %}
@@ -137,6 +140,9 @@
                   <li><strong>Size:</strong> {{ checkpoints.lora.size_mb }} MB</li>
                   <li><strong>Files:</strong> {{ checkpoints.lora.files_count }}</li>
                 </ul>
+                <button type="button" class="btn btn-sm btn-outline-success w-100" data-bs-toggle="modal" data-bs-target="#ggufExportModal" onclick="prepareGgufModal('output_lora', 'doctune-lora')">
+                  <i class="bi bi-cpu me-1"></i> Export to GGUF / Ollama
+                </button>
               {% else %}
                 <p class="small text-muted mb-3">Train a model using LoRA to generate these adapter weights.</p>
               {% endif %}
@@ -161,7 +167,7 @@
                   <li><strong>Files:</strong> {{ checkpoints.merged.files_count }}</li>
                 </ul>
                 <div class="d-flex flex-column gap-2">
-                  <button type="button" class="btn btn-sm btn-outline-primary w-100" data-bs-toggle="modal" data-bs-target="#ggufExportModal">
+                  <button type="button" class="btn btn-sm btn-outline-primary w-100" data-bs-toggle="modal" data-bs-target="#ggufExportModal" onclick="prepareGgufModal('{{ cfg.output_merged }}', 'doctune-merged')">
                     <i class="bi bi-cpu me-1"></i> Export to GGUF / Ollama
                   </button>
                   <button type="button" class="btn btn-sm btn-outline-warning w-100" data-bs-toggle="modal" data-bs-target="#hfPushModal" onclick="preparePushModal('merged_model')">
@@ -332,6 +338,21 @@ ollama run my-private-model</code></pre>
         </div>
 
         <div id="ollamaStatusBox" class="d-none alert alert-info py-2 small mb-0"></div>
+
+        <div id="ggufExportSuccessBox" class="d-none alert alert-success p-3 mt-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong><i class="bi bi-check-circle-fill me-1"></i> GGUF Export Ready!</strong>
+            <span class="badge bg-success" id="ggufExportSizeBadge"></span>
+          </div>
+          <div class="d-flex gap-2">
+            <a href="#" id="btnDownloadGgufModal" class="btn btn-sm btn-primary flex-fill" download>
+              <i class="bi bi-download me-1"></i> Download .gguf
+            </a>
+            <a href="#" id="btnDownloadModelfileModal" class="btn btn-sm btn-outline-primary flex-fill" download>
+              <i class="bi bi-file-earmark-code me-1"></i> Download Modelfile
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -643,19 +664,51 @@ ollama run my-private-model</code></pre>
   }
 
   // ── GGUF & Ollama Client Handlers ─────────────────────────────────────
+  function prepareGgufModal(srcDir, modelName) {
+    const dirInput = document.querySelector('#ggufExportForm input[name="model_dir"]');
+    const nameInput = document.querySelector('#ggufExportForm input[name="model_name"]');
+    if (dirInput && srcDir) dirInput.value = srcDir;
+    if (nameInput && modelName) nameInput.value = modelName;
+    document.getElementById('ggufExportSuccessBox')?.classList.add('d-none');
+    document.getElementById('modelfilePreviewBox')?.classList.add('d-none');
+    document.getElementById('ollamaStatusBox')?.classList.add('d-none');
+  }
+
   document.getElementById('ggufExportForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = document.getElementById('btnRunGGUFExport');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Exporting GGUF...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Exporting GGUF & Ollama...';
 
     const formData = new FormData(e.target);
     try {
-      const res = await fetch('/api/v1/models/export-gguf', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/models/export-one-click', { method: 'POST', body: formData });
       const data = await res.json();
-      if (res.ok) {
-        showToast('GGUF conversion job dispatched!', 'success');
-        bootstrap.Modal.getInstance(document.getElementById('ggufExportModal'))?.hide();
+      if (res.ok && data.status === 'success') {
+        showToast('GGUF and Ollama export completed successfully!', 'success');
+        const successBox = document.getElementById('ggufExportSuccessBox');
+        if (successBox) {
+          successBox.classList.remove('d-none');
+          const sizeBadge = document.getElementById('ggufExportSizeBadge');
+          if (sizeBadge && data.size_mb) {
+            sizeBadge.textContent = `${data.size_mb} MB`;
+          }
+          const btnGguf = document.getElementById('btnDownloadGgufModal');
+          if (btnGguf && data.download_gguf_url) {
+            btnGguf.href = data.download_gguf_url;
+            btnGguf.setAttribute('download', data.gguf_filename || 'model.gguf');
+          }
+          const btnMf = document.getElementById('btnDownloadModelfileModal');
+          if (btnMf && data.download_modelfile_url) {
+            btnMf.href = data.download_modelfile_url;
+            btnMf.setAttribute('download', 'Modelfile');
+          }
+        }
+        if (data.modelfile_content) {
+          const content = document.getElementById('modelfileContent');
+          if (content) content.innerText = data.modelfile_content;
+          document.getElementById('modelfilePreviewBox')?.classList.remove('d-none');
+        }
       } else {
         showToast('Export failed: ' + (data.message || 'Unknown error'), 'error');
       }

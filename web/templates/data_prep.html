@@ -62,6 +62,28 @@
             </tbody>
           </table>
         </div>
+
+        <!-- ChromaDB Vector Store & RAG Indexing Controls -->
+        <div class="mt-3 pt-3 border-top">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="small fw-bold text-secondary"><i class="bi bi-database-check me-1 text-info"></i>ChromaDB Vector Store</span>
+            <span class="badge bg-secondary-subtle text-secondary border small" id="ragStatusBadge">Checking...</span>
+          </div>
+          <div class="d-flex gap-2 align-items-center">
+            <button type="button" class="btn btn-sm btn-outline-info flex-grow-1" id="btnBuildRagIndex" onclick="triggerRagIndexBuild()">
+              <i class="bi bi-vector-pen me-1"></i> Build Vector Index
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="checkRagStatus()" title="Refresh Vector Status">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+          </div>
+          <div id="ragIndexProgress" class="small text-muted mt-2 d-none">
+            <div class="progress" style="height: 6px;">
+              <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" style="width: 100%"></div>
+            </div>
+            <span class="d-block mt-1" id="ragProgressMsg" style="font-size: 0.75rem;">Vectorizing document chunks...</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -915,5 +937,63 @@
       showToast('Error: ' + e.message, 'error');
     }
   }
+
+  // ── ChromaDB RAG Vector Store Handlers ───────────────────────────
+  async function checkRagStatus() {
+    const badge = document.getElementById('ragStatusBadge');
+    if (!badge) return;
+    try {
+      const res = await fetch('/api/v1/rag/status');
+      const json = await res.json();
+      if (json.status === 'success' && json.data) {
+        const d = json.data;
+        if (d.total_chunks > 0) {
+          badge.className = 'badge bg-success-subtle text-success border small';
+          badge.textContent = `${d.total_chunks} chunks indexed`;
+        } else {
+          badge.className = 'badge bg-warning-subtle text-warning border small';
+          badge.textContent = 'Not indexed (0 chunks)';
+        }
+      }
+    } catch (e) {
+      badge.className = 'badge bg-secondary-subtle text-secondary border small';
+      badge.textContent = 'Standby';
+    }
+  }
+
+  async function triggerRagIndexBuild() {
+    const btn = document.getElementById('btnBuildRagIndex');
+    const prog = document.getElementById('ragIndexProgress');
+    const msg = document.getElementById('ragProgressMsg');
+    if (btn) btn.disabled = true;
+    if (prog) prog.classList.remove('d-none');
+    if (msg) msg.textContent = 'Parsing documents and generating vector embeddings...';
+
+    try {
+      const res = await fetch('/api/v1/rag/index/build', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && (data.status === 'success' || data.status === 'started')) {
+        showToast(data.message || 'Vector indexing started!', 'success');
+        if (msg) msg.textContent = data.message || 'Vector indexing complete.';
+        await checkRagStatus();
+      } else {
+        showToast(data.message || 'Indexing failed', 'error');
+        if (msg) msg.textContent = 'Error: ' + (data.message || 'Failed to build index');
+      }
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error');
+      if (msg) msg.textContent = 'Failed: ' + e.message;
+    } finally {
+      if (btn) btn.disabled = false;
+      setTimeout(() => {
+        if (prog) prog.classList.add('d-none');
+      }, 3000);
+      checkRagStatus();
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    checkRagStatus();
+  });
 </script>
 {% endblock %}

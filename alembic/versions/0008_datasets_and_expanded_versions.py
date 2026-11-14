@@ -1,6 +1,6 @@
 """create datasets table and expand dataset_versions with s3_key and statistics
 
-Revision ID: 0008_datasets_and_expanded_versions
+Revision ID: 0008_datasets_and_versions
 Revises: 0007_create_jobs_table
 Create Date: 2026-11-10 10:30:00.000000
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0008_datasets_and_expanded_versions"
+revision: str = "0008_datasets_and_versions"
 down_revision: Union[str, None] = "0007_create_jobs_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

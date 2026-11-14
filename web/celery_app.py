@@ -45,6 +45,7 @@ if HAS_CELERY:
             "web.celery_app.task_export_gguf": {"queue": "training_queue"},
             "web.celery_app.task_train_dpo": {"queue": "training_queue"},
             "web.celery_app.task_prepare_data": {"queue": "data_prep_queue"},
+            "web.celery_app.task_build_rag_index": {"queue": "data_prep_queue"},
             "web.celery_app.task_download_model": {"queue": "data_prep_queue"},
             "web.celery_app.task_reconcile_orphan_jobs": {"queue": "training_queue"},
         },
@@ -770,5 +771,55 @@ if HAS_CELERY and app:
                 "line": err_msg,
             })
             raise e
+
+    @app.task(bind=True, name="web.celery_app.task_build_rag_index")
+    def task_build_rag_index(self, project_id: Optional[str] = "proj_default"):
+        """Background Celery task parsing all enterprise documents and building embedded ChromaDB index."""
+        from web.services.rag_service import rag_service
+
+        publish_redis_event(f"rag_index:{project_id}", {
+            "type": "status",
+            "status": "RUNNING",
+            "progress": 5,
+            "message": "Starting document parsing and vector embedding generation...",
+        })
+
+        def progress_cb(data):
+            curr = data.get("current", 0)
+            tot = max(1, data.get("total", 1))
+            pct = 10 + int((curr / tot) * 85)
+            publish_redis_event(f"rag_index:{project_id}", {
+                "type": "progress",
+                "status": "RUNNING",
+                "progress": pct,
+                "current": curr,
+                "total": tot,
+                "file": data.get("file"),
+                "chunks": data.get("chunks"),
+                "message": f"Indexed {data.get('file')} ({data.get('chunks')} chunks) [{curr}/{tot}]",
+            })
+
+        try:
+            res = rag_service.build_index(project_id=project_id, progress_callback=progress_cb)
+            publish_redis_event(f"rag_index:{project_id}", {
+                "type": "status",
+                "status": "COMPLETED",
+                "progress": 100,
+                "message": res.get("message", "Vector indexing complete."),
+                "total_chunks": res.get("total_chunks", 0),
+                "total_documents": res.get("total_documents", 0),
+            })
+            return res
+        except Exception as e:
+            logger.error("RAG indexing task error: %s", e)
+            publish_redis_event(f"rag_index:{project_id}", {
+                "type": "status",
+                "status": "FAILED",
+                "progress": 0,
+                "error": str(e),
+                "message": f"RAG vector indexing failed: {str(e)}",
+            })
+            raise e
+
 
 

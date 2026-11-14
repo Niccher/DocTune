@@ -146,10 +146,11 @@ ensure_llama_server() {
     info "Fetching latest llama.cpp release metadata from GitHub..."
     detect_hardware
 
-    # Query latest release tag from GitHub API
-    LATEST_JSON=$(curl -sSL "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest" 2>/dev/null || echo "")
+    # Query latest release tag from GitHub API with User-Agent
+    LATEST_JSON=$(curl -sSL -H "User-Agent: DocTune-Deploy" "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest" 2>/dev/null || echo "")
     TAG=$(echo "$LATEST_JSON" | grep '"tag_name":' | head -n1 | cut -d '"' -f 4 || echo "b4600")
-    if [ -z "$TAG" ]; then
+    if [[ ! "$TAG" =~ ^b[0-9]+$ ]]; then
+        info "Notice: GitHub release tag '$TAG' is not in standard 'b<number>' format; pinning to verified release 'b4600'."
         TAG="b4600"
     fi
 
@@ -201,13 +202,28 @@ ensure_model() {
     TARGET_NAME="$(basename "$TARGET_URL")"
     TARGET_PATH="$MODEL_DIR/$TARGET_NAME"
 
-    if [ -f "$TARGET_PATH" ] && [ -s "$TARGET_PATH" ]; then
-        ACTIVE_MODEL="$TARGET_PATH"
-        log "GGUF model present: $ACTIVE_MODEL ($(du -h "$ACTIVE_MODEL" | cut -f1))"
-        return 0
+    # Strict model validation: verify file exists, size > 100MB, and GGUF magic header
+    FILE_SIZE=0
+    if [ -f "$TARGET_PATH" ]; then
+        FILE_SIZE=$(stat -c%s "$TARGET_PATH" 2>/dev/null || stat -f%z "$TARGET_PATH" 2>/dev/null || echo "0")
     fi
 
-    info "Model not found locally. Downloading $TARGET_NAME..."
+    if [ -f "$TARGET_PATH" ] && [ "$FILE_SIZE" -gt 104857600 ]; then
+        MAGIC=$(head -c 4 "$TARGET_PATH" 2>/dev/null || echo "")
+        if [ "$MAGIC" = "GGUF" ]; then
+            ACTIVE_MODEL="$TARGET_PATH"
+            log "Valid GGUF model present: $ACTIVE_MODEL ($(du -h "$ACTIVE_MODEL" | cut -f1))"
+            return 0
+        else
+            warn "Model file has valid size but invalid magic header '$MAGIC'. Purging corrupt file..."
+            rm -f "$TARGET_PATH"
+        fi
+    elif [ -f "$TARGET_PATH" ]; then
+        warn "Model file is corrupt or truncated ($(du -h "$TARGET_PATH" | cut -f1) < 100MB). Purging before download..."
+        rm -f "$TARGET_PATH"
+    fi
+
+    info "Model not found locally or was corrupt. Downloading $TARGET_NAME (~4.5 GB)..."
     info "URL: $TARGET_URL"
     info "Destination: $TARGET_PATH"
 
@@ -224,7 +240,14 @@ ensure_model() {
         err "Model download failed or file is empty."
     fi
 
-    log "Model download complete: $TARGET_PATH ($(du -h "$TARGET_PATH" | cut -f1))"
+    # Post-download verification
+    DOWNLOADED_MAGIC=$(head -c 4 "$TARGET_PATH" 2>/dev/null || echo "")
+    if [ "$DOWNLOADED_MAGIC" != "GGUF" ]; then
+        rm -f "$TARGET_PATH"
+        err "Downloaded file is not a valid GGUF binary (magic header was '$DOWNLOADED_MAGIC'). Check URL or authentication."
+    fi
+
+    log "Model download complete and verified: $TARGET_PATH ($(du -h "$TARGET_PATH" | cut -f1))"
     ACTIVE_MODEL="$TARGET_PATH"
 }
 
@@ -249,6 +272,9 @@ start_server() {
     SERVER_BIN="$BIN_DIR/llama-server"
     if [ ! -x "$SERVER_BIN" ] && command -v llama-server &>/dev/null; then
         SERVER_BIN="$(command -v llama-server)"
+    fi
+    if [ ! -x "$SERVER_BIN" ]; then
+        err "llama-server binary not found or not executable at: $SERVER_BIN. Ensure pre-built binary downloaded or compile locally."
     fi
 
     info "Starting llama-server..."

@@ -64,6 +64,15 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Proactively ensure alembic_version.version_num can store up to 64 chars on PostgreSQL
+        if connection.dialect.name == "postgresql":
+            try:
+                from sqlalchemy import text
+                connection.execute(text("ALTER TABLE IF EXISTS alembic_version ALTER COLUMN version_num TYPE VARCHAR(64);"))
+                connection.commit()
+            except Exception:
+                pass
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

@@ -6,10 +6,14 @@ Model checkpoints manager and adapter merging utility.
 
 import json
 import time
+import logging
+from typing import Optional
 from pathlib import Path
-from fastapi import APIRouter, Request, Form, Depends
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Request, Form, Depends, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger("doctune.models")
 
 from pipeline.common import PROJECT_ROOT, Config
 from web.state import state, JobType
@@ -404,6 +408,119 @@ async def register_ollama_model(
             "status": "offline",
             "message": f"Could not reach Ollama at {ollama_url}. Use 'bash {target.parent}/run_ollama.sh' locally: {e}",
         })
+
+
+# ── One-Click GGUF & Ollama Exporter Endpoints ─────────────────────────
+
+@router.post("/api/v1/models/export-one-click")
+async def export_one_click_api(
+    request: Request,
+    run_id: Optional[str] = Form(None),
+    checkpoint_id: Optional[str] = Form(None),
+    model_dir: Optional[str] = Form(None),
+    model_name: Optional[str] = Form(None),
+    quantization: str = Form("q4_k_m"),
+):
+    """Automated single-click LoRA merge, GGUF quantization, and Ollama Modelfile packaging."""
+    from web.services.export_service import export_service
+    audit_service.log(
+        action="ONE_CLICK_GGUF_EXPORT",
+        resource_type="model",
+        resource_id=model_name or run_id or checkpoint_id or "unknown",
+        request=request,
+        details={"run_id": run_id, "checkpoint_id": checkpoint_id, "model_dir": model_dir, "quantization": quantization},
+    )
+    try:
+        res = export_service.export_one_click(
+            run_id=run_id,
+            checkpoint_id=checkpoint_id,
+            model_dir=model_dir,
+            model_name=model_name,
+            quantization=quantization,
+        )
+        return JSONResponse(res)
+    except Exception as e:
+        logger.error("One-click export failed: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@router.get("/api/v1/models/export-status/{run_id}")
+async def get_export_status_api(run_id: str):
+    """Retrieve existing export bundle metadata and download links for a run."""
+    from web.services.export_service import export_service
+    info = export_service.get_existing_export(run_id)
+    if info:
+        return JSONResponse(info)
+    return JSONResponse({"status": "not_found", "run_id": run_id}, status_code=404)
+
+
+@router.get("/api/v1/models/download-file")
+async def download_model_file(
+    path: str,
+    run_id: Optional[str] = None,
+    model_name: Optional[str] = None,
+):
+    """Securely download an exported .gguf, Modelfile, or script."""
+    clean_p = Path(path)
+    if ".." in clean_p.parts or clean_p.is_absolute():
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    clean_filename = clean_p.name
+    file_path = None
+
+    if run_id:
+        candidate = (PROJECT_ROOT / "artifacts" / "runs" / run_id / "gguf" / clean_p).resolve()
+        if candidate.exists() and candidate.is_file():
+            file_path = candidate
+        else:
+            candidate2 = (PROJECT_ROOT / "artifacts" / "runs" / run_id / "gguf" / clean_filename).resolve()
+            if candidate2.exists() and candidate2.is_file():
+                file_path = candidate2
+
+    if not file_path and model_name:
+        candidate = (PROJECT_ROOT / "output_gguf" / model_name / clean_p).resolve()
+        if candidate.exists() and candidate.is_file():
+            file_path = candidate
+        else:
+            candidate2 = (PROJECT_ROOT / "output_gguf" / model_name / clean_filename).resolve()
+            if candidate2.exists() and candidate2.is_file():
+                file_path = candidate2
+
+    if not file_path:
+        candidate_dirs = [
+            PROJECT_ROOT / "output_gguf",
+            PROJECT_ROOT / "artifacts",
+        ]
+        for c in candidate_dirs:
+            cand = (c / clean_p).resolve()
+            if cand.exists() and cand.is_file():
+                file_path = cand
+                break
+        if not file_path:
+            for c in candidate_dirs:
+                matches = list(c.glob(f"**/{clean_filename}"))
+                if matches:
+                    file_path = matches[0].resolve()
+                    break
+
+    if not file_path or not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File {clean_filename} not found.")
+
+    # Prevent downloading outside project root
+    if PROJECT_ROOT not in file_path.resolve().parents and file_path.resolve() != PROJECT_ROOT:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    media_type = "application/octet-stream"
+    if clean_filename.endswith(".gguf"):
+        media_type = "application/octet-stream"
+    elif clean_filename in ("Modelfile", "run_ollama.sh") or clean_filename.endswith(".txt"):
+        media_type = "text/plain"
+
+    return FileResponse(
+        path=str(file_path),
+        filename=clean_filename,
+        media_type=media_type,
+    )
 
 
 # ── Hugging Face Base Models Hub Endpoints ─────────────────────────

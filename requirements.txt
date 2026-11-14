@@ -28,3 +28,7 @@ psycopg2-binary>=2.9.9
 cryptography>=42.0.0
 psutil>=5.9.0
 
+# Vector Storage & RAG Subsystem
+chromadb>=0.4.24
+sentence-transformers>=2.6.0
+

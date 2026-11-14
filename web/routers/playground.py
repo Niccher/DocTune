@@ -1,4 +1,6 @@
 import time
+import random
+import logging
 from typing import Optional
 from pathlib import Path
 from fastapi import APIRouter, Request, Form, Depends
@@ -12,12 +14,12 @@ from web.services.process_manager import process_mgr
 from web.templates_config import templates
 from web.celery_app import is_celery_available, app as celery_app
 from web.db.session import SessionLocal, get_db, resolve_session
-import random
 from web.services.inference_service import inference_service
 from web.services.deployment_service import deployment_service
 from web.db.models import PlaygroundLog, EvaluationBenchmark, Checkpoint, Run
 from web.routers.auth import require_project_role, get_project_id
 
+logger = logging.getLogger("doctune.web.playground")
 router = APIRouter()
 
 
@@ -90,29 +92,50 @@ async def run_evaluation_job(
 
 @router.post("/api/v1/playground/chat")
 async def playground_chat(
+    request: Request,
     prompt: str = Form(...),
     model: Optional[str] = Form(None),
     blind_ab: Optional[bool] = Form(False),
     temperature: Optional[float] = Form(0.7),
+    rag_enabled: Optional[bool] = Form(False),
 ):
     """
     Interactive prompt comparison between base pre-trained model and
-    fine-tuned adapter weights with optional blind A/B side-by-side randomization.
+    fine-tuned adapter weights with optional dynamic RAG context injection
+    and blind A/B side-by-side randomization.
     """
     start_t = time.time()
     tuned_model_id = model or "default"
+    project_id = get_project_id(request) if request else "proj_default"
+
+    base_messages = [{"role": "user", "content": prompt}]
+    tuned_messages = [{"role": "user", "content": prompt}]
+    citations = []
+    retrieved_chunks = []
+
+    # Inject RAG context if enabled
+    if rag_enabled:
+        try:
+            from web.services.rag_service import rag_service
+            tuned_messages, citations, retrieved_chunks = rag_service.augment_chat_messages(
+                messages=tuned_messages,
+                project_id=project_id,
+                top_k=3,
+            )
+        except Exception as e:
+            logger.warning("Playground RAG augmentation skipped: %s", e)
 
     # Query base model
     base_comp = await inference_service.generate_completion_async(
-        messages=[{"role": "user", "content": prompt}],
+        messages=base_messages,
         model_name="base",
         temperature=temperature or 0.7,
     )
     base_resp = base_comp.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-    # Query fine-tuned model
+    # Query fine-tuned model (with or without RAG context)
     tuned_comp = await inference_service.generate_completion_async(
-        messages=[{"role": "user", "content": prompt}],
+        messages=tuned_messages,
         model_name=tuned_model_id,
         temperature=temperature or 0.7,
     )
@@ -142,7 +165,7 @@ async def playground_chat(
                 tuned_model_response=tuned_resp,
                 model_name=tuned_model_id,
                 latency_ms=latency_ms,
-                notes=json.dumps({"blind_ab": bool(blind_ab), "swapped": swap}),
+                notes=json.dumps({"blind_ab": bool(blind_ab), "swapped": swap, "rag_enabled": bool(rag_enabled)}),
             )
             db.add(log_entry)
             db.commit()
@@ -161,6 +184,9 @@ async def playground_chat(
         "pane_b": pane_b,
         "latency_ms": latency_ms,
         "model_name": tuned_model_id,
+        "rag_enabled": bool(rag_enabled),
+        "citations": citations,
+        "retrieved_chunks": retrieved_chunks,
     })
 
 

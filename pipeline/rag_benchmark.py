@@ -118,6 +118,16 @@ class SimpleChunkRetriever:
                 pass
 
     def retrieve(self, query: str, top_k: int = 2) -> List[str]:
+        # 1. Query persistent embedded ChromaDB first
+        try:
+            from pipeline.rag.chroma_store import chroma_store
+            hits = chroma_store.query_similar(query, top_k=top_k)
+            if hits:
+                return [h["text"] for h in hits]
+        except Exception:
+            pass
+
+        # 2. In-memory term frequency fallback
         words = re.findall(r"\w+", query.lower())
         if not words:
             return self.chunks[:top_k]
