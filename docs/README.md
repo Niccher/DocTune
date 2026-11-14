@@ -25,4 +25,4 @@ Welcome to the engineering documentation hub for **DocTune Studio**. This docume
 | **Token safety & secret isolation** | [engineering/security.md](engineering/security.md) |
 | **Graceful restarts & incident recovery runbooks** | [runbooks/restart.md](runbooks/restart.md) |
 | **Database & MinIO backup/restore runbook** | [runbooks/backup-and-restore.md](runbooks/backup-and-restore.md) |
-| **Architecture Decision Records (ADRs)** | [adr/0001-distributed-celery-worker-architecture.md](adr/0001-distributed-celery-worker-architecture.md) |
+| **Architecture Decision Records (ADRs)** | [adr/0001-distributed-celery-worker-architecture.md](adr/0001-distributed-celery-worker-architecture.md) • [adr/0004-embedded-chromadb-rag-architecture.md](adr/0004-embedded-chromadb-rag-architecture.md) |

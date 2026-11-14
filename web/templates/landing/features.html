@@ -25,8 +25,9 @@
           DocTune Studio ingests proprietary documents across multiple enterprise formats (PDF, DOCX, CSV, Markdown, TXT). Rather than feeding naive large text chunks into a model, the engine breaks documents into semantically coherent token windows with configurable overlap.
         </p>
         <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Configurable Chunking:</strong> Adjustable token chunk sizes (default 1000 tokens) with sliding overlap to preserve context across boundaries.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Configurable Semantic Chunking:</strong> Sliding-window token chunking with configurable overlap (default 512 tokens, 64 overlap) and SHA-256 chunk tracking.</li>
           <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Automated PII Masking:</strong> Sensitive identifiers—emails, phone numbers, credit card numbers, and API tokens—are automatically sanitized before dataset assembly.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Embedded Vector Indexing:</strong> Chunks are embedded using local dense models (`BAAI/bge-small-en-v1.5`) and stored directly in an in-process ChromaDB SQLite/HNSW store (`data/vectorstore/`) with zero extra containers.</li>
           <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Dual Storage Sync:</strong> Documents are persisted to local POSIX disk and optionally mirrored to private MinIO or AWS S3 buckets.</li>
         </ul>
         <a href="/data-prep" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1.5 fw-semibold">Open Data Studio &rarr;</a>
@@ -134,21 +135,22 @@
     <div class="row align-items-center g-5 py-4 border-bottom flex-lg-row-reverse">
       <div class="col-lg-6">
         <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 4</span>
-        <h3 class="fw-bold mb-3">Model Verification, Playground & DPO Curation</h3>
+        <h3 class="fw-bold mb-3">Hybrid RAG Grounding, Model Verification & Playground</h3>
         <p class="text-muted">
-          Verify your fine-tuned model before releasing it into production. The Evaluation Playground provides interactive streaming chats, side-by-side comparisons against the base model, and alignment feedback collection.
+          Verify domain accuracy and eliminate hallucinations before deploying models. The Evaluation Playground provides streaming inference with optional Dynamic RAG Grounding powered by hybrid dense semantic search and BM25 lexical keyword matching.
         </p>
         <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Dynamic RAG Grounding:</strong> In-process hybrid search (Reciprocal Rank Fusion, $k=60$) retrieves verified document chunks and injects them directly into model prompts.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Verifiable Source Citations:</strong> Model answers include structured markdown citations `[1]`, `[2]` linking directly to source documents with similarity confidence scores.</li>
           <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Side-by-Side Playground:</strong> Run baseline and fine-tuned checkpoints against identical prompts to evaluate domain recall.</li>
           <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>DPO Dataset Export:</strong> Mark responses as "preferred" or "rejected" to generate datasets for Direct Preference Optimization alignment.</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>RAG Benchmark Engine:</strong> Benchmark retrieval context answers against ground-truth document chunks.</li>
         </ul>
         <a href="/playground" class="btn btn-sm btn-outline-warning rounded-pill px-3 py-1.5 fw-semibold">Open Playground &rarr;</a>
       </div>
       <div class="col-lg-6">
         <div class="card landing-card p-4 bg-body shadow-sm">
           <div class="d-flex align-items-center justify-content-between mb-3 border-bottom pb-2">
-            <span class="badge bg-primary-subtle text-primary">Fine-Tuned Checkpoint</span>
+            <span class="badge bg-primary-subtle text-primary"><i class="bi bi-shield-check me-1"></i> RAG Grounded Checkpoint</span>
             <span class="badge bg-secondary-subtle text-secondary">Base Checkpoint</span>
           </div>
           <div class="mb-3 small">
@@ -156,10 +158,14 @@
             <em>"What is the failover protocol for Facility B?"</em>
           </div>
           <div class="p-2.5 rounded bg-body-tertiary border mb-2 small">
-            <strong class="text-primary">Fine-Tuned:</strong> "The automated UPS transfers load in 4ms, and [REDACTED_NAME] is alerted via emergency pager."
+            <strong class="text-primary">Grounded Response:</strong> "According to the SOP [1], the automated UPS transfers load in 4ms, and [REDACTED_NAME] is alerted via emergency pager."
+            <div class="mt-2 pt-2 border-top small text-muted d-flex align-items-center gap-1">
+              <span class="badge bg-info-subtle text-info border border-info-subtle">[1]</span>
+              <span>2026_Corporate_Failover_SOP.pdf (Chunk #42, Conf: 94.2%)</span>
+            </div>
           </div>
           <div class="p-2.5 rounded bg-body-tertiary border small text-muted">
-            <strong>Base:</strong> "I do not have specific information about Facility B's power failover protocols."
+            <strong>Base Checkpoint:</strong> "I do not have specific information about Facility B's power failover protocols."
           </div>
         </div>
       </div>
@@ -169,24 +175,25 @@
     <div class="row align-items-center g-5 py-4">
       <div class="col-lg-6">
         <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 5</span>
-        <h3 class="fw-bold mb-3">Weight Merging, GGUF & Production Deployment</h3>
+        <h3 class="fw-bold mb-3">1-Click GGUF Exporter, Weight Fusion & Ollama Packaging</h3>
         <p class="text-muted">
-          Once satisfied with training quality, fuse low-rank delta matrices directly into base model weights. This produces a standalone 16-bit model requiring no PEFT adapter runtime.
+          Once satisfied with training quality, convert checkpoints into production-ready deployment packages with a single click. Automates adapter merging, GGUF quantization, and custom Ollama Modelfile templating.
         </p>
         <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Zero-Runtime LoRA Fusion:</strong> Mathematically integrates weights: $W = W_0 + \frac{\alpha}{r} (B \times A)$.</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>GGUF Quantization:</strong> Converts models to `Q4_K_M`, `Q5_K_M`, and `Q8_0` with automatic Ollama Modelfile generation.</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hugging Face Hub Push:</strong> Authenticate and export private checkpoints to your organization's Hugging Face repository with one click.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>1-Click GGUF Conversion:</strong> Seamlessly quantizes weights into `Q4_K_M`, `Q5_K_M`, or `Q8_0` with automatic chat template detection (ChatML, Llama-3, Alpaca).</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Automated Modelfile & CLI Scripts:</strong> Generates ready-to-run `Modelfile` and `run_ollama.sh` commands for zero-latency local serving.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hardened Binary Streaming:</strong> Secure download endpoint protected against path traversal attacks (`..` and absolute path blocking).</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Zero-Runtime LoRA Fusion:</strong> Fuses delta matrices into standalone 16-bit safetensors for Hugging Face Hub export.</li>
         </ul>
         <a href="/models" class="btn btn-sm btn-outline-danger rounded-pill px-3 py-1.5 fw-semibold">Manage Checkpoints &rarr;</a>
       </div>
       <div class="col-lg-6">
         <div class="code-terminal shadow-sm">
           <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary small">
-            <span>Ollama Modelfile</span>
-            <span class="badge text-bg-danger">Standalone Model</span>
+            <span>Ollama Modelfile (Auto-Generated)</span>
+            <span class="badge text-bg-danger">1-Click Export</span>
           </div>
-<pre class="mb-0"><code>FROM ./merged_models/doctune-qlora-q4_k_m.gguf
+<pre class="mb-0"><code>FROM ./doctune-model-q4_k_m.gguf
 
 {% raw %}
 TEMPLATE """{{ if .System }}&lt;|start_header_id|&gt;system&lt;|end_header_id|&gt;
@@ -195,7 +202,8 @@ TEMPLATE """{{ if .System }}&lt;|start_header_id|&gt;system&lt;|end_header_id|&g
 """
 {% endraw %}
 PARAMETER temperature 0.3
-PARAMETER stop "&lt;|eot_id|&gt;"</code></pre>
+PARAMETER stop "&lt;|eot_id|&gt;"
+SYSTEM """You are an internal enterprise assistant fine-tuned on proprietary documents."""</code></pre>
         </div>
       </div>
     </div>

@@ -207,7 +207,7 @@ Full-duplex WebSocket stream for real-time loss telemetry and terminal logging.
 Standard drop-in inference endpoints allowing external tools, LangChain, LlamaIndex, or OpenAI SDKs to interact with trained DocTune models.
 
 ### `POST /v1/chat/completions`
-Generates chat completions with optional streaming.
+Generates chat completions with optional streaming and RAG grounding.
 * **Payload**:
   ```json
   {
@@ -217,7 +217,35 @@ Generates chat completions with optional streaming.
     ],
     "temperature": 0.7,
     "max_tokens": 512,
-    "stream": false
+    "stream": false,
+    "rag": true,
+    "rag_top_k": 4
+  }
+  ```
+* **Response (Non-streaming)**:
+  ```json
+  {
+    "id": "chatcmpl-1730732800",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "According to the corporate SOP [1], the automated UPS transfers load in 4ms..."
+        },
+        "finish_reason": "stop",
+        "citations": [
+          {
+            "tag": "[1]",
+            "source": "2026_Corporate_Failover_SOP.pdf",
+            "chunk_index": 42,
+            "score": 0.942,
+            "text": "In the event of primary power loss..."
+          }
+        ]
+      }
+    ]
   }
   ```
 * **Streaming**: When `stream: true`, responses are emitted as standard Server-Sent Events (`data: {"choices": [{"delta": {"content": "..."}}]}`).
@@ -296,6 +324,30 @@ Pushes local fine-tuned adapters or merged weights to Hugging Face Hub as a publ
 ### `POST /api/v1/models/export-gguf`
 Converts merged models to GGUF format with quantization (`q4_k_m`, `q5_k_m`, `q8_0`, `f16`) and generates Ollama `Modelfile`.
 
+### `POST /api/v1/models/export-one-click`
+Single-click automation that resolves adapter vs. base model, performs mathematical LoRA fusion, quantizes to GGUF (`q4_k_m`, `q5_k_m`, `q8_0`), generates tailored Ollama `Modelfile`, and creates deployment bash scripts.
+* **Form Parameters**: `run_id`, `checkpoint_id`, `model_dir`, `model_name`, `quantization`.
+* **Response**: `200 OK`
+  ```json
+  {
+    "status": "success",
+    "model_name": "llama3-enterprise",
+    "quantization": "q4_k_m",
+    "gguf_filename": "llama3-enterprise-q4_k_m.gguf",
+    "gguf_path": "/app/output_gguf/llama3-enterprise/llama3-enterprise-q4_k_m.gguf",
+    "modelfile_path": "/app/output_gguf/llama3-enterprise/Modelfile",
+    "run_script_path": "/app/output_gguf/llama3-enterprise/run_ollama.sh",
+    "ollama_command": "ollama create llama3-enterprise -f Modelfile"
+  }
+  ```
+
+### `GET /api/v1/models/export-status/{run_id}`
+Returns export metadata, generated file lists, and copyable CLI commands for an existing run export.
+
+### `GET /api/v1/models/download-file?path={filename}&run_id={id}&model_name={name}`
+Streams exported model binaries (`.gguf`), `Modelfile`, or runner scripts.
+* **Security Controls**: Strictly rejects relative directory traversal (`..`) and absolute path queries outside the project root with `400 Bad Request` or `403 Forbidden`.
+
 ### `POST /api/v1/models/ollama/register`
 Registers the exported GGUF model with the local Ollama daemon.
 
@@ -311,3 +363,75 @@ Extracts rated playground interactions into preference training JSONL pairs (`{"
 
 ### `POST /api/v1/playground/dpo/start`
 Starts a DPO / ORPO preference alignment training run on the exported preference pairs.
+
+---
+
+## 14. Embedded ChromaDB RAG Endpoints
+
+Zero-container in-process vector retrieval and indexing operations.
+
+### `GET /api/v1/rag/status?project_id=default`
+Returns health, storage metrics, and indexed chunk counts for a project's vector store.
+* **Response**: `200 OK`
+  ```json
+  {
+    "status": "active",
+    "project_id": "default",
+    "collection": "doctune_default",
+    "total_chunks": 482,
+    "persist_directory": "/app/data/vectorstore",
+    "storage_bytes": 1428576,
+    "embedding_model": "BAAI/bge-small-en-v1.5"
+  }
+  ```
+
+### `POST /api/v1/rag/index/build`
+Dispatches an asynchronous Celery indexing job across datasets (`data/datasets/*.jsonl`) and raw documents (`raw_documents/`), segmenting text into sliding-window semantic chunks with dense embedding and BM25 indexing.
+* **Payload**:
+  ```json
+  {
+    "project_id": "default",
+    "chunk_size": 512,
+    "chunk_overlap": 64
+  }
+  ```
+* **Response**: `200 OK`
+  ```json
+  {
+    "status": "indexing_scheduled",
+    "task_id": "task_rag_index_1730732800",
+    "project_id": "default"
+  }
+  ```
+
+### `POST /api/v1/rag/query`
+Executes hybrid search (dense vector cosine similarity + BM25 keyword matching via Reciprocal Rank Fusion, $k=60$) against the project collection.
+* **Payload**:
+  ```json
+  {
+    "query": "What is the automated failover protocol for Facility B?",
+    "top_k": 3,
+    "project_id": "default"
+  }
+  ```
+* **Response**: `200 OK`
+  ```json
+  {
+    "query": "What is the automated failover protocol for Facility B?",
+    "chunks": [
+      {
+        "id": "chunk_042_a1b2c3d4",
+        "document_name": "2026_Corporate_Failover_SOP.pdf",
+        "chunk_index": 42,
+        "score": 0.942,
+        "text": "In the event of a primary power loss at Facility B..."
+      }
+    ]
+  }
+  ```
+
+### `DELETE /api/v1/rag/index`
+Purges all indexed chunks and drops the ChromaDB collection for the specified project.
+* **Query Parameters**: `project_id=default`
+* **Response**: `200 OK` (`{"status": "deleted", "project_id": "default"}`)
+

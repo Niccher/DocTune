@@ -164,10 +164,10 @@ if [ "$SWAP_TOTAL_MB" -lt 1024 ] && [ "$FREE_MEM_MB" -lt 3500 ] && [ "$FREE_MEM_
     log "4 GB swapfile provisioned and active"
 fi
 
-# Hard pre-flight disk threshold: 15 GB minimum
-if [ "$DISK_FREE_MB" -lt 15360 ]; then
-    warn "Free disk space is under 15 GB checkpoint safety buffer (${DISK_FREE_GB} free). Running Docker build cache prune..."
-    docker builder prune -af >/dev/null 2>&1 || true
+# Hard pre-flight disk threshold: 28 GB recommended for simultaneous ML builds
+if [ "$DISK_FREE_MB" -lt 28672 ]; then
+    warn "Free disk space is ${DISK_FREE_GB} free (< 28 GB ML build buffer). Running proactive Docker builder & layer cache prune..."
+    docker builder prune -f >/dev/null 2>&1 || true
     docker image prune -f >/dev/null 2>&1 || true
     RECHECK_DISK=$(df -h . | awk 'NR>1 {print $4}')
     log "Reclaimed disk space: ${RECHECK_DISK} free now"
@@ -262,7 +262,7 @@ section "5. Preparing Container Environment"
 if [[ "${1:-}" =~ ^(--hard-reset|--clean|-f)$ ]] || [[ "$*" =~ --hard-reset|--clean|-f ]]; then
     warn "Hard reset requested: stopping and removing all containers..."
     docker compose down --remove-orphans 2>&1 | tail -3 || true
-    docker rm -f doctune-web doctune-celery-worker doctune-postgres doctune-redis doctune-minio doctune-minio-init doctune-dozzle 2>/dev/null || true
+    docker rm -f doctune-web doctune-celery-worker doctune-celery-beat doctune-postgres doctune-redis doctune-minio doctune-minio-init doctune-dozzle 2>/dev/null || true
     log "Old containers stopped and removed"
 else
     # Non-destructive: remove any transient init containers to avoid collisions
@@ -270,9 +270,29 @@ else
     log "Performing fast rolling update (stateful databases preserved)"
 fi
 
+# Clean up dangling builder cache and unreferenced layers before build
+log "Pruning dangling Docker build cache to maximize free disk headroom..."
+docker builder prune -f >/dev/null 2>&1 || true
+
 # ── 6. Build & Start All Containers ───────────────────────────
 section "6. Building & Starting All Containers"
-DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose up --build -d 2>&1 | tail -25
+
+log "1/3 Building web container (CPU-optimized for UI & embedded RAG)..."
+if ! DOCKER_BUILDKIT=1 docker compose build web 2>&1 | tail -15; then
+    warn "Web build reported an error. Pruning build cache and retrying cleanly..."
+    docker builder prune -af >/dev/null 2>&1 || true
+    DOCKER_BUILDKIT=1 docker compose build --no-cache web 2>&1 | tail -15
+fi
+
+log "2/3 Building worker container (PyTorch ML fine-tuning stack)..."
+if ! DOCKER_BUILDKIT=1 docker compose build celery_worker 2>&1 | tail -15; then
+    warn "Worker build reported an error. Pruning build cache and retrying cleanly..."
+    docker builder prune -af >/dev/null 2>&1 || true
+    DOCKER_BUILDKIT=1 docker compose build --no-cache celery_worker 2>&1 | tail -15
+fi
+
+log "3/3 Launching distributed stack in detached mode..."
+docker compose up -d 2>&1 | tail -25
 log "Containers created and started (postgres, redis, minio, web, celery_worker, celery_beat, dozzle)"
 
 # ── 6b. Provisioning & Starting llama.cpp Inference (Optional) ─

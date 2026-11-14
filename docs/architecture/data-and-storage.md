@@ -110,3 +110,49 @@ MinIO Object Storage/
         ├── model.safetensors.index.json
         └── config.json
 ```
+
+---
+
+## 3. Embedded Vector Store Architecture (ChromaDB + SQLite/HNSW)
+
+DocTune Studio uses an in-process, zero-container vector storage engine implemented via `chromadb.PersistentClient`.
+
+```
+data/vectorstore/
+├── chroma.sqlite3          # SQLite relational metadata (collections, documents, chunk offsets)
+└── [uuid]/                 # HNSW binary vector indices (L2/cosine dense embeddings)
+    ├── data_level0.bin
+    ├── header.bin
+    ├── hex_index.bin
+    └── link_list.bin
+```
+
+### Storage Characteristics
+
+| Parameter | Value | Purpose |
+| :--- | :--- | :--- |
+| **Persistence Engine** | SQLite + HNSW (`chromadb.PersistentClient`) | In-process relational + vector persistence |
+| **Mount Path** | `./data/vectorstore/` | Mounted on host and container `/app/data/vectorstore` |
+| **Container Footprint** | **0 additional containers** | Runs directly within `doctune-web` / worker threads |
+| **Collection Partitioning** | `doctune_{project_id}` | Strict multi-tenant isolation per project |
+| **Dense Embedder** | `BAAI/bge-small-en-v1.5` (384-d) | Local CPU/GPU sentence embeddings |
+| **Lexical Index** | Dynamic in-memory BM25 | Fast token-frequency search combined via RRF ($k=60$) |
+
+### Chunk Metadata Schema
+
+Each indexed chunk in ChromaDB is annotated with verifiable citation metadata:
+
+```json
+{
+  "chunk_id": "chunk_042_a1b2c3d4",
+  "doc_id": "doc_998",
+  "document_name": "2026_Corporate_Failover_SOP.pdf",
+  "chunk_index": 42,
+  "byte_start": 12480,
+  "byte_end": 14120,
+  "token_count": 486,
+  "sha256_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "project_id": "default"
+}
+```
+

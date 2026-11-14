@@ -80,6 +80,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
+    image: doctune-web:latest
     container_name: doctune-web
     restart: unless-stopped
     ports:
@@ -125,6 +126,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+    image: doctune-celery-worker:latest
     container_name: doctune-celery-worker
     restart: unless-stopped
     shm_size: '8gb'
@@ -160,15 +162,15 @@ services:
 
   # ── 5b. Celery Beat Scheduler (Periodic Tasks & Orphan Reconciliation) ──────
   celery_beat:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
+    image: doctune-celery-worker:latest
     container_name: doctune-celery-beat
     restart: unless-stopped
     command: ["celery", "-A", "web.celery_app.app", "beat", "--loglevel=info"]
     depends_on:
       redis:
         condition: service_healthy
+      celery_worker:
+        condition: service_started
     env_file:
       - .env
     environment:

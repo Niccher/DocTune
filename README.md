@@ -1,8 +1,8 @@
 # DocTune Studio
 
-DocTune Studio is a private document fine-tuning platform for training 8B-class open-source LLMs (Llama 3, Mistral, Qwen) on proprietary enterprise documents using 4-bit QLoRA, 16-bit LoRA, and Full Fine-Tuning.
+DocTune Studio is a private document fine-tuning and retrieval platform for training 8B-class open-source LLMs (Llama 3, Mistral, Qwen) on proprietary enterprise documents using 4-bit QLoRA, 16-bit LoRA, and Full Fine-Tuning. It features an in-process, zero-container hybrid RAG subsystem (Dense embeddings + BM25 keyword matching) and one-click GGUF/Ollama model export.
 
-Stack: Python FastAPI, AdminLTE v4, PyTorch, Celery, Redis, PostgreSQL, MinIO S3.
+Stack: Python FastAPI, AdminLTE v4, PyTorch, Celery, Redis, PostgreSQL, MinIO S3, Embedded ChromaDB.
 
 **If you only need to run the system, this page is enough.**  
 Software engineers and contributors: see [docs/README.md](docs/README.md).
@@ -18,6 +18,7 @@ Software engineers and contributors: see [docs/README.md](docs/README.md).
 | **Health Probe** | `GET http://localhost/health` | Container readiness verification (HTTP 200) |
 | **Redis Broker** | `redis://localhost:6379` | In-memory message broker & Pub/Sub telemetry stream |
 | **PostgreSQL DB** | `postgresql://localhost:5432` | Relational storage for runs, metrics, and checkpoints |
+| **Vector Store (RAG)**| In-Process (`./data/vectorstore`) | Persistent SQLite/HNSW vector store for RAG (zero extra containers) |
 
 ## Prerequisites
 

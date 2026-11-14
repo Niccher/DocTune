@@ -15,10 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install web application dependencies with BuildKit pip caching
+# Install CPU-only PyTorch first to prevent installing 5GB+ of unused CUDA/NVIDIA wheels,
+# then install web application dependencies
 COPY requirements-web.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements-web.txt
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements-web.txt
 
 # Copy application source code
 COPY pipeline/ ./pipeline/

@@ -16,17 +16,21 @@ web/
 │   ├── dashboard.py            ← / overview dashboard
 │   ├── data_prep.py            ← /data-prep document ingestion & dataset snapshots
 │   ├── experiments.py          ← /experiments run comparison & RAG benchmark APIs
-│   ├── inference.py            ← /v1/chat/completions OpenAI-compatible inference
-│   ├── models.py               ← /models checkpoint registry, GGUF export, HF Hub push
-│   ├── playground.py           ← /playground prompt testing & DPO alignment
+│   ├── inference.py            ← /v1/chat/completions OpenAI-compatible inference with RAG
+│   ├── landing.py              ← Public marketing & documentation pages (/features, /docs, /security)
+│   ├── models.py               ← /models checkpoint registry, 1-click GGUF export, downloads
+│   ├── playground.py           ← /playground prompt testing, citations & DPO alignment
+│   ├── rag.py                  ← /api/v1/rag status, vector indexing, and hybrid query APIs
 │   └── training.py             ← /training real-time loss graph, queue & sweeps
 ├── services/                   ← Core business services
 │   ├── config_service.py       ← settings.json persistence & boundary clamping
 │   ├── dataset_version_service.py ← Immutable dataset snapshotting & SHA-256 fingerprinting
+│   ├── export_service.py       ← Automated LoRA merge, GGUF quantization, and Modelfile packaging
 │   ├── hf_model_service.py     ← HF Hub downloads, caching & private repo push
 │   ├── inference_service.py    ← OpenAI-compatible streaming chat completion engine
 │   ├── process_manager.py      ← Async subprocess lifecycle & reader stream
 │   ├── queue_manager.py        ← FIFO training job queue & resumable checkpoints
+│   ├── rag_service.py          ← In-process RAG orchestration, corpus ingestion & prompt augmentation
 │   ├── storage_service.py      ← MinIO / S3 object store client with local fallback
 │   ├── sweep_service.py        ← Hyperparameter grid sweep combinatorial generator
 │   ├── system_service.py       ← Hardware telemetry & boundary inspection
