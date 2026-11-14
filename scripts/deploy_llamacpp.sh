@@ -176,9 +176,20 @@ ensure_llama_server() {
 
     info "Downloading pre-built release package: $ASSET_NAME..."
     if curl -sSL -f -L "$DOWNLOAD_URL" -o "$TMP_ZIP"; then
-        unzip -q -o "$TMP_ZIP" -d "$BIN_DIR"
+        if command -v unzip &>/dev/null; then
+            unzip -q -o "$TMP_ZIP" -d "$BIN_DIR"
+        elif command -v python3 &>/dev/null; then
+            python3 -m zipfile -e "$TMP_ZIP" "$BIN_DIR"
+        elif command -v python &>/dev/null; then
+            python -m zipfile -e "$TMP_ZIP" "$BIN_DIR"
+        elif command -v 7z &>/dev/null; then
+            7z x -y "$TMP_ZIP" -o"$BIN_DIR" >/dev/null
+        else
+            warn "'unzip' command missing. Attempting to install unzip package..."
+            (sudo apt-get update -y && sudo apt-get install -y unzip && unzip -q -o "$TMP_ZIP" -d "$BIN_DIR") || true
+        fi
         rm -f "$TMP_ZIP"
-        chmod +x "$BIN_DIR"/*
+        chmod +x "$BIN_DIR"/* 2>/dev/null || true
         log "Successfully installed llama-server to $BIN_DIR"
     else
         warn "Direct binary release download failed. Attempting Docker fallback..."
