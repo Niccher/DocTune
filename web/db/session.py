@@ -82,11 +82,24 @@ def init_db():
             from sqlalchemy import text
             with engine.connect() as conn:
                 for table_name, col_name, col_type in [
-                    ("runs", "project_id", "VARCHAR(64) DEFAULT 'proj_default'"),
-                    ("runs", "created_by", "INTEGER"),
-                    ("runs", "manifest_json", "JSON"),
+                    ("runs", "dataset_path", "VARCHAR(512)"),
                     ("runs", "dataset_version", "VARCHAR(64)"),
                     ("runs", "dataset_hash", "VARCHAR(64)"),
+                    ("runs", "manifest_json", "JSON"),
+                    ("runs", "config_json", "JSON"),
+                    ("runs", "project_id", "VARCHAR(64) DEFAULT 'proj_default'"),
+                    ("runs", "created_by", "INTEGER"),
+                    ("runs", "epochs", "INTEGER"),
+                    ("runs", "batch_size", "INTEGER"),
+                    ("runs", "learning_rate", "FLOAT"),
+                    ("runs", "duration_sec", "FLOAT"),
+                    ("runs", "final_loss", "FLOAT"),
+                    ("runs", "pid", "INTEGER"),
+                    ("runs", "mode", "VARCHAR(32) DEFAULT 'subprocess'"),
+                    ("runs", "error_message", "TEXT"),
+                    ("runs", "created_at", "TIMESTAMP WITH TIME ZONE"),
+                    ("runs", "started_at", "TIMESTAMP WITH TIME ZONE"),
+                    ("runs", "completed_at", "TIMESTAMP WITH TIME ZONE"),
                     ("checkpoints", "project_id", "VARCHAR(64) DEFAULT 'proj_default'"),
                     ("checkpoints", "created_by", "INTEGER"),
                     ("checkpoints", "dataset_version", "VARCHAR(64)"),
@@ -124,10 +137,22 @@ def init_db():
                     ("users", "last_login_at", "TIMESTAMP"),
                 ]:
                     try:
-                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
+                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
                         conn.commit()
                     except Exception:
-                        pass
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                        # Fallback for SQLite which doesn't support IF NOT EXISTS in ADD COLUMN
+                        try:
+                            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
+                            conn.commit()
+                        except Exception:
+                            try:
+                                conn.rollback()
+                            except Exception:
+                                pass
         except Exception:
             pass
     except Exception as e:
