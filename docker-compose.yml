@@ -101,6 +101,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - S3_ENDPOINT_URL=http://minio:9000
     volumes:
+      - ./web:/app/web
+      - ./pipeline:/app/pipeline
       - ./config:/app/config
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini:ro
@@ -146,6 +148,8 @@ services:
       - S3_ENDPOINT_URL=http://minio:9000
       - PYTHONUNBUFFERED=1
     volumes:
+      - ./web:/app/web
+      - ./pipeline:/app/pipeline
       - ./config:/app/config
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini:ro
@@ -177,6 +181,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL_SYNC=postgresql+psycopg2://${POSTGRES_USER:-doctune}:${POSTGRES_PASSWORD:-doctune_secure_password_2026}@postgres:5432/${POSTGRES_DB:-doctune_studio}
       - PYTHONUNBUFFERED=1
+    volumes:
+      - ./web:/app/web
+      - ./pipeline:/app/pipeline
     networks:
       - doctune-net
 
