@@ -388,13 +388,18 @@ start_server() {
     info "  - Context Size: $CTX_SIZE tokens"
     info "  - GPU Layers  : $GPU_LAYERS"
 
+    API_KEY_ARG=()
+    if [ -n "${LLAMACPP_API_KEY:-}" ] && [ "$LLAMACPP_API_KEY" != "not-needed" ]; then
+        API_KEY_ARG=(--api-key "$LLAMACPP_API_KEY")
+    fi
+
     nohup "$SERVER_BIN" \
         -m "$ACTIVE_MODEL" \
         --host "$HOST" \
         --port "$PORT" \
         -c "$CTX_SIZE" \
         -ngl "$GPU_LAYERS" \
-        --api-key "not-needed" \
+        "${API_KEY_ARG[@]}" \
         > "$LOG_FILE" 2>&1 &
 
     PID=$!

@@ -263,7 +263,7 @@ class TeacherService:
         """
         clean_url = cls.normalize_base_url(provider, base_url)
         headers = {"Accept": "application/json"}
-        if api_key and api_key.strip() and api_key != "not-needed":
+        if api_key and api_key.strip():
             headers["Authorization"] = f"Bearer {api_key.strip()}"
 
         discovered: List[str] = []
@@ -407,7 +407,7 @@ class TeacherService:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        if api_key and api_key.strip() and api_key != "not-needed":
+        if api_key and api_key.strip():
             headers["Authorization"] = f"Bearer {api_key.strip()}"
 
         start_time = time.perf_counter()
@@ -454,6 +454,19 @@ class TeacherService:
                         "temperature": 0.0,
                     }
                     chat_res = await client.post(chat_url, json=ping_payload, headers=headers)
+                    if chat_res.status_code in (401, 403) and provider in ("llamacpp", "ollama", "vllm", "custom"):
+                        # Fallback: toggle Authorization header between None and Bearer not-needed
+                        retry_headers = dict(headers)
+                        if "Authorization" in retry_headers:
+                            del retry_headers["Authorization"]
+                        else:
+                            retry_headers["Authorization"] = "Bearer not-needed"
+                        try:
+                            retry_res = await client.post(chat_url, json=ping_payload, headers=retry_headers)
+                            if retry_res.status_code == 200:
+                                chat_res = retry_res
+                        except Exception:
+                            pass
 
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
 
