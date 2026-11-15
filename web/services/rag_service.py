@@ -179,5 +179,9 @@ class RAGService:
         """Clear the project's vector store."""
         return self.store.clear_collection(project_id)
 
+    def get_all_chunks(self, project_id: Optional[str] = "proj_default", limit: int = 150, offset: int = 0) -> List[Dict[str, Any]]:
+        """Return all text chunks currently indexed in ChromaDB for a project."""
+        return self.store.get_all_chunks(project_id=project_id, limit=limit, offset=offset)
+
 
 rag_service = RAGService()

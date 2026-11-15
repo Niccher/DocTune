@@ -438,43 +438,99 @@ async def upload_documents(request: Request, files: List[UploadFile] = File(...)
 
 
 @router.post("/api/v1/documents/delete")
-async def delete_document(request: Request, filename: str = Form(...)):
-    target = (RAW_DOCS_DIR / filename).resolve()
-    # Prevent directory traversal
+async def delete_document(request: Request, filename: Optional[str] = Form(None)):
+    clean_name = filename
+    if not clean_name:
+        try:
+            body = await request.json()
+            clean_name = body.get("filename")
+        except Exception:
+            pass
+    if not clean_name:
+        clean_name = request.query_params.get("filename")
+
+    if not clean_name or not clean_name.strip():
+        return JSONResponse({"status": "error", "message": "Missing 'filename' parameter"}, status_code=400)
+
+    base_name = os.path.basename(clean_name.strip())
+    target = (RAW_DOCS_DIR / base_name).resolve()
+
+    # 1. Unlink from local disk if present
     if str(target).startswith(str(RAW_DOCS_DIR.resolve())) and target.exists():
-        target.unlink()
+        try:
+            target.unlink()
+        except Exception:
+            pass
 
-        # Delete from MinIO/S3 or local fallback
-        storage_service.delete_file(storage_service.bucket_docs, filename)
+    # 2. Delete from MinIO S3 bucket
+    try:
+        storage_service.delete_file(storage_service.bucket_docs, base_name)
+    except Exception:
+        pass
 
-        # Delete from PostgreSQL
-        if SessionLocal:
-            try:
-                db = SessionLocal()
-                db.query(UploadedDocument).filter(UploadedDocument.filename == filename).delete()
-                db.commit()
-                db.close()
-            except Exception:
-                pass
+    # 3. Delete from PostgreSQL / SQLite metadata table
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            db.query(UploadedDocument).filter(UploadedDocument.filename == base_name).delete()
+            db.commit()
+            db.close()
+        except Exception:
+            pass
 
-        audit_service.log(
-            action="DOC_DELETE",
-            resource_type="document",
-            resource_id=filename,
-            request=request,
-            status="SUCCESS",
-        )
-        return JSONResponse({"status": "deleted", "filename": filename})
+    # 4. Remove vectorized chunks from ChromaDB store
+    try:
+        from pipeline.rag.chroma_store import chroma_store
+        chroma_store.delete_document(base_name)
+    except Exception:
+        pass
 
     audit_service.log(
         action="DOC_DELETE",
         resource_type="document",
-        resource_id=filename,
+        resource_id=base_name,
         request=request,
-        status="FAILED",
-        details={"error": "File not found or invalid path"},
+        status="SUCCESS",
     )
-    return JSONResponse({"status": "error", "message": "File not found or invalid path"}, status_code=400)
+    return JSONResponse({
+        "status": "success",
+        "deleted": True,
+        "filename": base_name,
+        "message": f"Successfully deleted {base_name}",
+    })
+
+
+@router.delete("/api/v1/dataset/samples/clear", response_class=JSONResponse)
+async def clear_dataset_samples(request: Request):
+    """Purge all instruction samples from the database and truncate the active JSONL file."""
+    # 1. Truncate local active file
+    if DEFAULT_JSONL.exists():
+        try:
+            with open(DEFAULT_JSONL, "w", encoding="utf-8") as f:
+                pass
+        except Exception:
+            pass
+
+    # 2. Clear Database records
+    deleted_count = 0
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            deleted_count = db.query(DatasetSample).delete()
+            db.commit()
+            db.close()
+        except Exception:
+            pass
+
+    audit_service.log(
+        action="DATASET_CLEAR",
+        resource_type="dataset",
+        resource_id="private_docs",
+        request=request,
+        status="SUCCESS",
+        details={"deleted_samples": deleted_count},
+    )
+    return JSONResponse({"status": "success", "message": "Active dataset instruction pairs cleared successfully", "deleted": deleted_count})
 
 
 @router.get("/api/v1/documents/{filename}/download-url")

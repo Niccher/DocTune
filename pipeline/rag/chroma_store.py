@@ -251,5 +251,49 @@ class ChromaVectorStore:
             "ready": is_ready and count > 0,
         }
 
+    def get_all_chunks(self, project_id: Optional[str] = "proj_default", limit: int = 150, offset: int = 0) -> List[Dict[str, Any]]:
+        """Retrieve stored text chunks and their document metadata from ChromaDB or memory fallback."""
+        client = self._get_client()
+        coll_name = self._collection_name(project_id)
+        chunks = []
+
+        if client is not None:
+            try:
+                coll = self.get_or_create_collection(project_id)
+                res = coll.get(limit=limit, offset=offset, include=["documents", "metadatas"])
+                ids = res.get("ids", [])
+                docs = res.get("documents", [])
+                metas = res.get("metadatas", [])
+                for i, cid in enumerate(ids):
+                    text = docs[i] if i < len(docs) else ""
+                    meta = metas[i] if (metas and i < len(metas)) else {}
+                    doc_name = (meta or {}).get("document_name") or (meta or {}).get("file_name") or (meta or {}).get("document_id") or "Document"
+                    chunks.append({
+                        "id": cid,
+                        "text": text,
+                        "metadata": meta or {},
+                        "char_count": len(text),
+                        "document": doc_name,
+                        "source": doc_name,
+                    })
+            except Exception as e:
+                logger.warning("Failed retrieving chunks from ChromaDB: %s", e)
+        else:
+            records = self._memory_fallback.get(coll_name, [])
+            for r in records[offset : offset + limit]:
+                text = r.get("document", "")
+                meta = r.get("metadata", {})
+                doc_name = meta.get("document_name") or meta.get("file_name") or "Document"
+                chunks.append({
+                    "id": r.get("id"),
+                    "text": text,
+                    "metadata": meta,
+                    "char_count": len(text),
+                    "document": doc_name,
+                    "source": doc_name,
+                })
+
+        return chunks
+
 
 chroma_store = ChromaVectorStore()

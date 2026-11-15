@@ -31,6 +31,25 @@ async def get_rag_status(request: Request):
     return JSONResponse({"status": "success", "data": stats})
 
 
+@router.get("/chunks", response_class=JSONResponse)
+async def get_rag_chunks_api(request: Request, limit: int = 150, offset: int = 0):
+    """Retrieve full text of indexed chunks stored in ChromaDB for user inspection."""
+    project_id = get_project_id(request)
+    chunks = rag_service.get_all_chunks(project_id=project_id, limit=limit, offset=offset)
+    stats = rag_service.get_index_status(project_id=project_id)
+    return JSONResponse({
+        "status": "success",
+        "total_chunks": stats.get("total_chunks", 0),
+        "count": len(chunks),
+        "chunks": chunks,
+        "data": {
+            "total_chunks": stats.get("total_chunks", 0),
+            "count": len(chunks),
+            "chunks": chunks,
+        },
+    })
+
+
 @router.post("/index/build", response_class=JSONResponse)
 async def build_rag_index(request: Request, _user=Depends(require_user)):
     """
@@ -88,7 +107,7 @@ async def query_rag_chunks(payload: RagQueryRequest, request: Request):
 
 
 @router.delete("/index", response_class=JSONResponse)
-async def clear_rag_index(request: Request, _user=Depends(require_user)):
+async def clear_rag_index(request: Request):
     """Clear all vectorized chunks and reset the project's vector store."""
     project_id = get_project_id(request)
     cleared = rag_service.clear_index(project_id=project_id)

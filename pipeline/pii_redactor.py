@@ -71,9 +71,14 @@ class PIIRedactor:
     Sanitizes enterprise documents to prevent memorization of PII during fine-tuning.
     """
 
-    def __init__(self, entities: Optional[List[str]] = None, mode: str = "placeholder"):
+    def __init__(self, entities: Optional[List[str]] = None, mode: str = "placeholder", custom_fillers: Optional[Dict[str, str]] = None):
         self.entities = set(entities or ALL_ENTITIES)
-        self.mode = mode.lower()  # placeholder, mask, or synthetic_hash
+        mode_str = mode or "placeholder"
+        if mode_str.lower().startswith("custom:"):
+            self.mode = f"custom:{mode_str[7:].strip()}"
+        else:
+            self.mode = mode_str.lower()
+        self.custom_fillers = custom_fillers or {}
         self.has_presidio = HAS_PRESIDIO
 
     def analyze(self, text: str) -> List[Dict[str, Any]]:
@@ -139,7 +144,10 @@ class PIIRedactor:
         return non_overlapping
 
     def _format_replacement(self, entity_type: str, raw_val: str) -> str:
-        """Format the anonymized token based on the selected mode."""
+        """Format the anonymized token based on the selected mode or custom fillers."""
+        if entity_type in self.custom_fillers:
+            return self.custom_fillers[entity_type]
+
         if self.mode == "mask":
             if "@" in raw_val:
                 parts = raw_val.split("@", 1)
@@ -154,7 +162,27 @@ class PIIRedactor:
             h = hashlib.sha256(raw_val.encode("utf-8")).hexdigest()[:6]
             return f"[{entity_type}_{h}]"
 
-        # Default: placeholder
+        elif self.mode == "semantic_tag":
+            tag_map = {
+                "PERSON": "<NAME>",
+                "PHONE_NUMBER": "<PHONE>",
+                "EMAIL_ADDRESS": "<EMAIL>",
+                "US_SSN": "<SSN>",
+                "CREDIT_CARD": "<CREDIT_CARD>",
+                "IP_ADDRESS": "<IP_ADDRESS>",
+                "API_KEY": "<API_KEY>",
+            }
+            return tag_map.get(entity_type, f"<{entity_type}>")
+
+        elif self.mode.startswith("custom:"):
+            filler = self.mode.split("custom:", 1)[1].strip()
+            if not filler:
+                return f"[{entity_type}]"
+            if (filler.startswith("[") and filler.endswith("]")) or (filler.startswith("<") and filler.endswith(">")):
+                return filler
+            return f"[{filler}]"
+
+        # Default: placeholder ([EMAIL_ADDRESS], [PERSON], etc.)
         return f"[{entity_type}]"
 
     def redact(self, text: str) -> Tuple[str, Dict[str, int]]:

@@ -102,9 +102,15 @@
             <span class="small fw-bold text-secondary"><i class="bi bi-database-check me-1 text-info"></i>ChromaDB Vector Store</span>
             <span class="badge bg-secondary-subtle text-secondary border small" id="ragStatusBadge">Checking...</span>
           </div>
-          <div class="d-flex gap-2 align-items-center">
-            <button type="button" class="btn btn-sm btn-outline-info flex-grow-1" id="btnBuildRagIndex" onclick="triggerRagIndexBuild()">
+          <div class="d-flex flex-wrap gap-1 align-items-center">
+            <button type="button" class="btn btn-sm btn-outline-info flex-grow-1" id="btnBuildRagIndex" onclick="triggerRagIndexBuild()" title="Embed & Index all uploaded documents">
               <i class="bi bi-vector-pen me-1"></i> Build Vector Index
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="openRagChunksModal()" title="View & Search Indexed Chunks in ChromaDB">
+              <i class="bi bi-eye me-1"></i> View Chunks
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearRagIndexConfirm()" title="Reset & Clear ChromaDB Vector Store">
+              <i class="bi bi-trash"></i>
             </button>
             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="checkRagStatus()" title="Refresh Vector Status">
               <i class="bi bi-arrow-clockwise"></i>
@@ -250,9 +256,12 @@
               <div class="col-sm-6">
                 <label class="form-label text-muted mb-0" style="font-size: 0.72rem;">Redaction Format</label>
                 <select class="form-select form-select-sm" name="pii_mode" id="pii_mode">
-                  <option value="placeholder" selected>Placeholder ([EMAIL], [PERSON])</option>
-                  <option value="mask">Character Mask (j***@corp.com)</option>
-                  <option value="synthetic_hash">Synthetic Hash ([PERSON_a4f9])</option>
+                  <option value="placeholder" selected>Placeholder ([EMAIL], [PERSON], [PHONE])</option>
+                  <option value="semantic_tag">Semantic Tag (&lt;NAME&gt;, &lt;PHONE&gt;, &lt;EMAIL&gt;, &lt;SSN&gt;)</option>
+                  <option value="mask">Character Mask (j***@corp.com, +1-555-***-1234)</option>
+                  <option value="synthetic_hash">Synthetic Hash ([PERSON_a4f9], [EMAIL_bc82])</option>
+                  <option value="custom:CONFIDENTIAL">Custom Filler ([CONFIDENTIAL])</option>
+                  <option value="custom:REDACTED">Custom Filler ([REDACTED])</option>
                 </select>
               </div>
               <div class="col-sm-6 text-sm-end pt-2 pt-sm-3">
@@ -313,6 +322,9 @@
       </button>
       <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#exportDatasetModal">
         <i class="bi bi-tag-fill me-1"></i> Snapshot Version
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearDatasetConfirm()" title="Clear Active Dataset & Purge Dummy Samples">
+        <i class="bi bi-trash me-1"></i> Clear Dataset
       </button>
     </div>
     {% if total_pages > 1 %}
@@ -558,6 +570,49 @@
     </div>
   </div>
 </div>
+
+<!-- Modal: ChromaDB RAG Chunks Inspector -->
+<div class="modal fade" id="ragChunksModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-layers text-primary me-2"></i>ChromaDB Vector Store Chunks Inspector</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="input-group input-group-sm w-50">
+            <span class="input-group-text bg-body"><i class="bi bi-search"></i></span>
+            <input type="text" id="chunkSearchInput" class="form-control" placeholder="Search chunk text or source document..." oninput="filterChunkRows()">
+          </div>
+          <div id="ragChunksCounter" class="text-muted small">Loading chunks...</div>
+        </div>
+        <div class="table-responsive border rounded" style="max-height: 60vh;">
+          <table class="table table-sm table-hover align-middle mb-0" id="ragChunksTable">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 25%;">Source Document</th>
+                <th style="width: 10%;">Length</th>
+                <th style="width: 60%;">Chunk Text Content</th>
+              </tr>
+            </thead>
+            <tbody id="ragChunksTableBody">
+              <tr>
+                <td colspan="4" class="text-center text-muted py-4">
+                  <span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading chunks from ChromaDB...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -592,22 +647,47 @@
     }
   });
 
-  // Delete Document Handler
+  // Delete Document Handler using SweetAlert2
   async function deleteDoc(filename) {
-    if (!confirm(`Delete ${filename}?`)) return;
+    const result = await Swal.fire({
+      title: 'Delete Document?',
+      text: `Are you sure you want to delete "${filename}"? This will remove it from local disk, MinIO, database records, and ChromaDB vector store.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#6c757d',
+      confirmButtonText: 'Yes, delete it',
+      cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+
+    const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
+    const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
+
     const formData = new FormData();
     formData.append('filename', filename);
 
     try {
-      const res = await fetch('/api/v1/documents/delete', { method: 'POST', body: formData });
+      const res = await fetch('/api/v1/documents/delete', {
+        method: 'POST',
+        headers: headers,
+        body: formData
+      });
+      const data = await res.json();
       if (res.ok) {
-        showToast('Deleted ' + filename, 'success');
-        setTimeout(() => window.location.reload(), 500);
+        Swal.fire({
+          icon: 'success',
+          title: 'Deleted!',
+          text: `"${filename}" has been deleted across all storage backends.`,
+          timer: 1500,
+          showConfirmButton: false
+        });
+        setTimeout(() => window.location.reload(), 1000);
       } else {
-        showToast('Failed to delete', 'error');
+        Swal.fire('Error', data.message || 'Failed to delete document', 'error');
       }
     } catch (err) {
-      showToast('Error deleting', 'error');
+      Swal.fire('Error', err.message || 'Error deleting document', 'error');
     }
   }
 
@@ -639,18 +719,37 @@
   }, 1000);
 
   async function abortDataPrepJob() {
-    if (!confirm('Are you sure you want to abort the currently running pipeline job?')) return;
+    const result = await Swal.fire({
+      title: 'Abort Pipeline Job?',
+      text: 'Are you sure you want to abort the currently running data preparation pipeline?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#6c757d',
+      confirmButtonText: 'Yes, abort job',
+      cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+
     try {
-      const res = await fetch('/api/v1/jobs/abort', { method: 'POST' });
+      const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
+      const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
+      const res = await fetch('/api/v1/jobs/abort', { method: 'POST', headers: headers });
       const data = await res.json();
       if (res.ok) {
-        showToast('Job aborted successfully', 'warning');
+        Swal.fire({
+          icon: 'warning',
+          title: 'Job Aborted',
+          text: data.message || 'Pipeline job aborted successfully.',
+          timer: 1500,
+          showConfirmButton: false
+        });
         setTimeout(() => window.location.reload(), 800);
       } else {
-        showToast(data.message || 'Failed to abort job', 'error');
+        Swal.fire('Error', data.message || 'Failed to abort job', 'error');
       }
     } catch (err) {
-      showToast('Error: ' + err.message, 'error');
+      Swal.fire('Error', err.message || 'Error aborting job', 'error');
     }
   }
 
@@ -666,15 +765,16 @@
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1.5" role="status" aria-hidden="true"></span> Generating Training Data... (in progress)';
 
     try {
-      const res = await fetch('/api/v1/data-prep/start', { method: 'POST', body: formData });
+      const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
+      const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
+      const res = await fetch('/api/v1/data-prep/start', { method: 'POST', headers: headers, body: formData });
       const data = await res.json();
       if (res.ok) {
-        showToast('Dataset preparation launched!', 'success');
+        showToast('Dataset preparation launched! Streaming logs below...', 'success');
         const box = document.getElementById('terminalBox');
         if (box) {
           box.innerText = 'Dataset preparation launched. Awaiting worker logs...\n';
         }
-        setTimeout(() => window.location.reload(), 1200);
       } else {
         showToast(data.message || 'Failed to start', 'error');
         btn.disabled = false;
@@ -1314,9 +1414,18 @@
   }
 
   async function deleteSnapshot(versionId, tag) {
-    if (!confirm(`Are you sure you want to permanently delete snapshot "${tag || versionId}" from MinIO and catalog?`)) {
-      return;
-    }
+    const result = await Swal.fire({
+      title: 'Delete Snapshot?',
+      text: `Are you sure you want to permanently delete snapshot "${tag || versionId}" from MinIO and the catalog? This action cannot be undone.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#6c757d',
+      confirmButtonText: 'Yes, delete snapshot',
+      cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+
     try {
       const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
       const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
@@ -1326,14 +1435,173 @@
       });
       const data = await res.json();
       if (res.ok && data.status === 'success') {
-        showToast(data.message || 'Snapshot deleted', 'success');
-        setTimeout(() => window.location.reload(), 600);
+        Swal.fire({
+          icon: 'success',
+          title: 'Snapshot Deleted',
+          text: data.message || 'Snapshot removed from MinIO and catalog.',
+          timer: 1500,
+          showConfirmButton: false
+        });
+        setTimeout(() => window.location.reload(), 800);
       } else {
-        showToast(data.message || 'Failed to delete snapshot', 'error');
+        Swal.fire('Error', data.message || 'Failed to delete snapshot', 'error');
       }
     } catch (e) {
-      showToast('Error: ' + e.message, 'error');
+      Swal.fire('Error', e.message || 'Failed to delete snapshot', 'error');
     }
+  }
+
+  // Clear Active Dataset & Truncate private_docs.jsonl
+  async function clearDatasetConfirm() {
+    const result = await Swal.fire({
+      title: 'Clear Active Dataset?',
+      text: 'Are you sure you want to wipe the active training dataset? This will truncate data/private_docs.jsonl and delete all sample records from the database. Saved snapshots in MinIO will remain safe.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#6c757d',
+      confirmButtonText: 'Yes, clear active dataset',
+      cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+      const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
+      const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
+      const res = await fetch('/api/v1/dataset/samples/clear', {
+        method: 'DELETE',
+        headers: headers
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        Swal.fire({
+          icon: 'success',
+          title: 'Dataset Cleared',
+          text: data.message || 'Active dataset wiped successfully.',
+          timer: 1500,
+          showConfirmButton: false
+        });
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        Swal.fire('Error', data.message || 'Failed to clear dataset', 'error');
+      }
+    } catch (e) {
+      Swal.fire('Error', e.message || 'Failed to clear dataset', 'error');
+    }
+  }
+
+  // Clear / Reset ChromaDB RAG Vector Store
+  async function clearRagIndexConfirm() {
+    const result = await Swal.fire({
+      title: 'Reset ChromaDB Index?',
+      text: 'Are you sure you want to reset the ChromaDB vector index? All indexed document chunks and embeddings will be cleared.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#6c757d',
+      confirmButtonText: 'Yes, reset index',
+      cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+      const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
+      const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
+      const res = await fetch('/api/v1/rag/index', {
+        method: 'DELETE',
+        headers: headers
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        Swal.fire({
+          icon: 'success',
+          title: 'Index Reset',
+          text: data.message || 'ChromaDB index cleared successfully.',
+          timer: 1500,
+          showConfirmButton: false
+        });
+        checkRagStatus();
+      } else {
+        Swal.fire('Error', data.message || 'Failed to reset index', 'error');
+      }
+    } catch (e) {
+      Swal.fire('Error', e.message || 'Failed to reset index', 'error');
+    }
+  }
+
+  // ── ChromaDB Chunks Modal Inspector ──
+  let cachedRagChunks = [];
+
+  async function openRagChunksModal() {
+    const modalEl = document.getElementById('ragChunksModal');
+    const bodyEl = document.getElementById('ragChunksTableBody');
+    const counterEl = document.getElementById('ragChunksCounter');
+    const searchInput = document.getElementById('chunkSearchInput');
+    if (searchInput) searchInput.value = '';
+
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    bodyEl.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading chunks from ChromaDB...</td></tr>';
+    if (counterEl) counterEl.textContent = 'Loading...';
+
+    try {
+      const res = await fetch('/api/v1/rag/chunks?limit=500');
+      const json = await res.json();
+      if (res.ok && json.status === 'success' && json.data) {
+        cachedRagChunks = json.data.chunks || [];
+        renderChunkRows(cachedRagChunks);
+      } else {
+        bodyEl.innerHTML = `<tr><td colspan="4" class="text-center text-danger py-4">${json.message || 'Failed to load chunks.'}</td></tr>`;
+        if (counterEl) counterEl.textContent = '0 chunks';
+      }
+    } catch (e) {
+      bodyEl.innerHTML = `<tr><td colspan="4" class="text-center text-danger py-4">Error: ${e.message}</td></tr>`;
+      if (counterEl) counterEl.textContent = 'Error';
+    }
+  }
+
+  function renderChunkRows(chunks) {
+    const bodyEl = document.getElementById('ragChunksTableBody');
+    const counterEl = document.getElementById('ragChunksCounter');
+    if (counterEl) counterEl.textContent = `Showing ${chunks.length} chunk(s)`;
+
+    if (!chunks.length) {
+      bodyEl.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No chunks found in vector index.</td></tr>';
+      return;
+    }
+
+    bodyEl.innerHTML = chunks.map((c, i) => {
+      const escaped = (c.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const source = (c.source || 'Unknown').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<tr>
+        <td class="text-muted small">${i + 1}</td>
+        <td>
+          <span class="badge bg-primary-subtle text-primary border font-monospace text-truncate d-inline-block" style="max-width: 220px;" title="${source}">
+            <i class="bi bi-file-earmark-text me-1"></i>${source}
+          </span>
+          <div class="text-muted" style="font-size: 0.7rem;">ID: ${c.id || '-'}</div>
+        </td>
+        <td class="small text-muted font-monospace">${(c.char_count || (c.text || '').length)} chars</td>
+        <td>
+          <div class="p-2 bg-body-secondary rounded font-monospace small" style="white-space: pre-wrap; max-height: 120px; overflow-y: auto; font-size: 0.8rem;">${escaped}</div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  function filterChunkRows() {
+    const query = (document.getElementById('chunkSearchInput')?.value || '').toLowerCase().trim();
+    if (!query) {
+      renderChunkRows(cachedRagChunks);
+      return;
+    }
+    const filtered = cachedRagChunks.filter(c => 
+      (c.text && c.text.toLowerCase().includes(query)) ||
+      (c.source && c.source.toLowerCase().includes(query)) ||
+      (c.id && c.id.toLowerCase().includes(query))
+    );
+    renderChunkRows(filtered);
   }
 
   async function openPiiAuditModal() {
