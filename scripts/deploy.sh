@@ -4,15 +4,18 @@
 #             for DocTune Studio (Private Document LLM Fine-Tuning Platform)
 #
 # Usage:  bash scripts/deploy.sh [flags]
-#         bash scripts/deploy.sh [llamacpp|ollama] [subcommand]
+#         bash scripts/deploy.sh [audit|llamacpp|ollama] [subcommand]
 #         (run from the repository root)
 #
 # Flags:
 #   --with-llamacpp   Start core stack + host llama-server (Port 8080)
 #   --with-ollama     Start core stack + host Ollama daemon (Port 11434)
+#   --cpu             Force CPU-optimized build (saves ~10GB; avoids CUDA/Triton bloat)
+#   --cuda            Force CUDA GPU-accelerated build (requires NVIDIA GPU)
 #   --hard-reset      Tear down existing containers and re-deploy cleanly
 #
 # Modular Runner Subcommands:
+#   bash scripts/deploy.sh audit                                   # Pre-flight system diagnostic
 #   bash scripts/deploy.sh llamacpp [start|stop|restart|status|logs]
 #   bash scripts/deploy.sh ollama [start|stop|restart|status|logs|pull-model]
 #
@@ -28,7 +31,7 @@
 #
 # 13-Step Automated Pipeline:
 #   1. Detect Dynamic IP (Public / LAN Fallback)
-#   2. Pre-flight System & Resource Check (OS, CPU, RAM, Disk, Auto-Swap)
+#   2. Pre-flight System & Resource Check (OS, CPU, RAM, Disk, Auto-Swap, GPU/CPU Detection)
 #   3. Git Working Tree Sanity Check & Pull
 #   4. Write / Patch .env Configuration
 #   5. Stop Old Containers & Clear Name Conflicts
@@ -45,10 +48,15 @@
 # ==============================================================================
 set -euo pipefail
 
-# ── Subcommand Dispatcher for Modular Inference Runners ────────────────────────
-# Enables: bash scripts/deploy.sh llamacpp [start|stop|restart|status|logs]
+# ── Subcommand Dispatcher for Modular Diagnostic & Inference Runners ───────────
+# Enables: bash scripts/deploy.sh audit
+#          bash scripts/deploy.sh llamacpp [start|stop|restart|status|logs]
 #          bash scripts/deploy.sh ollama [start|stop|restart|status|logs|pull-model]
-if [ "${1:-}" = "llamacpp" ] || [ "${1:-}" = "llama" ]; then
+if [ "${1:-}" = "audit" ] || [ "${1:-}" = "doctor" ] || [ "${1:-}" = "check" ]; then
+    shift
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    exec bash "$SCRIPT_DIR/audit_deploy.sh" "$@"
+elif [ "${1:-}" = "llamacpp" ] || [ "${1:-}" = "llama" ]; then
     shift
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     exec bash "$SCRIPT_DIR/deploy_llamacpp.sh" "$@"
@@ -168,15 +176,39 @@ FREE_MEM_GB=$(awk -v m="$FREE_MEM_MB" 'BEGIN {printf "%.2f GB", m/1024}')
 
 SWAP_TOTAL_MB=$(free -m 2>/dev/null | awk '/Swap:/ {print $2}' || echo "0")
 
-DISK_FREE_MB=$(df -m . | awk 'NR>1 {print $(NF-2)}')
-DISK_TOTAL_GB=$(df -h . | awk 'NR>1 {print $2}')
-DISK_FREE_GB=$(df -h . | awk 'NR>1 {print $4}')
+DISK_FREE_MB=$(df -P -m . | awk 'NR==2 {print $4}')
+DISK_TOTAL_GB=$(df -P -h . | awk 'NR==2 {print $2}')
+DISK_FREE_GB=$(df -P -h . | awk 'NR==2 {print $4}')
 
 log "OS Environment   : ${OS_PRETTY} (${ARCH}, kernel ${KERNEL})"
 log "CPU Architecture : ${CPU_MODEL} (${CPU_CORES} Cores)"
 log "Physical Memory  : ${FREE_MEM_GB} free of ${TOTAL_MEM_GB} (${MEM_PCT}% used)"
 log "Swap Space       : ${SWAP_TOTAL_MB}MB total swap"
 log "Available Disk   : ${DISK_FREE_GB} free (${DISK_FREE_MB}MB) on project partition"
+
+# Hardware Acceleration & Target Device Detection
+CLI_TARGET_DEVICE=""
+for arg in "$@"; do
+    case "$arg" in
+        --cpu)
+            CLI_TARGET_DEVICE="cpu" ;;
+        --cuda|--gpu)
+            CLI_TARGET_DEVICE="cuda" ;;
+    esac
+done
+
+if [ -n "$CLI_TARGET_DEVICE" ]; then
+    TARGET_DEVICE="$CLI_TARGET_DEVICE"
+    log "Hardware Mode    : Overridden via CLI flag -> TARGET_DEVICE=${TARGET_DEVICE}"
+elif command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+    TARGET_DEVICE="cuda"
+    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 || echo "NVIDIA GPU")
+    log "Hardware Device  : ${GPU_NAME} detected -> TARGET_DEVICE=cuda"
+else
+    TARGET_DEVICE="cpu"
+    log "Hardware Device  : No NVIDIA GPU detected -> TARGET_DEVICE=cpu"
+    log "                   (Using CPU PyTorch; saves ~10GB disk & skips CUDA/Triton bloat)"
+fi
 
 # Auto-provision 4GB swapfile if memory pressure is severe
 if [ "$SWAP_TOTAL_MB" -lt 1024 ] && [ "$FREE_MEM_MB" -lt 3500 ] && [ "$FREE_MEM_MB" -gt 0 ]; then
@@ -194,7 +226,7 @@ if [ "$DISK_FREE_MB" -lt 28672 ]; then
     warn "Free disk space is ${DISK_FREE_GB} free (< 28 GB ML build buffer). Running proactive Docker builder & layer cache prune..."
     docker builder prune -f >/dev/null 2>&1 || true
     docker image prune -f >/dev/null 2>&1 || true
-    RECHECK_DISK=$(df -h . | awk 'NR>1 {print $4}')
+    RECHECK_DISK=$(df -P -h . | awk 'NR==2 {print $4}')
     log "Reclaimed disk space: ${RECHECK_DISK} free now"
 fi
 
@@ -284,6 +316,7 @@ set_env "MINIO_CONSOLE_PORT" "$MINIO_CONSOLE_PORT"
 set_env "DOZZLE_PORT" "$DOZZLE_PORT"
 set_env "LLAMA_CPP_PORT" "$LLAMA_CPP_PORT"
 set_env "OLLAMA_PORT" "$OLLAMA_PORT"
+set_env "TARGET_DEVICE" "$TARGET_DEVICE"
 set_env "DEPLOY_LLAMACPP" "$WITH_LLAMACPP"
 set_env "DEPLOY_OLLAMA" "$WITH_OLLAMA"
 set_env "APP_BASE_URL" "$BASE_URL"
@@ -291,6 +324,7 @@ set_env "AUTH_ENABLED" "$AUTH_ENABLED"
 
 log "Studio Web URL            -> ${BASE_URL}"
 log "Authentication Guard      -> ${AUTH_ENABLED} (enforced on all internal studio pages)"
+log "PyTorch Target Device     -> ${TARGET_DEVICE} ($( [ "$TARGET_DEVICE" = "cuda" ] && echo "GPU acceleration enabled" || echo "CPU lightweight build" ))"
 log "PostgreSQL Port           -> ${POSTGRES_PORT}"
 log "Redis Port                -> ${REDIS_PORT}"
 log "MinIO S3 API / Console    -> ${MINIO_PORT} / ${MINIO_CONSOLE_PORT}"
@@ -337,11 +371,11 @@ if ! DOCKER_BUILDKIT=1 docker compose build web 2>&1 | tail -15; then
     DOCKER_BUILDKIT=1 docker compose build --no-cache web 2>&1 | tail -15
 fi
 
-log "2/3 Building worker container (PyTorch ML fine-tuning stack)..."
-if ! DOCKER_BUILDKIT=1 docker compose build celery_worker 2>&1 | tail -15; then
+log "2/3 Building worker container (PyTorch ML fine-tuning stack - target: ${TARGET_DEVICE})..."
+if ! DOCKER_BUILDKIT=1 docker compose build --build-arg TARGET_DEVICE="$TARGET_DEVICE" celery_worker 2>&1 | tail -15; then
     warn "Worker build reported an error. Pruning build cache and retrying cleanly..."
     docker builder prune -af >/dev/null 2>&1 || true
-    DOCKER_BUILDKIT=1 docker compose build --no-cache celery_worker 2>&1 | tail -15
+    DOCKER_BUILDKIT=1 docker compose build --no-cache --build-arg TARGET_DEVICE="$TARGET_DEVICE" celery_worker 2>&1 | tail -15
 fi
 
 log "3/3 Launching distributed stack in detached mode..."

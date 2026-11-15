@@ -3,11 +3,16 @@
 # ==============================================================================
 # Supports both NVIDIA CUDA GPUs (on GCP / GPU hosts) and CPU fallback mode.
 # ==============================================================================
+ARG TARGET_DEVICE=auto
+
 FROM python:3.11-slim-bookworm AS base
+
+ARG TARGET_DEVICE
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    TARGET_DEVICE=${TARGET_DEVICE:-auto}
 
 WORKDIR /app
 
@@ -19,11 +24,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ML stack and worker dependencies with BuildKit pip caching
+# Install ML stack and worker dependencies with BuildKit pip caching.
+# If TARGET_DEVICE=cpu, install lightweight CPU-only PyTorch first and strip
+# torch from requirements.txt to prevent pip downloading ~10GB of unused CUDA/Triton wheels.
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+    if [ "$TARGET_DEVICE" = "cpu" ]; then \
+        echo "===> [BUILD] Configuring CPU-optimized ML stack (no CUDA/Triton bloat)..." && \
+        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+        sed -i '/^torch[>=<]/d' requirements.txt && \
+        pip install --no-cache-dir -r requirements.txt; \
+    else \
+        echo "===> [BUILD] Configuring GPU-accelerated ML stack (CUDA/Triton enabled)..." && \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 # Copy source code and configurations
 COPY pipeline/ ./pipeline/

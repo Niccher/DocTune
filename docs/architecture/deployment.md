@@ -8,18 +8,25 @@ DocTune Studio follows a **Local-First, Cloud-Identical Deployment Model**. The 
 
 DocTune Studio provides a **Single Master Entry Point** via [`scripts/deploy.sh`](../../scripts/deploy.sh) that orchestrates both containerized services (PostgreSQL, Redis, MinIO S3, Web Studio, Celery Workers, Dozzle) and zero-overhead native host inference runners (**llama.cpp** and **Ollama**).
 
-### Deployment Modes
+### Deployment Modes & Diagnostic Audit
 ```bash
+# 0. Pre-Flight System & Hardware Audit (Run before deploying)
+bash scripts/deploy.sh audit
+
 # 1. Standard Core Stack (Default: Cloud Teacher / Standby mode)
 bash scripts/deploy.sh
 
 # 2. Full Stack + Local llama.cpp OpenAI Gateway (Port 8080, Qwen 2.5 1.5B GGUF)
 bash scripts/deploy.sh --with-llamacpp
 
-# 3. Full Stack + Local Ollama Daemon (Port 11434, qwen2.5:1.5b)
+# 3. Force CPU or GPU Build (Auto-detected if omitted)
+bash scripts/deploy.sh --cpu --with-llamacpp    # Ultra-lightweight ~1.4GB worker; saves ~10GB disk
+bash scripts/deploy.sh --cuda --with-llamacpp   # Full NVIDIA CUDA 12 stack for GPU VMs
+
+# 4. Full Stack + Local Ollama Daemon (Port 11434, qwen2.5:1.5b)
 bash scripts/deploy.sh --with-ollama
 
-# 4. Clean Redeployment (resets transient containers while preserving database state)
+# 5. Clean Redeployment (resets transient containers while preserving database state)
 bash scripts/deploy.sh --hard-reset
 ```
 
