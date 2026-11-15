@@ -32,11 +32,11 @@
                     </td>
                     <td>
                       <a href="/runs/{{ r.id }}" class="fw-semibold small font-monospace text-primary text-truncate text-decoration-none d-block" style="max-width: 140px;" title="View Run Details">{{ r.id }}</a>
-                      <span class="badge bg-primary-subtle text-primary" style="font-size: 0.7rem;">{{ r.method|upper }}</span>
-                      <span class="text-muted small" style="font-size: 0.72rem;">lr={{ r.learning_rate }}</span>
+                      <span class="badge bg-primary-subtle text-primary" style="font-size: 0.7rem;">{{ (r.method|default('QLoRA'))|upper }}</span>
+                      <span class="text-muted small" style="font-size: 0.72rem;">lr={{ r.learning_rate|default('-') }}</span>
                     </td>
                     <td class="small fw-semibold">
-                      {{ '%.4f'|format(r.final_loss) if r.final_loss is not none else '-' }}
+                      {{ '%.4f'|format(r.final_loss) if (r.final_loss is defined and r.final_loss is number) else (r.final_loss if (r.final_loss is defined and r.final_loss is not none) else '-') }}
                     </td>
                     <td>
                       {% if r.status == 'COMPLETED' %}
@@ -44,7 +44,7 @@
                       {% elif r.status == 'RUNNING' %}
                         <span class="badge bg-warning-subtle text-warning">RUNNING</span>
                       {% else %}
-                        <span class="badge bg-secondary-subtle text-secondary">{{ r.status }}</span>
+                        <span class="badge bg-secondary-subtle text-secondary">{{ r.status|default('PENDING') }}</span>
                       {% endif %}
                     </td>
                   </tr>

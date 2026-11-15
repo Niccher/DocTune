@@ -5,6 +5,7 @@ Side-by-side run comparison studio.
 Overlays multi-series training loss curves and benchmarks hyperparameter performance.
 """
 
+import logging
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from fastapi import APIRouter, Request, Query, Depends, HTTPException
@@ -17,6 +18,7 @@ from web.db.session import SessionLocal, get_db, resolve_session
 from web.db.models import Run, MetricPoint, Checkpoint, EvaluationBenchmark
 from web.routers.auth import get_project_id, require_project_role, scoped_query
 
+logger = logging.getLogger("doctune.experiments")
 router = APIRouter()
 
 
@@ -50,8 +52,8 @@ def get_all_runs_summary(project_id: Optional[str] = None, limit: int = 50) -> L
                 return runs
             finally:
                 db.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Database query in get_all_runs_summary failed, falling back to disk: %s", e)
 
     # Disk scan fallback from isolated artifacts/runs/
     artifacts_runs_dir = PROJECT_ROOT / "artifacts" / "runs"
@@ -84,8 +86,11 @@ def get_all_runs_summary(project_id: Optional[str] = None, limit: int = 50) -> L
                 "epochs": meta.get("epochs", meta.get("num_train_epochs", 3)),
                 "batch_size": meta.get("batch_size", meta.get("per_device_train_batch_size", 2)),
                 "learning_rate": meta.get("learning_rate", meta.get("learning_rate_lora", 0.0002)),
+                "duration_sec": meta.get("duration_sec"),
+                "final_loss": meta.get("final_loss"),
                 "created_at": meta.get("created_at"),
                 "metrics_count": len(meta.get("metrics", [])) if "metrics" in meta else 0,
+                "dataset_version": meta.get("dataset_version"),
             })
     return runs
 
@@ -93,7 +98,11 @@ def get_all_runs_summary(project_id: Optional[str] = None, limit: int = 50) -> L
 @router.get("/experiments", response_class=HTMLResponse)
 async def experiments_view(request: Request):
     project_id = get_project_id(request)
-    runs = get_all_runs_summary(project_id=project_id, limit=30)
+    try:
+        runs = get_all_runs_summary(project_id=project_id, limit=30)
+    except Exception as e:
+        logger.error("Error retrieving runs for experiments view: %s", e)
+        runs = []
     return templates.TemplateResponse(
         request=request,
         name="experiments.html",

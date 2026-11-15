@@ -205,12 +205,13 @@ class HFModelService:
 
         clean_query = query.strip()
         settings = config_service.get_settings()
-        token = settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN")
+        raw_token = (settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN") or "").strip()
+        token = raw_token if raw_token else None
         default_model = settings.get("huggingface", {}).get("default_model_id", "")
 
         headers = {"User-Agent": "DocTune-Studio/1.0"}
         if token:
-            headers["Authorization"] = f"Bearer {token.strip()}"
+            headers["Authorization"] = f"Bearer {token}"
 
         url = (
             f"https://huggingface.co/api/models?"
@@ -285,10 +286,25 @@ class HFModelService:
 
     def get_download_status(self, model_id: str) -> Dict[str, Any]:
         """Get live download status for a model."""
-        cache_info = self.check_model_cache(model_id)
-        if cache_info["cached"]:
+        clean_id = model_id.strip()
+        cache_info = self.check_model_cache(clean_id)
+        if cache_info.get("cached"):
             return {"status": "COMPLETED", "progress": 100, **cache_info}
-        return _download_tasks.get(model_id, {"status": "IDLE", "progress": 0, **cache_info})
+        task = _download_tasks.get(clean_id)
+        if task:
+            celery_id = task.get("celery_task_id")
+            if celery_id and task.get("status") not in ("COMPLETED", "FAILED"):
+                try:
+                    from web.celery_app import app as celery_app
+                    if celery_app:
+                        res = celery_app.AsyncResult(celery_id)
+                        if res.state == "FAILURE":
+                            task["status"] = "FAILED"
+                            task["error"] = str(res.result)
+                except Exception:
+                    pass
+            return {"status": task.get("status", "IDLE"), "progress": task.get("progress", 0), **task, **cache_info}
+        return {"status": "IDLE", "progress": 0, **cache_info}
 
     async def start_background_download(self, model_id: str):
         """Asynchronously download model weights/tokenizer into cache."""
@@ -297,7 +313,8 @@ class HFModelService:
 
         try:
             settings = config_service.get_settings()
-            token = settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN")
+            raw_token = (settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN") or "").strip()
+            token = raw_token if raw_token else None
             cache_dir = self.get_cache_dir()
 
             # Create destination folder structure
@@ -311,9 +328,9 @@ class HFModelService:
             config_url = f"https://huggingface.co/{clean_id}/raw/main/config.json"
             headers = {"User-Agent": "DocTune-Studio/1.0"}
             if token:
-                headers["Authorization"] = f"Bearer {token.strip()}"
+                headers["Authorization"] = f"Bearer {token}"
 
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 r = await client.get(config_url, headers=headers)
                 if r.status_code == 200:
                     (dest_folder / "config.json").write_bytes(r.content)

@@ -649,10 +649,12 @@ ollama run my-private-model</code></pre>
           fetchHubModels();
         } else if (data.download_status === 'FAILED') {
           clearInterval(timer);
-          showToast(`Download failed: ${data.error || 'Unknown error'}`, 'error');
+          const errDetail = data.error || data.message || 'Unknown error occurred during download';
+          showToast(`Download failed: ${errDetail}`, 'error');
           if (btn) {
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-download me-1"></i> Download';
+            btn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i> Retry Download';
+            btn.title = errDetail;
           }
         } else if (btn) {
           btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> ${data.progress || 30}%`;

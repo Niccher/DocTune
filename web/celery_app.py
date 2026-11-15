@@ -710,7 +710,8 @@ if HAS_CELERY and app:
         from web.services.config_service import config_service
 
         settings = config_service.get_settings()
-        token = settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN")
+        raw_token = (settings.get("huggingface", {}).get("token") or os.getenv("HF_TOKEN") or "").strip()
+        token = raw_token if raw_token else None
 
         start_msg = f"--- [CELERY WORKER] Initiating pre-download of base model: {model_id} ---"
         publish_redis_event(f"download:{model_id}", {

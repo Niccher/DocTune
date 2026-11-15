@@ -6,7 +6,9 @@ and WebSocket endpoint for live log streaming and loss graphs.
 """
 
 import json
+import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
 from fastapi import APIRouter, Request, Form, Query, WebSocket, WebSocketDisconnect, Depends
@@ -24,6 +26,7 @@ from web.templates_config import templates
 from web.celery_app import is_celery_available, HAS_CELERY, app as celery_app
 from web.routers.auth import require_project_role, get_project_id
 
+logger = logging.getLogger("doctune.training")
 router = APIRouter()
 
 
@@ -92,7 +95,7 @@ async def start_training(
 
     project_id = getattr(request.state, "project_id", "proj_default")
     user = getattr(request.state, "user", None)
-    user_id = user.id if user else None
+    user_id = user.id if (user and isinstance(getattr(user, "id", None), int)) else None
 
     # Lineage: Resolve custom dataset version if specified
     ds_entry = None
@@ -102,6 +105,20 @@ async def start_training(
             cfg.dataset_path = Path(ds_entry["path"])
             cfg.dataset_version_id = ds_entry.get("version_tag")
             cfg.dataset_sha256 = ds_entry.get("sha256")
+
+    # Proactive Validation: Ensure training dataset exists and is non-empty before launching run
+    ds_path = Path(cfg.dataset_path) if cfg.dataset_path else None
+    if not ds_path or not ds_path.exists() or ds_path.stat().st_size == 0:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": (
+                    f"Training dataset '{ds_path or 'data/private_docs.jsonl'}' not found or empty. "
+                    "Please go to Data Prep Studio (/data-prep) to generate synthetic Q&A data or upload raw documents first."
+                ),
+            },
+            status_code=400,
+        )
 
     # Generate collision-resistant run ID and isolated artifact workspace
     run_id = generate_run_id(method)
@@ -218,6 +235,12 @@ async def start_training(
             db.commit()
             db.close()
     except Exception as e:
+        if "db" in locals() and db:
+            try:
+                db.rollback()
+                db.close()
+            except Exception:
+                pass
         logger.error("Failed persisting run to database: %s", e)
         return JSONResponse(
             {"status": "error", "message": f"Database failure persisting run record: {str(e)}"},

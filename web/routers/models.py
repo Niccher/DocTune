@@ -588,6 +588,8 @@ async def get_model_download_status(model_id: str):
         "cached": status_data.get("cached", False),
         "size_gb": status_data.get("size_gb", 0.0),
         "path": status_data.get("path"),
+        "error": status_data.get("error"),
+        "message": status_data.get("message") or status_data.get("line"),
     })
 
 
