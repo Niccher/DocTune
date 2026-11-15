@@ -291,10 +291,13 @@ def process_one_file(file_path: Path, client: OpenAI, model: str,
                      output_file: Path, max_chunks: int,
                      chunk_size: int, overlap: int,
                      redact_pii: bool = True, pii_mode: str = "placeholder") -> tuple:
+    t_start = time.time()
     text = extract_text(file_path)
     if not text:
-        return (0, {"file": file_path.name, "counts": {}, "excerpts": []}, "Empty or unparseable document text")
+        elapsed = round(time.time() - t_start, 2)
+        return (0, {"file": file_path.name, "counts": {}, "excerpts": [], "chunks": 0, "words": 0, "duration_sec": elapsed}, "Empty or unparseable document text")
 
+    word_count = len(text.split())
     pii_counts = {}
     pii_excerpts = []
     if redact_pii:
@@ -327,7 +330,15 @@ def process_one_file(file_path: Path, client: OpenAI, model: str,
         elif err:
             last_err = err
 
-    return (written, {"file": file_path.name, "counts": pii_counts, "excerpts": pii_excerpts}, last_err)
+    elapsed = round(time.time() - t_start, 2)
+    return (written, {
+        "file": file_path.name,
+        "counts": pii_counts,
+        "excerpts": pii_excerpts,
+        "chunks": len(chunks),
+        "words": word_count,
+        "duration_sec": elapsed,
+    }, last_err)
 
 
 # ============================================================
@@ -456,12 +467,15 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
             try:
                 pairs, pii_data, last_err = future.result()
                 total_pairs += pairs
+                dur = pii_data.get("duration_sec", 0.0)
+                chunks_cnt = pii_data.get("chunks", 0)
+                words_cnt = pii_data.get("words", 0)
                 if pairs > 0:
-                    notify_log("SUCCESS", f"{f_path.name}: generated {pairs} pairs (running total: {total_pairs})")
+                    notify_log("SUCCESS", f"{f_path.name} (took {dur}s): extracted {words_cnt} words, {chunks_cnt} chunks → generated {pairs} pairs (running total: {total_pairs})")
                 elif last_err:
-                    notify_log("DANGER", f"{f_path.name}: 0 pairs generated | Teacher LLM error: {last_err}")
+                    notify_log("DANGER", f"{f_path.name} (took {dur}s): extracted {words_cnt} words, {chunks_cnt} chunks → 0 pairs generated | Teacher Error: {last_err}")
                 else:
-                    notify_log("WARN", f"{f_path.name}: 0 pairs generated (empty document text or no chunks created)")
+                    notify_log("WARN", f"{f_path.name} (took {dur}s): 0 pairs generated (empty document text or no chunks created)")
                 if pii_data and pii_data.get("counts"):
                     pii_files_audit.append(pii_data)
                     for k, v in pii_data["counts"].items():
@@ -497,8 +511,11 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
             notify_log("WARN", f"[STORAGE NOTICE] Dataset upload to S3 skipped or failed: {e}")
 
     # 3. Auto-save immutable snapshot with format YYYY-Mon-DD-HHMMSS_<slug>.jsonl
-    elapsed = round(time.time() - start_time, 1)
+    elapsed = round(time.time() - start_time, 2)
+    avg_per_doc = round(elapsed / len(all_files), 2) if all_files else 0.0
+    throughput = round(len(all_files) / elapsed, 2) if elapsed > 0 else 0.0
     auto_snap_info = None
+
     if output_file.exists() and total_pairs > 0:
         try:
             from web.services.dataset_version_service import dataset_version_service
@@ -529,15 +546,15 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
             pass
 
     notify_log("INFO", "============================================================")
-    notify_log("INFO", f"INGESTION COMPLETED in {elapsed}s | Generated {total_pairs} instruction pairs")
+    notify_log("INFO", f"INGESTION SUMMARY | Total Duration: {elapsed}s | Documents: {len(all_files)} | Avg: {avg_per_doc}s/doc | Speed: {throughput} docs/s")
     notify_log("INFO", f"Target Working File: data/{output_file.name} ({total_pairs} pairs, {round(output_file.stat().st_size / 1024, 1) if output_file.exists() else 0} KB)")
     if auto_snap_info:
-        notify_log("SUCCESS", f"Snapshot: {auto_snap_info['filename']} | MinIO Key: {auto_snap_info.get('s3_key', '-')}")
+        notify_log("SUCCESS", f"[AUTO-SNAPSHOT] Created immutable snapshot: {auto_snap_info['filename']} | MinIO Key: {auto_snap_info.get('s3_key', '-')}")
         notify_log("INFO", "Next Step: Head to Training Studio to fine-tune your model on this snapshot!")
     elif total_pairs == 0:
-        notify_log("DANGER", "Result: 0 instruction pairs generated.")
-        notify_log("WARN", "Diagnosis: Teacher LLM calls failed or returned empty content. Verify provider gateway is online.")
-        notify_log("INFO", "Pro-Tip: Use 'Snapshot Chunks to Dataset' on ChromaDB card to fine-tune directly on your indexed chunks!")
+        notify_log("WARN", "[AUTO-SNAPSHOT] Skipped snapshot generation: 0 instruction pairs were generated (no data to save).")
+        notify_log("DANGER", "Cause: Teacher LLM calls failed or returned empty content. Verify provider gateway is online.")
+        notify_log("INFO", "Pro-Tip: Use 'Snapshot Chunks to Dataset' on ChromaDB card above to fine-tune directly on your indexed chunks!")
     notify_log("INFO", "============================================================")
     return total_pairs
 

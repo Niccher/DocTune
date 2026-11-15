@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-11-15
+
+### Added
+- **Universal Branding & Favicon Infrastructure**:
+  - High-definition neural-layer vector icon (`favicon.svg`) and multi-resolution binary (`favicon.ico`).
+  - Native endpoints `GET /favicon.ico` and `GET /favicon.svg` with authentication middleware exemption.
+  - Universal favicon integration across studio layouts, public landing pages, and authentication flows.
+- **Studio Action Documentation & Interactive Reference Guides**:
+  - Contextual tooltips across all interactive controls in `/admin`, `/playground`, `/models`, `/experiments`, and `/data-prep`.
+  - In-depth technical architecture accordions on all 5 studio pages matching the `/training` reference design.
+- **Data Ingestion Telemetry & Execution Stopwatch**:
+  - Per-document duration tracking (`took X.XXs`), chunk counts, and word extractions.
+  - Standardized terminal log format: `[HH:MM:SS] [LEVEL] <message>` with step markers.
+  - Overall ingestion performance summary: total elapsed time, throughput (`docs/sec`), and average duration per document.
+  - Clear diagnosis and warnings when Teacher LLM fails or produces 0 pairs, with explicit explanation of auto-snapshot skip.
+- **RAG Vector Indexing Telemetry & Auto-Snapshots**:
+  - In-memory vector indexing progress tracking and pub/sub streaming.
+  - ChromaDB chunk export directly to structured training datasets without external Teacher LLM dependency.
+  - Cleaned up Target Dataset input interface with dedicated slug configuration and helper documentation.
+
 ## [1.3.0] - 2026-11-07
 
 ### Added

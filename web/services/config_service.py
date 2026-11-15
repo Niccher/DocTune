@@ -315,7 +315,7 @@ class ConfigService:
                     return v
         except Exception:
             pass
-        return "1.3.0"
+        return "1.4.0"
 
     def get_compute_resources(self) -> Dict[str, Any]:
         """Return active compute resource constraints."""

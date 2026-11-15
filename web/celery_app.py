@@ -423,9 +423,11 @@ if HAS_CELERY and app:
         pii_mode: str = "placeholder",
         dataset_name: str = "private_docs",
     ):
-        """Execute document chunking and teacher LLM dataset generation inside distributed worker."""
+        import time
+        start_time = time.time()
+        start_str = datetime.now().strftime("%H:%M:%S")
         from pipeline.prepare_data import run_preparation, RAW_DOCS_DIR, DEFAULT_JSONL
-        start_msg = f"--- [CELERY WORKER] Document processing started for job {run_id} (PII Redaction: {redact_pii}, Dataset: {dataset_name}) ---"
+        start_msg = f"[{start_str}] [CELERY] Worker task started for job {run_id} (Dataset: {dataset_name}, PII Redaction: {redact_pii})"
         publish_redis_event(f"run:{run_id}:stream", {
             "type": "log",
             "line": start_msg,
@@ -447,14 +449,16 @@ if HAS_CELERY and app:
                 dataset_name=dataset_name,
                 run_id=run_id,
             )
-            done_msg = f"--- [COMPLETED] Wrote {total_pairs} instruction pairs ---"
+            elapsed = round(time.time() - start_time, 2)
+            done_str = datetime.now().strftime("%H:%M:%S")
+            done_msg = f"[{done_str}] [COMPLETED] Job {run_id} finished in {elapsed}s | Wrote {total_pairs} instruction pairs"
             publish_redis_event(f"run:{run_id}:stream", {
                 "type": "status",
                 "status": "COMPLETED",
                 "line": done_msg,
                 "message": done_msg,
             })
-            return {"status": "success", "run_id": run_id, "total_pairs": total_pairs}
+            return {"status": "success", "run_id": run_id, "total_pairs": total_pairs, "duration_sec": elapsed}
         except Exception as e:
             logger.error("Data prep task failed: %s", e)
             err_msg = f"--- [FAILED] Data preparation error: {str(e)} ---"

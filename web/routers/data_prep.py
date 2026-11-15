@@ -901,7 +901,9 @@ async def start_data_prep(
             job_type=JobType.DATA_PREP,
             metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "run_id": run_id, "mode": "celery", "redact_pii": redact_pii, "dataset_name": clean_ds_name},
         )
-        await state.add_log(f"--- [DISPATCH] Data preparation job {run_id} dispatched to Celery cluster (Dataset: {clean_ds_name}, PII: {redact_pii}) ---")
+        from datetime import datetime
+        now_str = datetime.now().strftime("%H:%M:%S")
+        await state.add_log(f"[{now_str}] [DISPATCH] Data preparation job {run_id} dispatched to Celery cluster (Dataset: {clean_ds_name}, PII: {redact_pii})")
         celery_task = celery_app.send_task(
             "web.celery_app.task_prepare_data",
             args=[run_id, final_url, final_model, final_api_key, max_chunks, chunk_size, overlap, workers, redact_pii, pii_mode, clean_ds_name],

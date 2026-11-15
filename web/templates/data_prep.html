@@ -241,6 +241,20 @@
               <input type="number" class="form-control form-control-sm" name="workers" value="8" min="1" max="32">
             </div>
           </div>
+          <!-- Target Dataset Configuration -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small fw-semibold mb-0" for="dataset_name">
+                <i class="bi bi-file-earmark-code me-1 text-primary"></i> Target Dataset Identifier / Slug
+              </label>
+              <span class="badge bg-secondary-subtle text-secondary" style="font-size: 0.7rem;">data/&lt;slug&gt;.jsonl</span>
+            </div>
+            <input type="text" class="form-control form-control-sm font-monospace" id="dataset_name" name="dataset_name" value="private_docs" placeholder="e.g. private_docs, customer_sop, compliance_v1">
+            <div class="form-text text-muted" style="font-size: 0.72rem;">
+              Generated QA pairs will be stored in this file and automatically snapshotted to the MinIO/S3 Version History catalog upon completion.
+            </div>
+          </div>
+
           <!-- PII Protection & Compliance -->
           <div class="p-2 mb-3 border rounded bg-body-tertiary">
             <div class="d-flex justify-content-between align-items-center mb-1">
@@ -276,14 +290,10 @@
             <div id="piiPreviewOutput" class="mt-2 d-none p-2 border rounded bg-body small font-monospace"></div>
           </div>
 
-          <div class="d-flex justify-content-between align-items-center pt-2 border-top flex-wrap gap-2">
-            <div class="d-flex align-items-center gap-2">
-              <span class="text-muted small">Target:</span>
-              <div class="input-group input-group-sm" style="max-width: 260px;">
-                <span class="input-group-text bg-body-secondary font-monospace" style="font-size: 0.75rem;">data/</span>
-                <input type="text" class="form-control font-monospace" id="dataset_name" name="dataset_name" value="private_docs" placeholder="private_docs" style="font-size: 0.75rem;">
-                <span class="input-group-text bg-body-secondary font-monospace" style="font-size: 0.75rem;">.jsonl</span>
-              </div>
+          <div class="d-flex justify-content-between align-items-center pt-3 border-top flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-2 text-muted small">
+              <i class="bi bi-info-circle text-primary"></i>
+              <span>Generated pairs are automatically structured in Alpaca JSONL and snapshotted.</span>
             </div>
             {% if active_job and active_job.status == 'RUNNING' %}
             <button type="submit" class="btn btn-primary" id="startPrepBtn" disabled>
@@ -305,8 +315,17 @@
 
 <!-- Live Execution Terminal -->
 <div class="card shadow-sm border-0 mb-4">
-  <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center">
-    <span class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>Ingestion Process Output</span>
+  <div class="card-header bg-body border-0 py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <span class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>Ingestion Process Output</span>
+      <span id="prepStateBadge" class="badge bg-secondary-subtle text-secondary" style="font-size: 0.7rem;">IDLE</span>
+      <span id="prepTimerBadge" class="badge bg-body-tertiary text-muted font-monospace d-none" style="font-size: 0.7rem;">
+        <i class="bi bi-stopwatch me-1 text-primary"></i><span id="prepTimerVal">0.0s</span>
+      </span>
+      <span id="prepPairsBadge" class="badge bg-success-subtle text-success font-monospace d-none" style="font-size: 0.7rem;">
+        <i class="bi bi-check2-circle me-1"></i><span id="prepPairsVal">0 pairs</span>
+      </span>
+    </div>
     <div>
       <button class="btn btn-xs btn-outline-secondary" onclick="document.getElementById('terminalBox').innerText = ''">Clear</button>
     </div>
@@ -820,10 +839,58 @@
     }
   }
 
+  // Real-Time Ingestion Stopwatch & Telemetry Badges
+  let prepTimerInterval = null;
+  let prepStartTime = null;
+
+  function startPrepTimer() {
+    prepStartTime = Date.now();
+    const timerBadge = document.getElementById('prepTimerBadge');
+    const timerVal = document.getElementById('prepTimerVal');
+    const stateBadge = document.getElementById('prepStateBadge');
+    const pairsBadge = document.getElementById('prepPairsBadge');
+    const pairsVal = document.getElementById('prepPairsVal');
+    if (timerBadge) timerBadge.classList.remove('d-none');
+    if (pairsBadge) pairsBadge.classList.remove('d-none');
+    if (pairsVal) pairsVal.innerText = '0 pairs';
+    if (stateBadge) {
+      stateBadge.className = 'badge bg-warning-subtle text-warning';
+      stateBadge.innerText = 'PROCESSING';
+    }
+    if (prepTimerInterval) clearInterval(prepTimerInterval);
+    prepTimerInterval = setInterval(() => {
+      if (timerVal && prepStartTime) {
+        const sec = ((Date.now() - prepStartTime) / 1000).toFixed(1);
+        timerVal.innerText = `${sec}s`;
+      }
+    }, 100);
+  }
+
+  function stopPrepTimer(status) {
+    if (prepTimerInterval) {
+      clearInterval(prepTimerInterval);
+      prepTimerInterval = null;
+    }
+    const stateBadge = document.getElementById('prepStateBadge');
+    if (stateBadge) {
+      if (status === 'COMPLETED') {
+        stateBadge.className = 'badge bg-success-subtle text-success';
+        stateBadge.innerText = 'COMPLETED';
+      } else if (status === 'FAILED') {
+        stateBadge.className = 'badge bg-danger-subtle text-danger';
+        stateBadge.innerText = 'FAILED';
+      } else {
+        stateBadge.className = 'badge bg-secondary-subtle text-secondary';
+        stateBadge.innerText = 'IDLE';
+      }
+    }
+  }
+
   // Start Ingestion Handler
   document.getElementById('dataPrepForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     saveTeacherGatewayState();
+    startPrepTimer();
     const form = e.target;
     const formData = new FormData(form);
 
@@ -844,11 +911,13 @@
         }
       } else {
         showToast(data.message || 'Failed to start', 'error');
+        stopPrepTimer('FAILED');
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset';
       }
     } catch (err) {
       showToast('Error: ' + err, 'error');
+      stopPrepTimer('FAILED');
       btn.disabled = false;
       btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset';
     }
@@ -860,6 +929,9 @@
     if (msg.type === 'init') {
       if (msg.active_job) {
         activeJobData = msg.active_job;
+        if (msg.active_job.status === 'RUNNING') {
+          startPrepTimer();
+        }
       }
       if (msg.logs && msg.logs.length && box && (!box.innerText || box.innerText.includes('Ready. Upload files'))) {
         box.innerText = msg.logs.join('\n') + '\n';
@@ -871,6 +943,15 @@
         if (box.innerText.includes('Ready. Upload files')) box.innerText = '';
         box.innerText += line + '\n';
         box.scrollTop = box.scrollHeight;
+
+        // Dynamic telemetry pairs count extractor
+        const match = line.match(/running total:\s*(\d+)/i) || line.match(/Wrote\s*(\d+)\s*instruction pairs/i) || line.match(/Generated\s*(\d+)\s*instruction pairs/i);
+        if (match) {
+          const pairsBadge = document.getElementById('prepPairsBadge');
+          const pairsVal = document.getElementById('prepPairsVal');
+          if (pairsBadge) pairsBadge.classList.remove('d-none');
+          if (pairsVal) pairsVal.innerText = `${match[1]} pairs`;
+        }
       }
     } else if (msg.type === 'status') {
       if (box) {
@@ -878,6 +959,7 @@
         box.scrollTop = box.scrollHeight;
       }
       if (msg.status === 'COMPLETED' || msg.status === 'FAILED' || msg.status === 'STOPPED') {
+        stopPrepTimer(msg.status);
         const btn = document.getElementById('startPrepBtn');
         if (btn) {
           btn.disabled = false;
@@ -886,7 +968,7 @@
         if (typeof refreshVersionHistoryTable === 'function') {
           refreshVersionHistoryTable();
         }
-        setTimeout(() => window.location.reload(), 2000);
+        setTimeout(() => window.location.reload(), 2500);
       }
     }
   };
