@@ -138,6 +138,31 @@ detect_hardware() {
             GPU_LAYERS=0
         fi
     fi
+
+    # Ensure libgomp.so.1 is present for OpenMP CPU multithreading
+    if [ "$OS" = "linux" ]; then
+        HAS_LIBGOMP=false
+        if ldconfig -p 2>/dev/null | grep -q "libgomp.so.1"; then
+            HAS_LIBGOMP=true
+        elif /sbin/ldconfig -p 2>/dev/null | grep -q "libgomp.so.1"; then
+            HAS_LIBGOMP=true
+        elif [ -f /usr/lib/x86_64-linux-gnu/libgomp.so.1 ] || [ -f /usr/lib/aarch64-linux-gnu/libgomp.so.1 ] || [ -f /lib/x86_64-linux-gnu/libgomp.so.1 ]; then
+            HAS_LIBGOMP=true
+        fi
+
+        if [ "$HAS_LIBGOMP" = false ]; then
+            info "Required OpenMP library (libgomp.so.1) not found. Installing libgomp1..."
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update -qq && sudo apt-get install -y -qq libgomp1 || true
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y libgomp || true
+            elif command -v yum &>/dev/null; then
+                sudo yum install -y libgomp || true
+            elif command -v pacman &>/dev/null; then
+                sudo pacman -Sy --noconfirm gcc-libs || true
+            fi
+        fi
+    fi
 }
 
 # ── Download or Locate llama-server Binary ─────────────────────────────────────
