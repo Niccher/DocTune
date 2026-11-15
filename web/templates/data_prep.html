@@ -121,7 +121,7 @@
           </div>
           <div id="ragIndexProgress" class="small text-muted mt-2 d-none">
             <div class="progress" style="height: 6px;">
-              <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" style="width: 100%"></div>
+              <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" id="ragProgressBar" style="width: 0%"></div>
             </div>
             <span class="d-block mt-1" id="ragProgressMsg" style="font-size: 0.75rem;">Vectorizing document chunks...</span>
           </div>
@@ -276,9 +276,14 @@
             <div id="piiPreviewOutput" class="mt-2 d-none p-2 border rounded bg-body small font-monospace"></div>
           </div>
 
-          <div class="d-flex justify-content-between align-items-center pt-2 border-top">
-            <div class="text-muted small">
-              Target: <code>data/private_docs.jsonl</code>
+          <div class="d-flex justify-content-between align-items-center pt-2 border-top flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-muted small">Target:</span>
+              <div class="input-group input-group-sm" style="max-width: 260px;">
+                <span class="input-group-text bg-body-secondary font-monospace" style="font-size: 0.75rem;">data/</span>
+                <input type="text" class="form-control font-monospace" id="dataset_name" name="dataset_name" value="private_docs" placeholder="private_docs" style="font-size: 0.75rem;">
+                <span class="input-group-text bg-body-secondary font-monospace" style="font-size: 0.75rem;">.jsonl</span>
+              </div>
             </div>
             {% if active_job and active_job.status == 'RUNNING' %}
             <button type="submit" class="btn btn-primary" id="startPrepBtn" disabled>
@@ -395,7 +400,7 @@
       <h5 class="card-title mb-0 fw-bold"><i class="bi bi-clock-history me-2 text-info"></i>Dataset Version History &amp; Provenance</h5>
       <small class="text-muted">Immutable snapshots linked to fine-tuning runs (stored on MinIO &amp; catalog)</small>
     </div>
-    <span class="badge bg-info-subtle text-info border">{{ dataset_versions|length }} snapshots</span>
+    <span class="badge bg-info-subtle text-info border" id="versionCountBadge">{{ dataset_versions|length }} snapshots</span>
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">
@@ -878,7 +883,10 @@
           btn.disabled = false;
           btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset';
         }
-        setTimeout(() => window.location.reload(), 1500);
+        if (typeof refreshVersionHistoryTable === 'function') {
+          refreshVersionHistoryTable();
+        }
+        setTimeout(() => window.location.reload(), 2000);
       }
     }
   };
@@ -1732,6 +1740,80 @@
   }
 
   // ── ChromaDB RAG Vector Store Handlers ───────────────────────────
+  async function refreshVersionHistoryTable() {
+    try {
+      const res = await fetch('/api/v1/dataset/versions');
+      if (!res.ok) return;
+      const data = await res.json();
+      const versions = data.versions || [];
+      const tbody = document.getElementById('versionTableBody');
+      const badge = document.getElementById('versionCountBadge');
+      if (badge) badge.textContent = `${versions.length} snapshots`;
+      if (!tbody) return;
+
+      if (versions.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="text-center text-muted py-3 small">
+              No version snapshots yet. Click <strong>Snapshot Version</strong> to create one.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = versions.map(v => {
+        const created = v.created_at ? v.created_at.slice(0, 19).replace('T', ' ') : '-';
+        const sha = v.sha256 ? v.sha256.slice(0, 12) + '...' : '-';
+        const sizeKb = v.size_kb || (v.size_bytes ? Math.round(v.size_bytes / 1024) : 0);
+        const statusBadge = v.is_active
+          ? '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Active</span>'
+          : '<span class="badge bg-secondary-subtle text-secondary">Archived</span>';
+        const actionButtons = v.is_active
+          ? `<span class="btn btn-xs btn-light text-success border-0 disabled" title="Active dataset cannot be deleted while in use"><i class="bi bi-check2"></i></span>`
+          : `
+            <button type="button" class="btn btn-xs btn-outline-success" onclick="activateVersion('${v.version_id}')" title="Set Active for Training">
+              <i class="bi bi-play"></i>
+            </button>
+            <button type="button" class="btn btn-xs btn-outline-danger" onclick="deleteSnapshot('${v.version_id}', '${v.version_tag}')" title="Delete from MinIO & Catalog">
+              <i class="bi bi-trash"></i>
+            </button>
+          `;
+
+        return `
+          <tr>
+            <td>
+              <span class="fw-bold text-primary font-monospace">${v.version_tag}</span>
+              <div class="text-muted small text-truncate" style="font-size: 0.75rem; max-width: 280px;" title="${v.description || ''}">${v.description || ''}</div>
+            </td>
+            <td class="small">
+              <strong>${v.sample_count || 0}</strong> pairs
+              <div class="text-muted" style="font-size: 0.72rem;">${sizeKb} KB</div>
+            </td>
+            <td>
+              <code class="small text-muted" title="${v.sha256 || ''}">${sha}</code>
+            </td>
+            <td class="small text-muted">${created}</td>
+            <td>${statusBadge}</td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <button type="button" class="btn btn-xs btn-outline-info" onclick="viewSnapshotInfo('${v.version_id}')" title="Snapshot Details & Info">
+                  <i class="bi bi-info-circle"></i> Info
+                </button>
+                <a href="/api/v1/dataset/snapshots/${v.version_id}/download" class="btn btn-xs btn-outline-primary" title="Download .jsonl from MinIO" download>
+                  <i class="bi bi-download"></i>
+                </a>
+                ${actionButtons}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    } catch (e) {
+      console.warn("Failed refreshing version history table:", e);
+    }
+  }
+
   async function checkRagStatus() {
     const badge = document.getElementById('ragStatusBadge');
     if (!badge) return;
@@ -1754,36 +1836,140 @@
     }
   }
 
+  let ragPollInterval = null;
+
   async function triggerRagIndexBuild() {
     const btn = document.getElementById('btnBuildRagIndex');
+    const badge = document.getElementById('ragStatusBadge');
     const prog = document.getElementById('ragIndexProgress');
+    const pbar = document.getElementById('ragProgressBar');
     const msg = document.getElementById('ragProgressMsg');
-    if (btn) btn.disabled = true;
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Indexing Chunks...';
+    }
+    if (badge) {
+      badge.className = 'badge bg-warning-subtle text-warning border small';
+      badge.innerHTML = '<span class="spinner-border spinner-border-xs me-1"></span> Indexing in progress...';
+    }
     if (prog) prog.classList.remove('d-none');
+    if (pbar) pbar.style.width = '10%';
     if (msg) msg.textContent = 'Parsing documents and generating vector embeddings...';
+
+    const stopPollingAndReset = (isSuccess, finalMsg) => {
+      if (ragPollInterval) {
+        clearInterval(ragPollInterval);
+        ragPollInterval = null;
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-vector-pen me-1"></i> Build Vector Index';
+      }
+      if (isSuccess) {
+        if (pbar) pbar.style.width = '100%';
+        if (msg) msg.textContent = finalMsg || 'Vector indexing complete.';
+        setTimeout(() => {
+          if (prog) prog.classList.add('d-none');
+        }, 2500);
+      } else {
+        if (msg) msg.textContent = finalMsg || 'Vector indexing stopped.';
+        if (badge) {
+          badge.className = 'badge bg-danger-subtle text-danger border small';
+          badge.textContent = 'Indexing failed';
+        }
+        setTimeout(() => {
+          if (prog) prog.classList.add('d-none');
+        }, 3000);
+      }
+      checkRagStatus();
+      refreshVersionHistoryTable();
+    };
 
     try {
       const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
       const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
       const res = await fetch('/api/v1/rag/index/build', { method: 'POST', headers: headers });
       const data = await res.json();
-      if (res.ok && (data.status === 'success' || data.status === 'started')) {
-        showToast(data.message || 'Vector indexing started!', 'success');
-        if (msg) msg.textContent = data.message || 'Vector indexing complete.';
-        await checkRagStatus();
-      } else {
-        showToast(data.message || 'Indexing failed', 'error');
-        if (msg) msg.textContent = 'Error: ' + (data.message || 'Failed to build index');
+
+      if (!res.ok) {
+        stopPollingAndReset(false, data.message || 'Failed to start indexing');
+        if (window.Swal) {
+          Swal.fire('Indexing Error', data.message || 'Failed to trigger RAG indexing', 'error');
+        } else {
+          showToast(data.message || 'Indexing failed', 'error');
+        }
+        return;
       }
+
+      // If synchronous completion
+      if (data.status === 'success') {
+        stopPollingAndReset(true, data.message || 'Vector indexing complete.');
+        if (window.Swal) {
+          Swal.fire({
+            icon: 'success',
+            title: 'Vector Index Built & Snapshotted!',
+            html: `Indexed <b>${data.total_chunks || 0}</b> chunks across <b>${data.total_documents || 0}</b> documents.<br><span class="text-muted small">Auto-snapshotted to MinIO & registered in Version Catalog.</span>`,
+            timer: 3500,
+            showConfirmButton: false,
+          });
+        }
+        return;
+      }
+
+      // If asynchronous background task started via Celery
+      let pollCount = 0;
+      ragPollInterval = setInterval(async () => {
+        pollCount++;
+        try {
+          const pollRes = await fetch('/api/v1/rag/index/progress');
+          if (!pollRes.ok) return;
+          const pollJson = await pollRes.json();
+          const p = pollJson.data || {};
+
+          if (p.percentage !== undefined && pbar) {
+            pbar.style.width = Math.max(10, p.percentage) + '%';
+          }
+          if (p.message && msg) {
+            msg.textContent = p.message;
+          } else if (p.current !== undefined && p.total !== undefined && msg) {
+            msg.textContent = `[${p.current}/${p.total}] ${p.current_file || ''} (${p.chunks_created || 0} chunks) - ${p.percentage || 0}%`;
+          }
+
+          if (p.status === 'completed') {
+            stopPollingAndReset(true, p.message || 'Vector indexing complete.');
+            if (window.Swal) {
+              Swal.fire({
+                icon: 'success',
+                title: 'Vector Index Built & Snapshotted!',
+                html: `Indexed <b>${p.total_chunks || 0}</b> chunks across <b>${p.total_documents || 0}</b> documents.<br><span class="text-muted small">Auto-saved to MinIO & registered in Dataset Version History.</span>`,
+                timer: 3500,
+                showConfirmButton: false,
+              });
+            }
+          } else if (p.status === 'failed') {
+            stopPollingAndReset(false, p.error || 'Vector indexing failed');
+            if (window.Swal) {
+              Swal.fire('Indexing Failed', p.error || 'Vector indexing encountered an error', 'error');
+            }
+          }
+        } catch (pollErr) {
+          console.warn("RAG progress poll failed:", pollErr);
+        }
+
+        // Safety timeout after 5 minutes (375 polls * 800ms)
+        if (pollCount > 375) {
+          stopPollingAndReset(false, 'Indexing timed out.');
+        }
+      }, 800);
+
     } catch (e) {
-      showToast('Error: ' + e.message, 'error');
-      if (msg) msg.textContent = 'Failed: ' + e.message;
-    } finally {
-      if (btn) btn.disabled = false;
-      setTimeout(() => {
-        if (prog) prog.classList.add('d-none');
-      }, 3000);
-      checkRagStatus();
+      stopPollingAndReset(false, e.message);
+      if (window.Swal) {
+        Swal.fire('Error', e.message, 'error');
+      } else {
+        showToast('Error: ' + e.message, 'error');
+      }
     }
   }
 

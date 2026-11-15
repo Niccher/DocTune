@@ -10,6 +10,7 @@ import json
 import time
 import argparse
 import logging
+from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -171,11 +172,12 @@ def extract_json_object(content: str) -> dict:
     return {}
 
 
-def synthesize_qa(client: OpenAI, model: str, chunk: str, max_retries: int = 3) -> list[dict]:
+def synthesize_qa(client: OpenAI, model: str, chunk: str, max_retries: int = 3) -> Tuple[list[dict], Optional[str]]:
     """
     Ask the teacher model to create one grounded question-answer pair.
     Includes exponential backoff retries for rate-limited cloud APIs (Gemini, Grok, OpenAI),
     fallback for engines without json_object schema support, and resilient JSON extraction.
+    Returns: Tuple of (records_list, last_error_message)
     """
     system_prompt = (
         "You are an internal company assistant. "
@@ -192,7 +194,7 @@ Return STRICT JSON with the keys "question" and "answer".
 Document excerpt:
 \"\"\"{chunk}\"\"\"
 """
-
+    last_err = None
     for attempt in range(max_retries):
         try:
             base_url_str = str(getattr(client, "base_url", ""))
@@ -255,18 +257,19 @@ Document excerpt:
             answer = data.get("answer", "").strip()
 
             if not question or not answer:
-                return []
+                return ([], "Teacher response did not contain valid question and answer keys")
 
-            return [{
+            return ([{
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": question},
                     {"role": "assistant", "content": answer},
                 ]
-            }]
+            }], None)
 
         except Exception as e:
-            err_str = str(e).lower()
+            last_err = str(e)
+            err_str = last_err.lower()
             if attempt < max_retries - 1 and (
                 "rate_limit" in err_str
                 or "429" in err_str
@@ -274,14 +277,11 @@ Document excerpt:
                 or "overloaded" in err_str
             ):
                 sleep_sec = 2 ** (attempt + 1)
-                print(f"[WARN] Teacher API throttled/rate-limited ({e}). Retrying in {sleep_sec}s...")
                 time.sleep(sleep_sec)
                 continue
-            print(f"[WARN] QA generation failed on attempt {attempt + 1}: {e}")
-            return []
+            return ([], last_err)
 
-
-    return []
+    return ([], last_err or "Max retries exceeded")
 
 
 # ============================================================
@@ -293,7 +293,7 @@ def process_one_file(file_path: Path, client: OpenAI, model: str,
                      redact_pii: bool = True, pii_mode: str = "placeholder") -> tuple:
     text = extract_text(file_path)
     if not text:
-        return (0, {"file": file_path.name, "counts": {}, "excerpts": []})
+        return (0, {"file": file_path.name, "counts": {}, "excerpts": []}, "Empty or unparseable document text")
 
     pii_counts = {}
     pii_excerpts = []
@@ -312,21 +312,22 @@ def process_one_file(file_path: Path, client: OpenAI, model: str,
                 "end": m["end"],
             })
         text, pii_counts = redactor.redact(text)
-        if pii_counts:
-            print(f"  [PII_SCRUBBED] {file_path.name}: {pii_counts}", flush=True)
 
     chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)[:max_chunks]
     written = 0
+    last_err = None
 
     for chunk in chunks:
-        records = synthesize_qa(client, model, chunk)
+        records, err = synthesize_qa(client, model, chunk)
         if records:
             with open(output_file, "a", encoding="utf-8") as f:
                 for record in records:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             written += len(records)
+        elif err:
+            last_err = err
 
-    return (written, {"file": file_path.name, "counts": pii_counts, "excerpts": pii_excerpts})
+    return (written, {"file": file_path.name, "counts": pii_counts, "excerpts": pii_excerpts}, last_err)
 
 
 # ============================================================
@@ -343,14 +344,41 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
                     max_workers: int = DEFAULT_MAX_WORKERS,
                     redact_pii: bool = True,
                     pii_mode: str = "placeholder",
+                    dataset_name: Optional[str] = None,
                     run_id: Optional[str] = None):
     start_time = time.time()
-    def notify_log(msg: str):
-        print(msg, flush=True)
+
+    # Resolve target output file based on optional custom dataset_name
+    if dataset_name and dataset_name.strip():
+        import re
+        clean_slug = re.sub(r"[^a-zA-Z0-9_-]", "_", dataset_name.strip()).strip("_") or "private_docs"
+        output_file = DATA_DIR / f"{clean_slug}.jsonl"
+
+    def notify_log(level_or_msg: str, msg: Optional[str] = None):
+        if msg is None:
+            msg = level_or_msg
+            level = "INFO"
+            if msg.startswith("--- [COMPLETED]"):
+                level = "SUCCESS"
+            elif msg.startswith("--- [FAILED]") or "error" in msg.lower() or "failed" in msg.lower():
+                level = "DANGER"
+            elif "warn" in msg.lower():
+                level = "WARN"
+        else:
+            level = level_or_msg
+
+        now_str = datetime.now().strftime("%H:%M:%S")
+        formatted = f"[{now_str}] [{level.upper()}] {msg}"
+        print(formatted, flush=True)
         if run_id:
             try:
                 from web.celery_app import publish_redis_event
-                publish_redis_event(f"run:{run_id}:stream", {"type": "log", "line": msg, "message": msg})
+                publish_redis_event(f"run:{run_id}:stream", {
+                    "type": "log",
+                    "level": level.lower(),
+                    "line": formatted,
+                    "message": formatted,
+                })
             except Exception:
                 pass
 
@@ -363,13 +391,13 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
 
     if output_file.exists():
         output_file.unlink()
-        notify_log(f"Removed previous {output_file.name}")
+        notify_log("INFO", f"Removed previous {output_file.name}")
 
     try:
         from web.services.storage_service import storage_service
         synced_count = storage_service.sync_bucket_to_dir(storage_service.bucket_docs, docs_dir)
         if synced_count > 0:
-            notify_log(f"[STORAGE] Synchronized {synced_count} documents from S3 bucket: {storage_service.bucket_docs}")
+            notify_log("INFO", f"[STORAGE] Synchronized {synced_count} documents from S3 bucket: {storage_service.bucket_docs}")
     except Exception as e:
         print(f"[STORAGE NOTICE] Document sync from S3 skipped or failed: {e}")
 
@@ -379,17 +407,38 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         all_files.extend(docs_dir.glob(pattern))
 
     all_files = sorted(set(all_files))
-    notify_log(f"Found {len(all_files)} documents to process in {docs_dir}")
+    notify_log("INFO", f"Found {len(all_files)} documents to process in {docs_dir}")
 
     if not all_files:
-        notify_log(f"No documents found. Please upload PDF / DOCX / CSV files into: {docs_dir}")
+        notify_log("WARN", f"No documents found. Please upload PDF / DOCX / CSV files into: {docs_dir}")
         return 0
 
     effective_url = resolve_teacher_url(teacher_url)
     effective_key = teacher_api_key.strip() if teacher_api_key and teacher_api_key.strip() else "not-needed"
-    notify_log(f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
-    notify_log(f"Enterprise PII Redaction: {'ENABLED (' + pii_mode + ')' if redact_pii else 'DISABLED'}")
-    client = OpenAI(base_url=effective_url, api_key=effective_key, timeout=60.0)
+    notify_log("INFO", f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
+    notify_log("INFO", f"Enterprise PII Redaction: {'ENABLED (' + pii_mode + ')' if redact_pii else 'DISABLED'}")
+    notify_log("INFO", f"Target Output File: data/{output_file.name}")
+    client = OpenAI(base_url=effective_url, api_key=effective_key, timeout=30.0)
+
+    # 0. Pre-Flight Gateway Probe
+    notify_log("INFO", f"Probing Teacher LLM gateway responsiveness at {effective_url}...")
+    try:
+        if "anthropic.com" not in effective_url:
+            client.chat.completions.create(
+                model=teacher_model,
+                messages=[{"role": "user", "content": "respond with OK"}],
+                max_tokens=4,
+                timeout=12.0,
+            )
+        notify_log("SUCCESS", f"Teacher LLM gateway verified online and responsive ({teacher_model}).")
+    except Exception as pe:
+        probe_err = str(pe)
+        notify_log("DANGER", f"Teacher LLM gateway probe FAILED at {effective_url} (Model: {teacher_model}): {probe_err}")
+        notify_log("WARN", "Data preparation halted early to avoid generating 0 pairs. Please check Teacher Gateway URL and model ID.")
+        notify_log("INFO", "Pro-Tip: You can click 'Snapshot Chunks to Dataset' on the ChromaDB card to fine-tune directly on your indexed chunks without requiring an external Teacher LLM!")
+        elapsed = round(time.time() - start_time, 2)
+        notify_log("DANGER", f"--- [ABORTED] Teacher LLM unreachable after {elapsed}s | 0 instruction pairs generated ---")
+        return 0
 
     total_pairs = 0
     pii_files_audit = []
@@ -405,15 +454,20 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         for future in as_completed(futures):
             f_path = futures[future]
             try:
-                pairs, pii_data = future.result()
+                pairs, pii_data, last_err = future.result()
                 total_pairs += pairs
-                notify_log(f"  [OK] {f_path.name}: generated {pairs} pairs (running total: {total_pairs})")
+                if pairs > 0:
+                    notify_log("SUCCESS", f"{f_path.name}: generated {pairs} pairs (running total: {total_pairs})")
+                elif last_err:
+                    notify_log("DANGER", f"{f_path.name}: 0 pairs generated | Teacher LLM error: {last_err}")
+                else:
+                    notify_log("WARN", f"{f_path.name}: 0 pairs generated (empty document text or no chunks created)")
                 if pii_data and pii_data.get("counts"):
                     pii_files_audit.append(pii_data)
                     for k, v in pii_data["counts"].items():
                         pii_aggregate_counts[k] = pii_aggregate_counts.get(k, 0) + v
             except Exception as fe:
-                notify_log(f"  [WARN] {f_path.name} error: {fe}")
+                notify_log("DANGER", f"{f_path.name} worker error: {fe}")
 
     # 1. Save and upload PII audit summary
     pii_audit_file = DATA_DIR / "pii_audit_latest.json"
@@ -438,16 +492,17 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         try:
             from web.services.storage_service import storage_service
             storage_service.upload_file(output_file, storage_service.bucket_datasets, output_file.name)
-            notify_log(f"[STORAGE] Uploaded dataset artifact {output_file.name} to S3 bucket: {storage_service.bucket_datasets}")
+            notify_log("INFO", f"[STORAGE] Uploaded dataset artifact {output_file.name} to S3 bucket: {storage_service.bucket_datasets}")
         except Exception as e:
-            notify_log(f"[STORAGE NOTICE] Dataset upload to S3 skipped or failed: {e}")
+            notify_log("WARN", f"[STORAGE NOTICE] Dataset upload to S3 skipped or failed: {e}")
 
     # 3. Auto-save immutable snapshot with format YYYY-Mon-DD-HHMMSS_<slug>.jsonl
+    elapsed = round(time.time() - start_time, 1)
+    auto_snap_info = None
     if output_file.exists() and total_pairs > 0:
         try:
             from web.services.dataset_version_service import dataset_version_service
-            slug = all_files[0].stem if all_files else "docs"
-            duration = round(time.time() - start_time, 1)
+            slug = (dataset_name.strip() if dataset_name else all_files[0].stem) if all_files else "docs"
             auto_snap = dataset_version_service.create_auto_version(
                 source_file=output_file,
                 slug_hint=slug,
@@ -455,16 +510,35 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
                 metadata={
                     "teacher_model": teacher_model,
                     "teacher_provider": "Teacher Gateway",
-                    "duration_sec": duration,
+                    "duration_sec": elapsed,
                     "files_count": len(all_files),
                 },
                 set_active=True,
             )
-            notify_log(f"[AUTO-SNAPSHOT] Saved snapshot to MinIO: {auto_snap['filename']} ({auto_snap['sample_count']} pairs, {auto_snap['size_kb']} KB)")
+            auto_snap_info = auto_snap
+            notify_log("SUCCESS", f"[AUTO-SNAPSHOT] Saved snapshot to MinIO: {auto_snap['filename']} ({auto_snap['sample_count']} pairs, {auto_snap['size_kb']} KB)")
         except Exception as snap_ex:
-            notify_log(f"[AUTO-SNAPSHOT NOTICE] Automatic snapshot creation skipped: {snap_ex}")
+            notify_log("WARN", f"[AUTO-SNAPSHOT NOTICE] Automatic snapshot creation skipped: {snap_ex}")
 
-    notify_log(f"--- [COMPLETED] Generated {total_pairs} instruction pairs → {output_file.name} ---")
+    # Mirror to DEFAULT_JSONL if custom name was used, so existing loaders remain compatible
+    if output_file != DEFAULT_JSONL and output_file.exists():
+        try:
+            import shutil
+            shutil.copy2(output_file, DEFAULT_JSONL)
+        except Exception:
+            pass
+
+    notify_log("INFO", "============================================================")
+    notify_log("INFO", f"INGESTION COMPLETED in {elapsed}s | Generated {total_pairs} instruction pairs")
+    notify_log("INFO", f"Target Working File: data/{output_file.name} ({total_pairs} pairs, {round(output_file.stat().st_size / 1024, 1) if output_file.exists() else 0} KB)")
+    if auto_snap_info:
+        notify_log("SUCCESS", f"Snapshot: {auto_snap_info['filename']} | MinIO Key: {auto_snap_info.get('s3_key', '-')}")
+        notify_log("INFO", "Next Step: Head to Training Studio to fine-tune your model on this snapshot!")
+    elif total_pairs == 0:
+        notify_log("DANGER", "Result: 0 instruction pairs generated.")
+        notify_log("WARN", "Diagnosis: Teacher LLM calls failed or returned empty content. Verify provider gateway is online.")
+        notify_log("INFO", "Pro-Tip: Use 'Snapshot Chunks to Dataset' on ChromaDB card to fine-tune directly on your indexed chunks!")
+    notify_log("INFO", "============================================================")
     return total_pairs
 
 
@@ -481,7 +555,8 @@ def main():
     parser.add_argument("--workers", type=int, default=DEFAULT_MAX_WORKERS)
     parser.add_argument("--redact-pii", action="store_true", default=True, help="Enable PII redaction")
     parser.add_argument("--no-redact-pii", dest="redact_pii", action="store_false", help="Disable PII redaction")
-    parser.add_argument("--pii-mode", type=str, default="placeholder", choices=["placeholder", "mask", "synthetic_hash"])
+    parser.add_argument("--pii-mode", type=str, default="placeholder", help="PII mode: placeholder, mask, synthetic_hash, semantic_tag, or custom:<filler>")
+    parser.add_argument("--dataset-name", type=str, default="private_docs", help="Custom name for dataset")
 
     args = parser.parse_args()
     run_preparation(
@@ -496,6 +571,7 @@ def main():
         max_workers=args.workers,
         redact_pii=args.redact_pii,
         pii_mode=args.pii_mode,
+        dataset_name=args.dataset_name,
     )
 
 

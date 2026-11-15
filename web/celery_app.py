@@ -421,10 +421,11 @@ if HAS_CELERY and app:
         workers: int = 12,
         redact_pii: bool = True,
         pii_mode: str = "placeholder",
+        dataset_name: str = "private_docs",
     ):
         """Execute document chunking and teacher LLM dataset generation inside distributed worker."""
         from pipeline.prepare_data import run_preparation, RAW_DOCS_DIR, DEFAULT_JSONL
-        start_msg = f"--- [CELERY WORKER] Document processing started for job {run_id} (PII Redaction: {redact_pii}) ---"
+        start_msg = f"--- [CELERY WORKER] Document processing started for job {run_id} (PII Redaction: {redact_pii}, Dataset: {dataset_name}) ---"
         publish_redis_event(f"run:{run_id}:stream", {
             "type": "log",
             "line": start_msg,
@@ -443,6 +444,7 @@ if HAS_CELERY and app:
                 max_workers=workers,
                 redact_pii=redact_pii,
                 pii_mode=pii_mode,
+                dataset_name=dataset_name,
                 run_id=run_id,
             )
             done_msg = f"--- [COMPLETED] Wrote {total_pairs} instruction pairs ---"
@@ -792,17 +794,22 @@ if HAS_CELERY and app:
         """Background Celery task parsing all enterprise documents and building embedded ChromaDB index."""
         from web.services.rag_service import rag_service
 
+        now_str = datetime.now().strftime("%H:%M:%S")
+        start_msg = f"[{now_str}] [INFO] [RAG INDEX] Starting document parsing and vector embedding generation..."
         publish_redis_event(f"rag_index:{project_id}", {
             "type": "status",
             "status": "RUNNING",
             "progress": 5,
-            "message": "Starting document parsing and vector embedding generation...",
+            "message": start_msg,
+            "line": start_msg,
         })
 
         def progress_cb(data):
+            t_str = datetime.now().strftime("%H:%M:%S")
             curr = data.get("current", 0)
             tot = max(1, data.get("total", 1))
             pct = 10 + int((curr / tot) * 85)
+            log_msg = f"[{t_str}] [INFO] [RAG INDEX] [{curr}/{tot}] Chunking & embedding {data.get('file')} ({data.get('chunks')} chunks)..."
             publish_redis_event(f"rag_index:{project_id}", {
                 "type": "progress",
                 "status": "RUNNING",
@@ -811,28 +818,36 @@ if HAS_CELERY and app:
                 "total": tot,
                 "file": data.get("file"),
                 "chunks": data.get("chunks"),
-                "message": f"Indexed {data.get('file')} ({data.get('chunks')} chunks) [{curr}/{tot}]",
+                "message": log_msg,
+                "line": log_msg,
             })
 
         try:
             res = rag_service.build_index(project_id=project_id, progress_callback=progress_cb)
+            t_str = datetime.now().strftime("%H:%M:%S")
+            done_msg = f"[{t_str}] [SUCCESS] [RAG INDEX] {res.get('message', 'Vector indexing complete.')}"
             publish_redis_event(f"rag_index:{project_id}", {
                 "type": "status",
                 "status": "COMPLETED",
                 "progress": 100,
-                "message": res.get("message", "Vector indexing complete."),
+                "message": done_msg,
+                "line": done_msg,
                 "total_chunks": res.get("total_chunks", 0),
                 "total_documents": res.get("total_documents", 0),
+                "snapshot": res.get("snapshot"),
             })
             return res
         except Exception as e:
             logger.error("RAG indexing task error: %s", e)
+            t_str = datetime.now().strftime("%H:%M:%S")
+            err_msg = f"[{t_str}] [DANGER] [RAG INDEX] Vector indexing failed: {str(e)}"
             publish_redis_event(f"rag_index:{project_id}", {
                 "type": "status",
                 "status": "FAILED",
                 "progress": 0,
                 "error": str(e),
-                "message": f"RAG vector indexing failed: {str(e)}",
+                "message": err_msg,
+                "line": err_msg,
             })
             raise e
 

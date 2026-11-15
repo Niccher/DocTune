@@ -862,6 +862,7 @@ async def start_data_prep(
     workers: int = Form(12),
     redact_pii: bool = Form(True),
     pii_mode: str = Form("placeholder"),
+    dataset_name: str = Form("private_docs"),
 ):
     if state.active_job is not None:
         return JSONResponse({"status": "error", "message": "Another job is already running"}, status_code=409)
@@ -877,6 +878,8 @@ async def start_data_prep(
     final_model = teacher_model or qa_cfg.get("model") or preset.get("default_model", "llama3.1:latest")
     final_api_key = (teacher_api_key.strip() if teacher_api_key else "") or (qa_cfg.get("api_key", "").strip() if qa_cfg.get("api_key") else "") or "not-needed"
 
+    clean_ds_name = "".join(c for c in (dataset_name or "private_docs").strip() if c.isalnum() or c in ("-", "_")).strip("-_") or "private_docs"
+
     args = [
         "--teacher-url", final_url,
         "--teacher-model", final_model,
@@ -885,6 +888,7 @@ async def start_data_prep(
         "--chunk-size", str(chunk_size),
         "--overlap", str(overlap),
         "--workers", str(workers),
+        "--dataset-name", clean_ds_name,
     ]
     if redact_pii:
         args.extend(["--redact-pii", "--pii-mode", pii_mode])
@@ -895,12 +899,12 @@ async def start_data_prep(
         run_id = f"prep_{int(time.time())}"
         job = state.set_job(
             job_type=JobType.DATA_PREP,
-            metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "run_id": run_id, "mode": "celery", "redact_pii": redact_pii},
+            metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "run_id": run_id, "mode": "celery", "redact_pii": redact_pii, "dataset_name": clean_ds_name},
         )
-        await state.add_log(f"--- [DISPATCH] Data preparation job {run_id} dispatched to Celery cluster (PII: {redact_pii}) ---")
+        await state.add_log(f"--- [DISPATCH] Data preparation job {run_id} dispatched to Celery cluster (Dataset: {clean_ds_name}, PII: {redact_pii}) ---")
         celery_task = celery_app.send_task(
             "web.celery_app.task_prepare_data",
-            args=[run_id, final_url, final_model, final_api_key, max_chunks, chunk_size, overlap, workers, redact_pii, pii_mode],
+            args=[run_id, final_url, final_model, final_api_key, max_chunks, chunk_size, overlap, workers, redact_pii, pii_mode, clean_ds_name],
             queue="data_prep_queue",
         )
         job.metadata["celery_task_id"] = celery_task.id
@@ -911,7 +915,7 @@ async def start_data_prep(
         script_module="pipeline.prepare_data",
         args=args,
         cwd=PROJECT_ROOT,
-        metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "redact_pii": redact_pii},
+        metadata={"teacher_model": final_model, "teacher_url": final_url, "provider": provider, "redact_pii": redact_pii, "dataset_name": clean_ds_name},
     )
 
     job_id = state.active_job.job_id if state.active_job else "job_data_prep"

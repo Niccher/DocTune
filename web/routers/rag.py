@@ -81,6 +81,24 @@ async def build_rag_index(request: Request, _user=Depends(require_user)):
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@router.get("/index/progress", response_class=JSONResponse)
+async def get_rag_index_progress(request: Request):
+    """Retrieve current background vector indexing progress, active file, and percentage."""
+    project_id = get_project_id(request)
+    progress_data = rag_service.get_indexing_progress(project_id=project_id)
+    return JSONResponse({"status": "success", "data": progress_data})
+
+
+@router.post("/index/snapshot", response_class=JSONResponse)
+async def snapshot_rag_index(request: Request, _user=Depends(require_user)):
+    """Explicitly export and snapshot current vector store chunks into an immutable MinIO dataset."""
+    project_id = get_project_id(request)
+    snap = rag_service.snapshot_chunks_to_dataset(project_id=project_id)
+    if not snap:
+        raise HTTPException(status_code=400, detail="No chunks found in vector store to snapshot.")
+    return JSONResponse({"status": "success", "snapshot": snap})
+
+
 @router.post("/query", response_class=JSONResponse)
 async def query_rag_chunks(payload: RagQueryRequest, request: Request):
     """Direct semantic retrieval endpoint returning top-K chunks and citations."""
