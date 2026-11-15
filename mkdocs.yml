@@ -28,6 +28,7 @@ nav:
   - Operator Guide:
       - Setup and Run: docs/user/setup-and-run.md
       - Configuration: docs/user/configuration.md
+      - ML Hyperparameters & Actions: docs/user/hyperparameters-and-pipeline-actions.md
       - Troubleshooting: docs/user/troubleshooting.md
   - Architecture:
       - System Overview: docs/architecture/overview.md

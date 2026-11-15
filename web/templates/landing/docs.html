@@ -28,6 +28,9 @@
             <a class="nav-link text-muted" href="#rag-subsystem">5. Embedded ChromaDB RAG</a>
             <a class="nav-link text-muted" href="#one-click-export">6. 1-Click GGUF & Ollama</a>
             <a class="nav-link text-muted" href="#docker">7. Docker Deployment</a>
+            <a class="nav-link text-muted fw-semibold text-primary" href="#hyperparameters">8. ML Hyperparameters Guide</a>
+            <a class="nav-link text-muted fw-semibold text-primary" href="#dpo-guide">9. DPO & Preference Alignment</a>
+            <a class="nav-link text-muted fw-semibold text-primary" href="#pipeline-actions">10. Actions & Lifecycle</a>
           </nav>
         </div>
       </div>
@@ -413,6 +416,349 @@ bash scripts/deploy.sh ollama stop</code></pre>
 
           <div class="alert alert-secondary small py-2 px-3 mb-0">
             <i class="bi bi-cpu-fill me-1 text-primary"></i> <strong>Low Memory Architecture:</strong> Running inference natively on the host rather than inside container virtualization preserves full CPU AVX2/AVX-512 vectorization, saves ~1.5 GB of container daemon memory overhead, and allows seamless operation on cloud instances with 6-8 GB of RAM.
+          </div>
+        </div>
+
+        <!-- Section 8: Machine Learning Hyperparameters Guide -->
+        <div id="hyperparameters" class="mb-5 pb-4 border-bottom">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1 rounded-pill small fw-semibold">DEEP DIVE</span>
+            <span class="text-muted small">PEFT &amp; Optimizer Dynamics</span>
+          </div>
+          <h3 class="fw-bold mb-3">8. Machine Learning Hyperparameters Guide</h3>
+          <p class="text-muted">
+            Fine-tuning large language models on private enterprise data requires understanding the mathematical dynamics behind parameter-efficient training. The table below details each hyperparameter, its formal definition, its impact on GPU VRAM, and recommended production values.
+          </p>
+
+          <div class="table-responsive mb-4">
+            <table class="table table-bordered bg-body shadow-sm align-middle small">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 22%;">Hyperparameter</th>
+                  <th style="width: 28%;">Mathematical Definition</th>
+                  <th style="width: 32%;">Practical Function &amp; Trade-Off</th>
+                  <th style="width: 18%;">Recommended Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="fw-bold">
+                    LoRA<br>
+                    <small class="text-muted fw-normal">Low-Rank Adaptation</small>
+                  </td>
+                  <td>
+                    <code>W = W₀ + &Delta;W</code><br>
+                    <code>&Delta;W = (&alpha; / r) &middot; (B &middot; A)</code><br>
+                    <small class="text-muted">where B &isin; &reals;<sup>d&times;r</sup>, A &isin; &reals;<sup>r&times;k</sup></small>
+                  </td>
+                  <td>
+                    Freezes the billions of parameters in the base model (<code>W₀</code>) and only trains two low-rank bottleneck matrices (<code>A</code> and <code>B</code>). Reduces trainable parameters by &gt;99%, cutting optimizer memory and making consumer GPU training possible.
+                  </td>
+                  <td><span class="badge bg-success-subtle text-success">QLoRA (4-bit NF4)</span></td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">
+                    LoRA Rank (r)<br>
+                    <small class="text-muted fw-normal">Bottleneck Dimension</small>
+                  </td>
+                  <td>
+                    <code>rank &le; r &ll; min(d, k)</code><br>
+                    <small class="text-muted">Inner dimension of matrices A &amp; B</small>
+                  </td>
+                  <td>
+                    <strong>Adapter capacity.</strong> A higher rank (32, 64) allows the model to learn complex domain facts and terminology, but uses more VRAM. A lower rank (8, 16) regularizes against overfitting on small datasets.
+                  </td>
+                  <td>
+                    <code>r = 16</code> (Standard)<br>
+                    <code>r = 32</code> (Complex)<br>
+                    <code>r = 8</code> (Fast)
+                  </td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">
+                    LoRA Alpha (&alpha;)<br>
+                    <small class="text-muted fw-normal">Scaling Constant</small>
+                  </td>
+                  <td>
+                    <code>Scaling Factor = &alpha; / r</code>
+                  </td>
+                  <td>
+                    <strong>Update magnitude.</strong> Controls how aggressively adapter weight updates alter base activations. Higher &alpha; makes the model prioritize newly trained facts; lower &alpha; preserves general language abilities.
+                  </td>
+                  <td>
+                    <code>&alpha; = 2 &times; r</code><br>
+                    <small class="text-muted">e.g. r=16 &rarr; &alpha;=32</small>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">
+                    Epochs<br>
+                    <small class="text-muted fw-normal">Training Iterations</small>
+                  </td>
+                  <td>
+                    <code>Total Steps = (N &times; Epochs) / EffectiveBatch</code>
+                  </td>
+                  <td>
+                    Number of complete passes through the dataset. <strong>Too few</strong> (&lt;2) leads to underfitting. <strong>Too many</strong> (&gt;6) causes memorization, hallucinations on rephrased queries, and catastrophic forgetting.
+                  </td>
+                  <td>
+                    <code>3 - 5 Epochs</code><br>
+                    <small class="text-muted">Optimal for QA pairs</small>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">
+                    Learning Rate<br>
+                    <small class="text-muted fw-normal">Optimizer Step Size (&eta;)</small>
+                  </td>
+                  <td>
+                    <code>&theta; &larr; &theta; - &eta; &middot; &nabla;L(&theta;)</code>
+                  </td>
+                  <td>
+                    Because only low-rank adapter matrices are trained, LoRA requires a <strong>much higher learning rate</strong> (<code>2e-4</code>) than Full Fine-Tuning (<code>1e-5</code>). Too high causes loss divergence (NaN); too low stalls convergence.
+                  </td>
+                  <td>
+                    <code>0.0002</code> (LoRA/QLoRA)<br>
+                    <code>0.00001</code> (FFT)
+                  </td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">
+                    Batch Size<br>
+                    <small class="text-muted fw-normal">Per-Device Physical Batch</small>
+                  </td>
+                  <td>
+                    <code>Samples per forward pass</code>
+                  </td>
+                  <td>
+                    The physical number of samples processed concurrently on the GPU. Primary driver of activation memory. If batch size exceeds GPU capacity, PyTorch triggers a CUDA Out-of-Memory (OOM) panic.
+                  </td>
+                  <td>
+                    <code>2 - 4</code> (16GB GPU)<br>
+                    <code>1</code> (8-12GB GPU)
+                  </td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">
+                    Grad Accum Steps<br>
+                    <small class="text-muted fw-normal">Gradient Accumulation</small>
+                  </td>
+                  <td>
+                    <code>Effective Batch = BatchSize &times; AccumSteps</code>
+                  </td>
+                  <td>
+                    <strong>Simulates large batches with zero extra VRAM.</strong> Accumulates gradients over multiple micro-batches before executing <code>optimizer.step()</code>. Provides stable gradients while fitting into small GPU memory.
+                  </td>
+                  <td>
+                    <code>4 - 8</code><br>
+                    <small class="text-muted">Target Effective = 16</small>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">
+                    Max Sequence Length<br>
+                    <small class="text-muted fw-normal">Context Ceiling (T_max)</small>
+                  </td>
+                  <td>
+                    <code>Attention Memory &sim; &Omicron;(T&sup2;)</code>
+                  </td>
+                  <td>
+                    Cutoff token limit for input prompt + expected completion. Attention memory scales quadratically with sequence length: doubling sequence length quadruples attention tensor allocations!
+                  </td>
+                  <td>
+                    <code>1024 - 2048</code> tokens<br>
+                    <small class="text-muted">(4096+ needs 24GB+)</small>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <div class="card bg-body p-3 border shadow-sm h-100">
+                <h6 class="fw-bold text-primary mb-2"><i class="bi bi-cpu me-1"></i> Hardware Sizing Rule of Thumb</h6>
+                <p class="text-muted small mb-0">
+                  For 8B parameter models (e.g. Llama 3 8B, Qwen 2.5 7B) using 4-bit QLoRA with sequence length 1024, set <strong>Batch Size = 2</strong>, <strong>Grad Accum = 8</strong> (Effective Batch = 16), <strong>Rank = 16</strong>, and <strong>Alpha = 32</strong>. This achieves optimal gradient convergence within 12 GB of VRAM.
+                </p>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card bg-body p-3 border shadow-sm h-100">
+                <h6 class="fw-bold text-success mb-2"><i class="bi bi-shield-check me-1"></i> Overfitting &amp; Catastrophic Forgetting</h6>
+                <p class="text-muted small mb-0">
+                  To prevent the model from forgetting general knowledge or hallucinating, always maintain a 90/10 train-validation split and monitor evaluation loss. If training loss drops below 0.4 while validation loss rises, stop training immediately.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 9: Human Feedback & DPO Preference Alignment -->
+        <div id="dpo-guide" class="mb-5 pb-4 border-bottom">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1 rounded-pill small fw-semibold">ALIGNMENT</span>
+            <span class="text-muted small">Direct Preference Optimization</span>
+          </div>
+          <h3 class="fw-bold mb-3">9. Human Feedback &amp; DPO Preference Alignment</h3>
+          <p class="text-muted">
+            Supervised Fine-Tuning (SFT) teaches the model domain knowledge, but human preference alignment teaches it <em>which answers to prefer and which to reject</em>. DocTune Studio incorporates Direct Preference Optimization (DPO) to turn human thumbs-up/down ratings into continual alignment data.
+          </p>
+
+          <div class="card bg-body p-4 border shadow-sm mb-4">
+            <h6 class="fw-bold text-primary mb-2"><i class="bi bi-diagram-3-fill me-1"></i> The DPO Alignment Loop in DocTune</h6>
+            <div class="row g-3 align-items-center mb-3">
+              <div class="col-md-4">
+                <div class="p-2.5 border rounded bg-body-tertiary text-center">
+                  <span class="badge bg-primary rounded-circle mb-1">1</span>
+                  <div class="fw-bold small">Playground Prompting</div>
+                  <small class="text-muted">Operator asks domain question</small>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="p-2.5 border rounded bg-body-tertiary text-center">
+                  <span class="badge bg-success rounded-circle mb-1">2</span>
+                  <div class="fw-bold small">Human Rating &amp; Correction</div>
+                  <small class="text-muted">Thumbs Up (y_w) vs Down + Fix (y_l)</small>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="p-2.5 border rounded bg-body-tertiary text-center">
+                  <span class="badge bg-info rounded-circle mb-1">3</span>
+                  <div class="fw-bold small">DPO Adapter Training</div>
+                  <small class="text-muted">Direct loss update without PPO</small>
+                </div>
+              </div>
+            </div>
+
+            <h6 class="fw-bold small mb-1">Mathematical Formulation:</h6>
+            <div class="code-terminal py-2 px-3 small shadow-sm mb-3">
+              <code>L_DPO(&pi;_&theta;; &pi;_ref) = -E_{(x, y_w, y_l)} [ log &sigma;( &beta; &middot; log(&pi;_&theta;(y_w|x) / &pi;_ref(y_w|x)) - &beta; &middot; log(&pi;_&theta;(y_l|x) / &pi;_ref(y_l|x)) ) ]</code>
+            </div>
+            <p class="text-muted small mb-0">
+              Where <code>x</code> is the prompt, <code>y_w</code> is the preferred (chosen) answer, <code>y_l</code> is the dispreferred (rejected) answer, <code>&pi;_&theta;</code> is the model being trained, and <code>&pi;_ref</code> is the frozen reference base model. The hyperparameter <strong>&beta; (Beta, default 0.1)</strong> controls the strength of the KL divergence penalty against reference drift.
+            </p>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-bordered bg-body shadow-sm align-middle small mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>DPO Parameter</th>
+                  <th>Recommended</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="fw-bold">Beta (&beta;)</td>
+                  <td><code>0.1</code> (Range 0.05 - 0.5)</td>
+                  <td>Implicit reward scaling factor. Higher values strictly penalize deviations from the base reference model.</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">Learning Rate</td>
+                  <td><code>5e-6</code> (0.000005)</td>
+                  <td>Preference tuning requires a gentle step size to prevent catastrophic destruction of pre-trained reasoning.</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">Epochs</td>
+                  <td><code>2 - 3</code></td>
+                  <td>DPO converges rapidly on high-quality preference datasets (usually 2 to 3 passes).</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 10: End-to-End Pipeline Actions Guide -->
+        <div id="pipeline-actions" class="mb-5 pb-4">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="badge bg-info-subtle text-info border border-info-subtle px-2 py-1 rounded-pill small fw-semibold">WORKFLOW</span>
+            <span class="text-muted small">Action-by-Action Reference</span>
+          </div>
+          <h3 class="fw-bold mb-3">10. End-to-End Pipeline Actions Reference</h3>
+          <p class="text-muted">
+            A comprehensive breakdown of every action available in DocTune Studio, what happens under the hood, and what assets are generated:
+          </p>
+
+          <div class="d-flex flex-column gap-3">
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-primary rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">1</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Document Ingestion &amp; PII Scrubbing (<code>/data-prep</code>)</h6>
+                  <p class="text-muted small mb-1">
+                    Uploads raw documents into <code>raw_documents/</code>. Plain text is extracted, sensitive PII (SSNs, credit cards, emails, tokens) is masked via <code>pii_redactor.py</code>, text is segmented with sliding-window chunking (1000 chars, 200 overlap), and vectors are saved directly into the embedded ChromaDB persistent store (<code>data/vectorstore/</code>).
+                  </p>
+                  <small class="text-secondary"><strong>Output:</strong> <code>data/raw_chunks.jsonl</code> &amp; ChromaDB persistent SQLite index</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-success rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">2</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Synthetic Instruction Synthesis (<code>/data-prep</code>)</h6>
+                  <p class="text-muted small mb-1">
+                    Connects to the configured Teacher LLM (Ollama, vLLM, or API) to synthesize dense QA instruction pairs based strictly on the extracted document chunks. Outputs chat template JSONL format and automatically creates a versioned snapshot in the database.
+                  </p>
+                  <small class="text-secondary"><strong>Output:</strong> <code>data/private_docs.jsonl</code> (Train &amp; Val splits)</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-info rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">3</span>
+                <div>
+                  <h6 class="fw-bold mb-1">QLoRA / LoRA Training Studio (<code>/training</code>)</h6>
+                  <p class="text-muted small mb-1">
+                    Launches background Celery worker or subprocess fine-tuning. Base model weights are loaded in 4-bit NF4, PEFT adapters are attached to attention modules (<code>q_proj, v_proj, ...</code>), and real-time loss telemetry streams via WebSocket to live ApexCharts.
+                  </p>
+                  <small class="text-secondary"><strong>Output:</strong> <code>output_qlora/adapter_model.safetensors</code> &amp; <code>adapter_config.json</code></small>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-warning rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">4</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Adapter Weight Merging (<code>/models</code>)</h6>
+                  <p class="text-muted small mb-1">
+                    Folds trained low-rank adapter updates back into the base model weights (<code>W = W₀ + &Delta;W</code>) producing a standalone, unquantized 16-bit float model that can be served directly by vLLM, Hugging Face TGI, or exported to GGUF.
+                  </p>
+                  <small class="text-secondary"><strong>Output:</strong> <code>output_merged/</code> (Complete 16-bit standalone model)</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-danger rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">5</span>
+                <div>
+                  <h6 class="fw-bold mb-1">1-Click GGUF Quantization &amp; Ollama Modelfile (<code>/models</code>)</h6>
+                  <p class="text-muted small mb-1">
+                    Executes <code>llama.cpp</code> quantization into <code>q4_k_m</code> or <code>q8_0</code> format. Automatically generates an Ollama <code>Modelfile</code> with the correct chat template and system prompt for instant zero-dependency deployment.
+                  </p>
+                  <small class="text-secondary"><strong>Output:</strong> <code>output_merged/model.gguf</code> &amp; <code>Modelfile</code></small>
+                </div>
+              </div>
+            </div>
+
+            <div class="card bg-body landing-card p-3 shadow-sm">
+              <div class="d-flex gap-3">
+                <span class="badge bg-secondary rounded-circle d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">6</span>
+                <div>
+                  <h6 class="fw-bold mb-1">Empirical 4-Way Evaluation &amp; Regression Testing (<code>/experiments</code>)</h6>
+                  <p class="text-muted small mb-1">
+                    Tests queries across Base Zero-Shot vs. Base + RAG vs. Fine-Tuned vs. Hybrid (FT + RAG), and executes the 100-sample balanced ARC/MMLU benchmark to quantitatively prove domain adaptation and verify zero regression.
+                  </p>
+                  <small class="text-secondary"><strong>Output:</strong> Saved records in PostgreSQL <code>eval_benchmarks</code> table</small>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

@@ -130,33 +130,33 @@
           <div class="col-6 col-md-3">
             <div class="card bg-body-tertiary border-0 text-center p-3 h-100">
               <span class="text-muted small fw-semibold">Base Model (Zero-Shot)</span>
-              <h3 class="fw-bold my-2 text-danger" id="score_base">0%</h3>
-              <div class="small text-muted"><span id="lat_base">420</span> ms &bull; <span id="tok_base">45</span> tokens</div>
-              <small class="text-secondary mt-1" style="font-size: 0.72rem;">No internal knowledge</small>
+              <h3 class="fw-bold my-2 text-danger" id="score_base">-- %</h3>
+              <div class="small text-muted"><span id="lat_base">--</span> ms &bull; <span id="tok_base">--</span> tokens</div>
+              <small class="text-secondary mt-1" style="font-size: 0.72rem;">Pre-trained generic knowledge</small>
             </div>
           </div>
           <div class="col-6 col-md-3">
             <div class="card bg-body-tertiary border-0 text-center p-3 h-100">
               <span class="text-muted small fw-semibold">Base Model + RAG</span>
-              <h3 class="fw-bold my-2 text-primary" id="score_rag">100%</h3>
-              <div class="small text-muted"><span id="lat_rag">780</span> ms &bull; <span id="tok_rag">320</span> tokens</div>
-              <small class="text-secondary mt-1" style="font-size: 0.72rem;">Retrieval latency &amp; token cost</small>
+              <h3 class="fw-bold my-2 text-primary" id="score_rag">-- %</h3>
+              <div class="small text-muted"><span id="lat_rag">--</span> ms &bull; <span id="tok_rag">--</span> tokens</div>
+              <small class="text-secondary mt-1" style="font-size: 0.72rem;">Dynamic document context</small>
             </div>
           </div>
           <div class="col-6 col-md-3">
             <div class="card bg-body-tertiary border-0 text-center p-3 h-100">
               <span class="text-muted small fw-semibold">DocTune Fine-Tuned</span>
-              <h3 class="fw-bold my-2 text-success" id="score_ft">100%</h3>
-              <div class="small text-muted"><span id="lat_ft">310</span> ms &bull; <span id="tok_ft">40</span> tokens</div>
-              <small class="text-success mt-1 fw-semibold" style="font-size: 0.72rem;"><i class="bi bi-lightning-charge"></i> Fastest &amp; Lowest Cost</small>
+              <h3 class="fw-bold my-2 text-success" id="score_ft">-- %</h3>
+              <div class="small text-muted"><span id="lat_ft">--</span> ms &bull; <span id="tok_ft">--</span> tokens</div>
+              <small class="text-secondary mt-1" style="font-size: 0.72rem;">Domain adapted weights</small>
             </div>
           </div>
           <div class="col-6 col-md-3">
             <div class="card bg-body-tertiary border-0 text-center p-3 h-100">
               <span class="text-muted small fw-semibold">DocTune + RAG (Hybrid)</span>
-              <h3 class="fw-bold my-2 text-info" id="score_hybrid">100%</h3>
-              <div class="small text-muted"><span id="lat_hybrid">750</span> ms &bull; <span id="tok_hybrid">315</span> tokens</div>
-              <small class="text-secondary mt-1" style="font-size: 0.72rem;">Peak grounding accuracy</small>
+              <h3 class="fw-bold my-2 text-info" id="score_hybrid">-- %</h3>
+              <div class="small text-muted"><span id="lat_hybrid">--</span> ms &bull; <span id="tok_hybrid">--</span> tokens</div>
+              <small class="text-secondary mt-1" style="font-size: 0.72rem;">Fine-tuned + grounded retrieval</small>
             </div>
           </div>
         </div>

@@ -289,10 +289,35 @@ async def compare_runs_api(request: Request, run_ids: str = Query("", descriptio
 
 @router.get("/api/v1/experiments/rag-benchmark", response_class=JSONResponse)
 @router.post("/api/v1/experiments/rag-benchmark", response_class=JSONResponse)
-async def trigger_rag_benchmark_api(_role=Depends(require_project_role("operator"))):
-    """Run empirical 4-way RAG vs Fine-Tuning benchmark on enterprise documents."""
+async def trigger_rag_benchmark_api(request: Request, _role=Depends(require_project_role("operator"))):
+    """Run empirical 4-way RAG vs Fine-Tuning benchmark on enterprise documents and save to database."""
     from pipeline.rag_benchmark import run_rag_benchmark
+    import uuid
+    project_id = get_project_id(request) if request else "proj_default"
     res = run_rag_benchmark()
+
+    # Persist benchmark execution in database
+    if SessionLocal and res.get("status") == "success":
+        try:
+            db = SessionLocal()
+            try:
+                summary = res.get("summary", {})
+                ft_summary = summary.get("finetuned_model", {})
+                bench_id = f"bench_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                bench = EvaluationBenchmark(
+                    id=bench_id,
+                    project_id=project_id,
+                    test_suite_name="rag_empirical_4way",
+                    avg_latency_ms=ft_summary.get("avg_latency_ms"),
+                    detailed_results=res,
+                )
+                db.add(bench)
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Could not persist EvaluationBenchmark to database: %s", e)
+
     return JSONResponse(res)
 
 

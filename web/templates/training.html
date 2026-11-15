@@ -10,9 +10,29 @@
       </div>
       <div class="card-body">
         <form id="trainForm">
+          {% if qa_pairs_count == 0 %}
+          <div class="alert alert-warning py-2 px-3 small mb-3 border-warning-subtle shadow-sm" id="datasetWarningBox">
+            <div class="d-flex align-items-center gap-2">
+              <i class="bi bi-exclamation-triangle-fill text-warning fs-5"></i>
+              <div>
+                <strong class="d-block">No Dataset Prepared</strong>
+                <span><code>data/private_docs.jsonl</code> is empty. Ingest raw documents in <a href="/data-prep" class="alert-link text-decoration-underline">Data Prep Studio</a> before training.</span>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <div class="alert alert-success bg-success-subtle text-success border-success-subtle py-1.5 px-3 small mb-3 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-check-circle-fill me-1"></i> Active Dataset: <strong>{{ qa_pairs_count }} QA pairs ready</strong></span>
+            <a href="/data-prep" class="text-success small fw-semibold text-decoration-none">Manage &rarr;</a>
+          </div>
+          {% endif %}
+
           <!-- Method Selection -->
           <div class="mb-3">
-            <label class="form-label small fw-semibold">Fine-Tuning Method</label>
+            <label class="form-label small fw-semibold">
+              Fine-Tuning Method
+              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="QLoRA (4-bit NF4 quantized) fits easily on consumer GPUs (10-14GB). LoRA (16-bit) trains adapters in fp16/bf16. FFT updates all base model weights (requires 48GB+ VRAM)."></i>
+            </label>
             <div class="btn-group w-100" role="group">
               <input type="radio" class="btn-check" name="method" id="m_qlora" value="qlora" checked>
               <label class="btn btn-outline-primary btn-sm" for="m_qlora">QLoRA (4-bit)</label>
@@ -39,7 +59,10 @@
           <!-- Base Model ID with Downloaded Models Dropdown -->
           <div class="mb-3">
             <div class="d-flex justify-content-between align-items-center mb-1">
-              <label class="form-label small fw-semibold mb-0" for="base_model_select">Base Model ID</label>
+              <label class="form-label small fw-semibold mb-0" for="base_model_select">
+                Base Model ID
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="The pre-trained foundation model architecture to fine-tune. Weights are downloaded from Hugging Face Hub or read from local cache."></i>
+              </label>
               <div class="d-flex align-items-center gap-2">
                 <span id="baseModelCacheBadge" class="badge bg-secondary-subtle text-secondary small" style="font-size: 0.72rem;">Checking cache...</span>
                 <a href="/models#hub-models" class="text-decoration-none small text-primary" title="Explore model hub, download weights, or configure HF token">
@@ -82,7 +105,10 @@
           <!-- Dataset Version Selector -->
           <div class="mb-3">
             <div class="d-flex justify-content-between align-items-center mb-1">
-              <label class="form-label small fw-semibold mb-0">Dataset Snapshot</label>
+              <label class="form-label small fw-semibold mb-0">
+                Dataset Snapshot
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Point-in-time versioned snapshot of synthetic instruction QA pairs. Allows reproducible training runs."></i>
+              </label>
               <a href="/data-prep#datasetVersionsCard" class="text-decoration-none small text-info">
                 <i class="bi bi-clock-history me-1"></i>Versions ({{ dataset_versions|length }})
               </a>
@@ -98,7 +124,10 @@
           <!-- Resume from Checkpoint -->
           <div class="mb-3">
             <div class="d-flex justify-content-between align-items-center mb-1">
-              <label class="form-label small fw-semibold mb-0">Resume from Checkpoint</label>
+              <label class="form-label small fw-semibold mb-0">
+                Resume from Checkpoint
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Continue training from a saved checkpoint step instead of starting from step 0. Useful if training was paused or interrupted."></i>
+              </label>
               {% if resumable_checkpoints %}
                 <span class="badge bg-success-subtle text-success small">{{ resumable_checkpoints|length }} found</span>
               {% endif %}
@@ -118,11 +147,17 @@
           <!-- LoRA Rank & Alpha -->
           <div class="row g-2 mb-3">
             <div class="col-6">
-              <label class="form-label small fw-semibold">LoRA Rank (r)</label>
+              <label class="form-label small fw-semibold">
+                LoRA Rank (r)
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Rank (r) controls adapter bottleneck capacity. Higher rank (e.g. 32-64) learns complex domain facts but uses more VRAM. Standard: 16."></i>
+              </label>
               <input type="number" class="form-control form-control-sm" name="lora_r" value="{{ config.lora_r }}" min="4" max="256">
             </div>
             <div class="col-6">
-              <label class="form-label small fw-semibold">LoRA Alpha</label>
+              <label class="form-label small fw-semibold">
+                LoRA Alpha
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Scaling factor for adapter updates (Delta W = alpha/r * B*A). Controls how strongly adapter updates influence the base model. Standard rule: alpha = 2*r."></i>
+              </label>
               <input type="number" class="form-control form-control-sm" name="lora_alpha" value="{{ config.lora_alpha }}" min="8" max="512">
             </div>
           </div>
@@ -130,11 +165,17 @@
           <!-- Epochs & Learning Rate -->
           <div class="row g-2 mb-3">
             <div class="col-6">
-              <label class="form-label small fw-semibold">Epochs</label>
+              <label class="form-label small fw-semibold">
+                Epochs
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Total passes through the entire dataset. 3-5 epochs is typical for Q&A fine-tuning. Too many epochs risks overfitting and hallucination."></i>
+              </label>
               <input type="number" class="form-control form-control-sm" name="epochs" value="{{ config.num_train_epochs }}" min="1" max="50">
             </div>
             <div class="col-6">
-              <label class="form-label small fw-semibold">Learning Rate</label>
+              <label class="form-label small fw-semibold">
+                Learning Rate
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Optimization step size. LoRA/QLoRA uses 0.0002 (2e-4). Full Fine-Tuning requires a much smaller LR like 0.00001 (1e-5) to prevent catastrophic forgetting."></i>
+              </label>
               <input type="number" step="0.00001" class="form-control form-control-sm" name="learning_rate" value="{{ config.learning_rate_lora }}">
             </div>
           </div>
@@ -142,18 +183,27 @@
           <!-- Batch Size & Accumulation -->
           <div class="row g-2 mb-3">
             <div class="col-6">
-              <label class="form-label small fw-semibold">Batch Size</label>
+              <label class="form-label small fw-semibold">
+                Batch Size
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Samples per forward/backward pass per GPU. Direct driver of VRAM. For 8B models on 16GB VRAM, use 2."></i>
+              </label>
               <input type="number" class="form-control form-control-sm" name="batch_size" value="{{ config.per_device_train_batch_size }}" min="1" max="32">
             </div>
             <div class="col-6">
-              <label class="form-label small fw-semibold">Grad Accum Steps</label>
+              <label class="form-label small fw-semibold">
+                Grad Accum Steps
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Simulates a larger batch size without extra VRAM (Effective Batch = Batch Size * Grad Accum). Example: 2 * 8 = 16 effective batch size."></i>
+              </label>
               <input type="number" class="form-control form-control-sm" name="grad_accum" value="{{ config.gradient_accumulation_steps }}" min="1" max="64">
             </div>
           </div>
 
           <!-- Sequence Length -->
           <div class="mb-3">
-            <label class="form-label small fw-semibold">Max Sequence Length</label>
+            <label class="form-label small fw-semibold">
+              Max Sequence Length
+              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Maximum token context window during training. Attention VRAM scales quadratically O(T^2). 1024-2048 is standard for QA pairs."></i>
+            </label>
             <input type="number" class="form-control form-control-sm" name="max_seq_length" id="input_seq_length" value="{{ config.max_seq_length }}" min="128" max="8192">
           </div>
 
@@ -172,8 +222,8 @@
           </div>
 
           <!-- Controls -->
-          <div class="d-grid gap-2">
-            <button type="submit" class="btn btn-success" id="startTrainBtn">
+          <div class="d-grid gap-2 mb-3">
+            <button type="submit" class="btn btn-success" id="startTrainBtn" {% if qa_pairs_count == 0 %}title="Ingest documents in Data Prep Studio first"{% endif %}>
               <i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning
             </button>
             <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#sweepModal">
@@ -182,6 +232,48 @@
             <button type="button" class="btn btn-outline-danger btn-sm" id="abortTrainBtn" onclick="abortTraining()">
               <i class="bi bi-stop-circle me-1"></i> Abort Running Job
             </button>
+          </div>
+
+          <!-- Interactive ML Parameter Reference Accordion -->
+          <div class="accordion accordion-flush border rounded" id="paramGuideAccordion">
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="headingParamGuide">
+                <button class="accordion-button collapsed py-2 px-3 small fw-bold text-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseParamGuide" aria-expanded="false" aria-controls="collapseParamGuide">
+                  <i class="bi bi-book me-2 text-primary"></i> Hyperparameter Reference & GPU Sizing
+                </button>
+              </h2>
+              <div id="collapseParamGuide" class="accordion-collapse collapse" aria-labelledby="headingParamGuide" data-bs-parent="#paramGuideAccordion">
+                <div class="accordion-body p-2.5 small text-muted">
+                  <p class="mb-2"><strong>Quick Rule of Thumb:</strong></p>
+                  <ul class="ps-3 mb-2" style="font-size: 0.78rem;">
+                    <li><strong>LoRA Rank (r) = 16, Alpha = 32</strong>: Ideal balance of accuracy, VRAM usage, and stability.</li>
+                    <li><strong>Effective Batch Size = 16</strong>: e.g. Batch Size 2 &times; Grad Accum 8.</li>
+                    <li><strong>Epochs = 3</strong>: Prevents overfitting while embedding domain facts.</li>
+                    <li><strong>Learning Rate = 0.0002</strong>: Standard for QLoRA adapters.</li>
+                  </ul>
+                  <div class="border-top pt-2 mt-2">
+                    <span class="d-block fw-semibold text-body mb-1" style="font-size: 0.78rem;">VRAM Sizing Guide (QLoRA 4-bit):</span>
+                    <div class="table-responsive">
+                      <table class="table table-sm table-bordered extra-small mb-0" style="font-size: 0.72rem;">
+                        <thead class="table-light">
+                          <tr><th>Model Size</th><th>Min VRAM</th><th>Seq Len</th></tr>
+                        </thead>
+                        <tbody>
+                          <tr><td>1B - 3B</td><td>6 - 8 GB</td><td>2048</td></tr>
+                          <tr><td>7B - 8B</td><td>12 - 16 GB</td><td>1024 - 2048</td></tr>
+                          <tr><td>14B</td><td>20 - 24 GB</td><td>2048</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div class="mt-2 text-end">
+                    <a href="/docs#hyperparameters" target="_blank" class="small text-primary text-decoration-none">
+                      Read In-Depth Guide in Docs &rarr;
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </form>
       </div>

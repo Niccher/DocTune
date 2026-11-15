@@ -33,10 +33,19 @@ router = APIRouter()
 
 @router.get("/training", response_class=HTMLResponse)
 async def training_view(request: Request, model_id: Optional[str] = Query(None)):
+    from pipeline.common import DEFAULT_JSONL
     cfg = Config.load()
     cfg_dict = cfg.to_dict()
     if model_id and model_id.strip():
         cfg_dict["model_id"] = model_id.strip()
+
+    qa_pairs_count = 0
+    if DEFAULT_JSONL.exists():
+        try:
+            with open(DEFAULT_JSONL, "r", encoding="utf-8") as f:
+                qa_pairs_count = sum(1 for line in f if line.strip())
+        except Exception:
+            qa_pairs_count = 0
 
     return templates.TemplateResponse(
         request=request,
@@ -53,6 +62,7 @@ async def training_view(request: Request, model_id: Optional[str] = Query(None))
             "active_dataset_version": dataset_version_service.get_active_version(),
             "downloaded_models": hf_model_service.list_downloaded_models(),
             "curated_models": hf_model_service.list_curated_models(),
+            "qa_pairs_count": qa_pairs_count,
         },
     )
 

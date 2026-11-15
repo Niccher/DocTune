@@ -225,7 +225,7 @@
             </div>
             <h6 class="fw-bold mb-1">2. Fine-Tuning Studio</h6>
             <p class="text-muted small mb-2">
-              Train LoRA/QLoRA adapters on Meta-Llama-3-8B with real-time loss tracking.
+              Train LoRA/QLoRA adapters on <code>{{ pipeline.base_model or 'Base Model' }}</code> with real-time loss tracking.
             </p>
             <div class="small text-muted mb-3">
               Dataset: <code>private_docs.jsonl</code> ({{ pipeline.dataset_size_kb }} KB)

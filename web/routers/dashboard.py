@@ -87,6 +87,7 @@ def get_pipeline_details():
         "raw_docs_size_kb": round(total_doc_bytes / 1024, 1),
         "qa_pairs_count": jsonl_count,
         "dataset_size_kb": round(jsonl_bytes / 1024, 1),
+        "base_model": cfg.model_id,
         "checkpoints": checkpoints_summary,
     }
 

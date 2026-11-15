@@ -64,12 +64,22 @@
               </label>
             </div>
           </div>
-          <div class="input-group">
-            <input type="text" class="form-control" id="promptInput" placeholder="e.g. What is the primary failover protocol for Facility B?" value="What is the primary failover protocol for Facility B?">
+          <div class="input-group mb-2">
+            <input type="text" class="form-control" id="promptInput" placeholder="Ask a domain question based on your uploaded documents..." value="">
             <button class="btn btn-primary" type="button" id="compareBtn" onclick="simulateComparison()">
               <i class="bi bi-send-fill me-1"></i> Compare Models
             </button>
           </div>
+          {% if suggested_prompts %}
+          <div class="d-flex flex-wrap align-items-center gap-1">
+            <span class="text-muted extra-small me-1" style="font-size: 0.72rem;"><i class="bi bi-lightbulb text-warning me-1"></i>Suggested Prompts:</span>
+            {% for sp in suggested_prompts %}
+            <button type="button" class="btn btn-xs btn-outline-secondary text-truncate" style="max-width: 280px; font-size: 0.72rem;" onclick="document.getElementById('promptInput').value='{{ sp | replace("'", "\\'") }}'; simulateComparison();" title="{{ sp }}">
+              {{ sp }}
+            </button>
+            {% endfor %}
+          </div>
+          {% endif %}
         </div>
 
         <div class="row g-2 flex-grow-1">
@@ -135,6 +145,9 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
       </p>
     </div>
     <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#dpoInfoModal">
+        <i class="bi bi-question-circle me-1"></i> What is DPO?
+      </button>
       <button class="btn btn-sm btn-outline-secondary" onclick="exportDPOData()" id="btnExportDPO">
         <i class="bi bi-file-earmark-arrow-down me-1"></i> Export Dataset
       </button>
@@ -242,6 +255,89 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
             Submit Feedback
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: What is DPO & Preference Alignment? -->
+<div class="modal fade" id="dpoInfoModal" tabindex="-1" aria-labelledby="dpoInfoModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-body border-bottom py-3">
+        <h5 class="modal-title fw-bold" id="dpoInfoModalLabel">
+          <i class="bi bi-sliders2 text-primary me-2"></i>Understanding Human Feedback & Direct Preference Optimization (DPO)
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-4">
+        <h6 class="fw-bold text-primary mb-2"><i class="bi bi-lightbulb me-1"></i> What is DPO?</h6>
+        <p class="small text-muted mb-3">
+          <strong>Direct Preference Optimization (DPO)</strong> is a state-of-the-art technique for aligning Language Models to human preferences. Unlike traditional Reinforcement Learning from Human Feedback (RLHF / PPO) which requires training a separate reward model and running complex policy gradient algorithms, DPO solves the alignment problem directly using supervised cross-entropy on paired preferences.
+        </p>
+
+        <h6 class="fw-bold text-primary mb-2"><i class="bi bi-hand-thumbs-up me-1"></i> How Human Feedback Works in DocTune</h6>
+        <div class="row g-2 mb-3">
+          <div class="col-md-6">
+            <div class="p-3 border rounded bg-body-tertiary h-100">
+              <strong class="d-block small text-success mb-1"><i class="bi bi-hand-thumbs-up me-1"></i> Thumbs Up (Chosen)</strong>
+              <p class="small text-muted mb-0">
+                Marks the fine-tuned model's response as the preferred, grounded answer ($y_w$).
+              </p>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="p-3 border rounded bg-body-tertiary h-100">
+              <strong class="d-block small text-danger mb-1"><i class="bi bi-hand-thumbs-down me-1"></i> Thumbs Down + Correction (Rejected vs Chosen)</strong>
+              <p class="small text-muted mb-0">
+                Marks the model's answer as rejected ($y_l$) and uses your provided ground truth as the preferred answer ($y_w$).
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <h6 class="fw-bold text-primary mb-2"><i class="bi bi-gear-wide-connected me-1"></i> The DPO Preference Loss</h6>
+        <div class="p-2 border rounded bg-dark text-light font-monospace small mb-3">
+          L_DPO = -E [ log &sigma;( &beta; &middot; log(&pi;_&theta;(y_w|x) / &pi;_ref(y_w|x)) - &beta; &middot; log(&pi;_&theta;(y_l|x) / &pi;_ref(y_l|x)) ) ]
+        </div>
+        <p class="small text-muted mb-3">
+          This objective mathematically increases the probability of the preferred answer ($y_w$) while decreasing the probability of the rejected answer ($y_l$), constrained by a reference model (&pi;_ref) to prevent the model from drifting or forgetting general capabilities.
+        </p>
+
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered align-middle small mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Parameter</th>
+                <th>Recommended</th>
+                <th>Role in Alignment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="fw-semibold">DPO Beta (&beta;)</td>
+                <td><code>0.1</code> (Range 0.05 - 0.5)</td>
+                <td>KL regularization weight. Higher &beta; keeps the model closer to the reference model; lower &beta; allows more aggressive style adaptation.</td>
+              </tr>
+              <tr>
+                <td class="fw-semibold">Learning Rate</td>
+                <td><code>5e-6</code> (0.000005)</td>
+                <td>DPO requires a very gentle learning rate to avoid destroying base pre-training knowledge.</td>
+              </tr>
+              <tr>
+                <td class="fw-semibold">Epochs</td>
+                <td><code>2 - 3</code></td>
+                <td>Usually aligns well in 2-3 epochs over the curated preference pairs.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <a href="/docs#dpo-guide" target="_blank" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-book me-1"></i> Read Full DPO Guide in Docs &rarr;
+        </a>
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>

@@ -7,8 +7,8 @@ from fastapi import APIRouter, Request, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 
-from pipeline.common import PROJECT_ROOT, Config
-from pipeline.evaluate import TEST_CASES
+from pipeline.common import PROJECT_ROOT, DEFAULT_JSONL, Config
+from pipeline.evaluate import get_evaluation_test_cases
 from web.state import state, JobType
 from web.services.process_manager import process_mgr
 from web.templates_config import templates
@@ -49,13 +49,29 @@ async def playground_view(request: Request):
         except Exception:
             pass
 
+    # Extract suggested prompts from active dataset if present
+    suggested_prompts = []
+    if DEFAULT_JSONL.exists():
+        try:
+            import json
+            with open(DEFAULT_JSONL, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip() and len(suggested_prompts) < 6:
+                        rec = json.loads(line)
+                        for m in rec.get("messages", []):
+                            if m.get("role") == "user" and m.get("content"):
+                                suggested_prompts.append(m.get("content").strip())
+        except Exception:
+            pass
+
     return templates.TemplateResponse(
         request=request,
         name="playground.html",
         context={
             "page_title": "Evaluation & Playground",
             "active_page": "playground",
-            "test_cases": TEST_CASES,
+            "test_cases": get_evaluation_test_cases(),
+            "suggested_prompts": suggested_prompts,
             "available_adapters": available_adapters,
             "cfg": cfg.to_dict(),
             "active_job": state.active_job.to_dict() if state.active_job else None,

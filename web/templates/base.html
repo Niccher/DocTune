@@ -485,6 +485,9 @@
     // Auto connect on load
     document.addEventListener('DOMContentLoaded', () => {
       connectWS(window.handleCustomWS);
+      // Initialize all Bootstrap tooltips
+      const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+      [...tooltipTriggerList].map(el => new bootstrap.Tooltip(el));
     });
   </script>
 
