@@ -142,6 +142,16 @@ detect_hardware() {
 
 # ── Download or Locate llama-server Binary ─────────────────────────────────────
 ensure_llama_server() {
+    # Check and flatten any nested directory structure from zip extraction (build/bin or bin)
+    if [ -d "$BIN_DIR/build/bin" ]; then
+        cp -r "$BIN_DIR"/build/bin/* "$BIN_DIR"/
+        rm -rf "$BIN_DIR/build"
+    elif [ -d "$BIN_DIR/bin" ]; then
+        cp -r "$BIN_DIR"/bin/* "$BIN_DIR"/
+        rm -rf "$BIN_DIR/bin"
+    fi
+    chmod +x "$BIN_DIR"/* 2>/dev/null || true
+
     SERVER_BIN="$BIN_DIR/llama-server"
     if [ -x "$SERVER_BIN" ]; then
         log "Found existing llama-server at: $SERVER_BIN"
@@ -201,6 +211,15 @@ ensure_llama_server() {
             (sudo apt-get update -y && sudo apt-get install -y unzip && unzip -q -o "$TMP_ZIP" -d "$BIN_DIR") || true
         fi
         rm -f "$TMP_ZIP"
+
+        # Flatten nested directory structure (llama.cpp packages binaries inside build/bin)
+        if [ -d "$BIN_DIR/build/bin" ]; then
+            cp -r "$BIN_DIR"/build/bin/* "$BIN_DIR"/
+            rm -rf "$BIN_DIR/build"
+        elif [ -d "$BIN_DIR/bin" ]; then
+            cp -r "$BIN_DIR"/bin/* "$BIN_DIR"/
+            rm -rf "$BIN_DIR/bin"
+        fi
         chmod +x "$BIN_DIR"/* 2>/dev/null || true
         log "Successfully installed llama-server to $BIN_DIR"
     else
@@ -318,12 +337,25 @@ start_server() {
     ensure_model
 
     SERVER_BIN="$BIN_DIR/llama-server"
-    if [ ! -x "$SERVER_BIN" ] && command -v llama-server &>/dev/null; then
+    if [ ! -x "$SERVER_BIN" ] && [ -x "$BIN_DIR/build/bin/llama-server" ]; then
+        cp -r "$BIN_DIR"/build/bin/* "$BIN_DIR"/
+        rm -rf "$BIN_DIR/build"
+        chmod +x "$BIN_DIR"/* 2>/dev/null || true
+        SERVER_BIN="$BIN_DIR/llama-server"
+    elif [ ! -x "$SERVER_BIN" ] && [ -x "$BIN_DIR/bin/llama-server" ]; then
+        cp -r "$BIN_DIR"/bin/* "$BIN_DIR"/
+        rm -rf "$BIN_DIR/bin"
+        chmod +x "$BIN_DIR"/* 2>/dev/null || true
+        SERVER_BIN="$BIN_DIR/llama-server"
+    elif [ ! -x "$SERVER_BIN" ] && command -v llama-server &>/dev/null; then
         SERVER_BIN="$(command -v llama-server)"
     fi
     if [ ! -x "$SERVER_BIN" ]; then
         err "llama-server binary not found or not executable at: $SERVER_BIN. Ensure pre-built binary downloaded or compile locally."
     fi
+
+    # Export dynamic library path so shared libs (libllama.so, libggml.so, etc.) resolve cleanly
+    export LD_LIBRARY_PATH="$BIN_DIR:${LD_LIBRARY_PATH:-}"
 
     info "Starting llama-server..."
     info "  - Model       : $ACTIVE_MODEL"
