@@ -10,10 +10,10 @@
     </div>
     <div class="d-flex align-items-center gap-2">
       <div class="btn-group btn-group-sm" role="group" id="modelFilterGroup">
-        <button type="button" class="btn btn-outline-primary active" onclick="filterModelCards('all', this)">All</button>
-        <button type="button" class="btn btn-outline-success" onclick="filterModelCards('free', this)">🟢 Free / No Token</button>
-        <button type="button" class="btn btn-outline-warning" onclick="filterModelCards('gated', this)">🔒 Gated (Token)</button>
-        <button type="button" class="btn btn-outline-secondary" onclick="filterModelCards('cached', this)">💾 Cached on Disk</button>
+        <button type="button" class="btn btn-outline-primary active" onclick="filterModelCards('all', this)" data-bs-toggle="tooltip" data-bs-placement="top" title="Show all curated and discovered models">All</button>
+        <button type="button" class="btn btn-outline-success" onclick="filterModelCards('free', this)" data-bs-toggle="tooltip" data-bs-placement="top" title="Models accessible without a Hugging Face user access token (e.g. Qwen, SmolLM2)">🟢 Free / No Token</button>
+        <button type="button" class="btn btn-outline-warning" onclick="filterModelCards('gated', this)" data-bs-toggle="tooltip" data-bs-placement="top" title="Foundation models requiring accepted terms and HF_TOKEN (e.g. Llama-3, Mistral)">🔒 Gated (Token)</button>
+        <button type="button" class="btn btn-outline-secondary" onclick="filterModelCards('cached', this)" data-bs-toggle="tooltip" data-bs-placement="top" title="Weights already present in local disk cache (~/.cache/huggingface/hub)">💾 Cached on Disk</button>
       </div>
     </div>
   </div>
@@ -220,7 +220,10 @@
 
         <form id="mergeForm">
           <div class="mb-3">
-            <label class="form-label small fw-semibold">Source Adapter Directory</label>
+            <label class="form-label small fw-semibold">
+              Source Adapter Directory
+              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Directory containing adapter_model.safetensors and adapter_config.json from a completed fine-tuning run."></i>
+            </label>
             <select class="form-select form-select-sm" name="adapter_dir">
               <option value="{{ cfg.output_qlora }}" selected>output_qlora/ (QLoRA)</option>
               <option value="{{ cfg.output_lora }}">output_lora/ (LoRA)</option>
@@ -228,16 +231,22 @@
           </div>
 
           <div class="mb-3">
-            <label class="form-label small fw-semibold">Destination Directory</label>
+            <label class="form-label small fw-semibold">
+              Destination Directory
+              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Output path where merged FP16 Hugging Face model weights and tokenizer will be saved."></i>
+            </label>
             <input type="text" class="form-control form-control-sm" name="export_dir" value="{{ cfg.output_merged }}" required>
           </div>
 
           <div class="mb-3">
-            <label class="form-label small fw-semibold">Base Model ID</label>
+            <label class="form-label small fw-semibold">
+              Base Model ID
+              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Hugging Face foundation model ID matching the architecture the adapter was trained on."></i>
+            </label>
             <input type="text" class="form-control form-control-sm" name="model_id" value="{{ cfg.model_id }}" required>
           </div>
 
-          <button type="submit" class="btn btn-primary w-100" id="mergeBtn">
+          <button type="submit" class="btn btn-primary w-100" id="mergeBtn" data-bs-toggle="tooltip" data-bs-placement="top" title="Folds low-rank updates (W = W0 + alpha/r * BA) into the base weights, producing standalone FP16 safetensors.">
             <i class="bi bi-play-circle me-1"></i> Merge Weights
           </button>
         </form>
@@ -274,6 +283,75 @@
         <h6 class="fw-bold mb-1"><i class="bi bi-terminal me-1 text-info"></i>Serve with Ollama</h6>
         <pre class="bg-dark text-light p-3 rounded small mb-0"><code>ollama create my-private-model -f ./Modelfile
 ollama run my-private-model</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Interactive Model Lifecycle, Quantization & Serving Guide Accordion -->
+<div class="accordion accordion-flush border rounded shadow-sm mb-4" id="modelLifecycleGuideAccordion">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingModelGuide">
+      <button class="accordion-button collapsed py-2.5 px-3 fw-bold text-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseModelGuide" aria-expanded="false" aria-controls="collapseModelGuide">
+        <i class="bi bi-book me-2 text-primary"></i> Model Architecture Lifecycle, Quantization &amp; Deployment Reference
+      </button>
+    </h2>
+    <div id="collapseModelGuide" class="accordion-collapse collapse" aria-labelledby="headingModelGuide" data-bs-parent="#modelLifecycleGuideAccordion">
+      <div class="accordion-body p-3 small text-muted">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-diagram-3 text-primary me-1"></i> The 4-Stage Model Lifecycle</h6>
+            <p class="mb-2">DocTune Studio transitions models through four discrete architectural states:</p>
+            <ol class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Foundation Base Model:</strong> Pre-trained weights downloaded from Hugging Face Hub (e.g. Llama-3-8B).</li>
+              <li><strong>Low-Rank Adapters:</strong> Lightweight delta layers trained via QLoRA/LoRA stored in <code>output_qlora/</code> (~100MB-500MB).</li>
+              <li><strong>Merged Standalone Weights:</strong> Low-rank deltas mathematically folded into the base model ($W = W_0 + \frac{\alpha}{r}BA$) for standard FP16 execution in <code>output_merged/</code>.</li>
+              <li><strong>Quantized GGUF Container:</strong> Compact integer quantized format for local, zero-cost edge inference via Ollama or <code>llama-server</code>.</li>
+            </ol>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-calculator text-success me-1"></i> Weight Merging Mechanics &amp; Math</h6>
+            <p class="mb-2">Why merge adapter weights before serving?</p>
+            <div class="p-2 bg-body-tertiary rounded font-monospace extra-small mb-2" style="font-size: 0.74rem;">
+              W_merged = W_base + (&alpha; / r) &times; (B &middot; A)
+            </div>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Zero Adapter Overhead:</strong> Eliminates runtime dual-forward-pass latency, matching raw base model inference speeds.</li>
+              <li><strong>Universal Framework Support:</strong> Works out-of-the-box with vLLM, TGI, Ollama, TensorRT-LLM, and llama.cpp without PEFT dependencies.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-pie-chart text-warning me-1"></i> GGUF Quantization Precision Guide</h6>
+            <p class="mb-2">Selecting the right quantization format for edge deployment:</p>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered extra-small mb-2" style="font-size: 0.72rem;">
+                <thead class="table-light">
+                  <tr><th>Format</th><th>Bits/Weight</th><th>Memory Footprint (8B)</th><th>Recommended Use Case</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td class="fw-bold">Q4_K_M</td><td>~4.5 bits</td><td>~4.8 GB</td><td>Best balance of speed, RAM savings, and low perplexity.</td></tr>
+                  <tr><td class="fw-bold">Q5_K_M</td><td>~5.5 bits</td><td>~5.8 GB</td><td>Higher reasoning precision with minimal extra memory.</td></tr>
+                  <tr><td class="fw-bold">Q8_0</td><td>~8.5 bits</td><td>~8.5 GB</td><td>Near-lossless reproduction of 16-bit weights.</td></tr>
+                  <tr><td class="fw-bold">F16</td><td>16.0 bits</td><td>~16.0 GB</td><td>Unquantized baseline; requires high VRAM.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-cloud-arrow-up text-info me-1"></i> Hugging Face Hub Sharing &amp; Model Cards</h6>
+            <p class="mb-2">Publishing fine-tuned models to public or private enterprise registries:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Auto-Generated Model Card:</strong> Synthesizes a structured <code>README.md</code> with hyperparameter provenance, base model references, and evaluation scores.</li>
+              <li><strong>Private Repository Flag:</strong> Guarantees weights remain strictly internal to your organization when uploading.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="border-top pt-2 mt-3 d-flex justify-content-between align-items-center">
+          <span class="small text-muted"><i class="bi bi-info-circle me-1"></i> Read the complete guide on quantization, Ollama deployment, and Hugging Face pushing.</span>
+          <a href="/docs#one-click-export" target="_blank" class="small fw-semibold text-primary text-decoration-none">
+            Open Export &amp; Quantization Guide in Docs &rarr;
+          </a>
+        </div>
       </div>
     </div>
   </div>

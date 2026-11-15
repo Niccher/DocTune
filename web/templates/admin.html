@@ -33,10 +33,10 @@
 {% block header_actions %}
 <div class="d-flex gap-2 justify-content-sm-end align-items-center">
   <span class="text-muted me-2 d-none d-md-inline">Pipeline Root: <code>Fine Tuning</code></span>
-  <a href="/api/v1/admin/export" class="btn btn-outline-secondary btn-sm" download="fine_tuning_settings.json">
+  <a href="/api/v1/admin/export" class="btn btn-outline-secondary btn-sm" download="fine_tuning_settings.json" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Exports current configuration as a JSON file without exposing plaintext secrets.">
     <i class="bi bi-download me-1"></i> Export JSON
   </a>
-  <button class="btn btn-outline-danger btn-sm" id="btnResetDefaults">
+  <button class="btn btn-outline-danger btn-sm" id="btnResetDefaults" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Restores factory default system settings. Does not delete datasets or checkpoints.">
     <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Defaults
   </button>
 </div>
@@ -630,9 +630,68 @@
       <span><i class="bi bi-info-circle me-1"></i> Changes will update <code>config/settings.json</code>.</span>
     </div>
     <div class="d-flex gap-2">
-      <button type="button" class="btn btn-primary px-4 fw-semibold" id="btnSaveSettings">
+      <button type="button" class="btn btn-primary px-4 fw-semibold" id="btnSaveSettings" data-bs-toggle="tooltip" data-bs-placement="top" title="Commits and applies all settings atomically to database and disk with hardware boundary validation.">
         <i class="bi bi-check2-circle me-1"></i> Save Configuration
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- Interactive Administrative Architecture & System Operations Guide Accordion -->
+<div class="accordion accordion-flush border rounded shadow-sm mb-4" id="adminArchitectureAccordion">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingAdminGuide">
+      <button class="accordion-button collapsed py-2.5 px-3 fw-bold text-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAdminGuide" aria-expanded="false" aria-controls="collapseAdminGuide">
+        <i class="bi bi-book me-2 text-primary"></i> Administrative Architecture & Operations Reference
+      </button>
+    </h2>
+    <div id="collapseAdminGuide" class="accordion-collapse collapse" aria-labelledby="headingAdminGuide" data-bs-parent="#adminArchitectureAccordion">
+      <div class="accordion-body p-3 small text-muted">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-layers text-primary me-1"></i> Configuration Precedence Hierarchy</h6>
+            <p class="mb-2">DocTune Studio follows a strict 3-tier configuration hierarchy:</p>
+            <ol class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>PostgreSQL Database (<code>system_settings</code>)</strong>: Live operational overrides committed via this interface.</li>
+              <li><strong>Disk File (<code>config/settings.json</code>)</strong>: Fallback persistence if database is initializing or in standalone mode.</li>
+              <li><strong>Factory Defaults (<code>FACTORY_DEFAULTS</code>)</strong>: Guaranteed stable system baseline protecting against configuration corruption.</li>
+            </ol>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-cpu text-danger me-1"></i> Hardware Governance & OOM Prevention</h6>
+            <p class="mb-2">The system enforces hardware boundaries to prevent CUDA and system panics:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>CUDA Memory Fraction:</strong> Clamps maximum GPU allocation (default 0.90 = 90% VRAM) leaving headroom for PyTorch caching.</li>
+              <li><strong>FIFO Sequential Queue:</strong> Multi-job requests are queued in <code>.runs/job_queue.json</code> rather than crashing GPU memory.</li>
+              <li><strong>CPU Worker Threads:</strong> Auto-clamped between 1 and host CPU core limits to avoid scheduler thrashing.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-shield-lock text-warning me-1"></i> Hugging Face Access & Gated Model Governance</h6>
+            <p class="mb-2">Foundation models like Llama 3 and Gemma require accepted terms on Hugging Face:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li>Provide a read-authorized User Access Token (<code>HF_TOKEN</code>).</li>
+              <li>Click <strong>Test Token</strong> to verify account status and access rights before launching jobs.</li>
+              <li>Cached model weights are stored in <code>~/.cache/huggingface/hub</code> for offline reuse.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-shield-check text-success me-1"></i> Audit Trail & SOC2/HIPAA Regulatory Controls</h6>
+            <p class="mb-2">Every mutating action is cryptographically tracked in the audit trail:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Actor Identification:</strong> Tracks session user IDs or active operator tags.</li>
+              <li><strong>Contextual Telemetry:</strong> Records client IP address, User-Agent, endpoint URI, and millisecond duration.</li>
+              <li><strong>Payload Capture:</strong> Captures sanitized request payloads for regulatory compliance and dispute resolution.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="border-top pt-2 mt-3 d-flex justify-content-between align-items-center">
+          <span class="small text-muted"><i class="bi bi-info-circle me-1"></i> For complete cluster and production deployment specifications, consult the system documentation.</span>
+          <a href="/docs#configuration" target="_blank" class="small fw-semibold text-primary text-decoration-none">
+            Open Configuration Guide in Docs &rarr;
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 </div>

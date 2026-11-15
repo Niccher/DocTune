@@ -144,21 +144,27 @@
         <div id="cli" class="mb-5 pb-4 border-bottom">
           <h3 class="fw-bold mb-3">3. Headless CLI Usage</h3>
           <p class="text-muted">
-            All pipeline stages can be executed headlessly without the web UI for scheduled batch automation and CI/CD pipelines:
+            All pipeline stages can be executed headlessly without the web UI for scheduled batch automation, CI/CD pipelines, and cluster orchestration:
           </p>
 
           <div class="code-terminal mb-3 shadow-sm">
-<pre class="mb-0"><code># 1. Ingest raw documents and generate synthetic QA pairs
-python -m pipeline.data_prep --input-dir data/raw_documents --chunk-size 1000
+<pre class="mb-0"><code># 1. Ingest raw documents, scrub PII, and generate synthetic QA pairs
+python -m pipeline.prepare_data --input-dir data/raw_documents --chunk-size 512 --overlap 64
 
-# 2. Launch QLoRA training
-python -m pipeline.train --base-model meta-llama/Meta-Llama-3-8B --epochs 3 --batch-size 4 --lr 0.0002
+# 2. Launch QLoRA fine-tuning with 4-bit NF4 quantization
+python -m pipeline.train_qlora --base-model meta-llama/Meta-Llama-3-8B --epochs 3 --batch-size 4 --lr 0.0002 --lora-r 16
 
-# 3. Fuse LoRA adapter weights with base model
-python -m pipeline.merge --adapter-dir checkpoints/qlora --output-dir merged_models/llama3-doctune
+# 3. Execute 4-way empirical RAG benchmark (Base vs Base+RAG vs FT vs FT+RAG)
+python -m pipeline.rag_benchmark --base-model meta-llama/Meta-Llama-3-8B --checkpoint checkpoints/qlora/final --eval-set data/eval.jsonl
 
-# 4. Quantize to GGUF format
-python -m pipeline.export_gguf --model-dir merged_models/llama3-doctune --quant-format q4_k_m</code></pre>
+# 4. Fuse LoRA adapter weights with base model into 16-bit safetensors
+python -m pipeline.merge_adapters --adapter-dir checkpoints/qlora/final --output-dir merged_models/llama3-doctune
+
+# 5. Quantize to GGUF format with automated chat templating
+python -m pipeline.export_gguf --model-dir merged_models/llama3-doctune --quant-format q4_k_m
+
+# 6. Run Direct Preference Optimization (DPO) preference alignment
+python -m pipeline.train_dpo --model merged_models/llama3-doctune --dpo-data data/dpo/pairs.jsonl</code></pre>
           </div>
         </div>
 
@@ -166,7 +172,7 @@ python -m pipeline.export_gguf --model-dir merged_models/llama3-doctune --quant-
         <div id="api-reference" class="mb-5 pb-4 border-bottom">
           <h3 class="fw-bold mb-3">4. REST API Reference</h3>
           <p class="text-muted">
-            DocTune Studio exposes versioned REST API endpoints for seamless programmatic integration:
+            DocTune Studio exposes versioned REST API endpoints for complete programmatic pipeline management:
           </p>
 
           <div class="table-responsive">
@@ -186,13 +192,53 @@ python -m pipeline.export_gguf --model-dir merged_models/llama3-doctune --quant-
                 </tr>
                 <tr>
                   <td><span class="badge text-bg-primary">GET</span></td>
+                  <td><code>/api/v1/hardware</code></td>
+                  <td>CUDA device capabilities, compute capability, VRAM headroom, and FP16/BF16/FlashAttention-2 support.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/data-prep/start</code></td>
+                  <td>Starts asynchronous document chunking and Teacher QA dataset synthesis.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-primary">GET</span></td>
+                  <td><code>/api/v1/dataset/versions</code></td>
+                  <td>Lists immutable dataset snapshot history with sample counts and commit hashes.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/dataset/versions/activate</code></td>
+                  <td>Rolls back or switches the active dataset version for upcoming training runs.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/training/start</code></td>
+                  <td>Enqueues a QLoRA fine-tuning job into the sequential FIFO execution queue.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-primary">GET</span></td>
+                  <td><code>/api/v1/training/queue</code></td>
+                  <td>Inspects the sequential FIFO job queue, pending tasks, and active GPU job state.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-primary">GET</span></td>
+                  <td><code>/api/v1/training/checkpoints/resumable</code></td>
+                  <td>Discovers interruptible checkpoints eligible for seamless training resumption.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/training/sweeps/generate</code></td>
+                  <td>Generates Cartesian hyperparameter grid sweep jobs across learning rates and ranks.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-primary">GET</span></td>
                   <td><code>/api/v1/rag/status</code></td>
                   <td>Embedded ChromaDB vector store health, chunk count, and disk storage size.</td>
                 </tr>
                 <tr>
                   <td><span class="badge text-bg-success">POST</span></td>
                   <td><code>/api/v1/rag/index/build</code></td>
-                  <td>Triggers Celery background indexing across uploaded datasets and documents.</td>
+                  <td>Triggers in-process vector embedding indexing across uploaded documents.</td>
                 </tr>
                 <tr>
                   <td><span class="badge text-bg-success">POST</span></td>
@@ -201,23 +247,28 @@ python -m pipeline.export_gguf --model-dir merged_models/llama3-doctune --quant-
                 </tr>
                 <tr>
                   <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/experiments/rag-benchmark</code></td>
+                  <td>Runs empirical 4-way evaluation benchmark comparing Base and Fine-Tuned models with/without RAG.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
                   <td><code>/v1/chat/completions</code></td>
                   <td>OpenAI-compatible chat completion supporting <code>rag: true</code> and structured citations.</td>
                 </tr>
                 <tr>
                   <td><span class="badge text-bg-success">POST</span></td>
-                  <td><code>/api/v1/data-prep/start</code></td>
-                  <td>Starts asynchronous chunking and Teacher QA dataset synthesis.</td>
-                </tr>
-                <tr>
-                  <td><span class="badge text-bg-success">POST</span></td>
-                  <td><code>/api/v1/training/start</code></td>
-                  <td>Initiates QLoRA training process with specified hyperparameters.</td>
+                  <td><code>/api/v1/playground/dpo/export</code></td>
+                  <td>Exports thumbs-up/down playground feedback into chosen vs rejected DPO training pairs.</td>
                 </tr>
                 <tr>
                   <td><span class="badge text-bg-success">POST</span></td>
                   <td><code>/api/v1/models/export-one-click</code></td>
                   <td>Automated LoRA adapter merge, GGUF quantization, and Modelfile packaging.</td>
+                </tr>
+                <tr>
+                  <td><span class="badge text-bg-success">POST</span></td>
+                  <td><code>/api/v1/models/push-to-hub</code></td>
+                  <td>Publishes merged safetensors or LoRA adapters to Hugging Face Hub with privacy toggles.</td>
                 </tr>
                 <tr>
                   <td><span class="badge text-bg-primary">GET</span></td>
@@ -227,7 +278,7 @@ python -m pipeline.export_gguf --model-dir merged_models/llama3-doctune --quant-
                 <tr>
                   <td><span class="badge text-bg-primary">GET</span></td>
                   <td><code>/metrics</code></td>
-                  <td>Prometheus exposition endpoint for Grafana dashboards.</td>
+                  <td>Prometheus exposition endpoint for Grafana dashboards and cluster telemetry.</td>
                 </tr>
               </tbody>
             </table>

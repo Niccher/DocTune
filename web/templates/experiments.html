@@ -86,15 +86,15 @@
           <table class="table table-sm table-striped table-hover align-middle mb-0">
             <thead class="table-light">
               <tr>
-                <th>Run ID</th>
-                <th>Method</th>
-                <th>LR</th>
-                <th>Epochs</th>
-                <th>Batch</th>
-                <th>Dataset</th>
-                <th>Final Loss</th>
-                <th>BLEU</th>
-                <th>ROUGE-L</th>
+                <th title="Run identifier and adapter architecture">Run ID</th>
+                <th title="Fine-tuning method: QLoRA (4-bit), LoRA (16-bit), or FFT">Method</th>
+                <th title="Optimization learning rate">LR</th>
+                <th title="Total passes over the dataset">Epochs</th>
+                <th title="Effective batch size (Physical Batch * Grad Accum)">Batch</th>
+                <th title="Dataset version tag or snapshot hash">Dataset</th>
+                <th title="Final training loss recorded at final step">Final Loss</th>
+                <th title="Bilingual Evaluation Understudy (n-gram precision match against reference)">BLEU</th>
+                <th title="Recall-Oriented Understudy for Gisting Evaluation (longest common subsequence)">ROUGE-L</th>
               </tr>
             </thead>
             <tbody id="comparisonTableBody">
@@ -120,7 +120,7 @@
           <h5 class="card-title mb-0 fw-bold"><i class="bi bi-shield-check me-2 text-success"></i>RAG Baseline vs. Fine-Tuning Empirical Benchmark</h5>
           <small class="text-muted">Direct proof answering: <em>Does fine-tuning beat retrieval on enterprise documents?</em></small>
         </div>
-        <button class="btn btn-sm btn-success" id="btnRunRagBenchmark" onclick="runRagBenchmark()">
+        <button class="btn btn-sm btn-success" id="btnRunRagBenchmark" onclick="runRagBenchmark()" data-bs-toggle="tooltip" data-bs-placement="left" title="Executes side-by-side automated test suite measuring accuracy, hallucination resistance, token cost, and response latency across 4 architectures.">
           <i class="bi bi-play-circle-fill me-1"></i> Run Empirical Benchmark
         </button>
       </div>
@@ -183,6 +183,67 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Interactive Experimentation & Metric Reference Guide Accordion -->
+<div class="accordion accordion-flush border rounded shadow-sm mb-4" id="experimentsGuideAccordion">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingExpGuide">
+      <button class="accordion-button collapsed py-2.5 px-3 fw-bold text-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseExpGuide" aria-expanded="false" aria-controls="collapseExpGuide">
+        <i class="bi bi-book me-2 text-primary"></i> Experimentation, Loss Interpretation &amp; Benchmark Metrics Reference
+      </button>
+    </h2>
+    <div id="collapseExpGuide" class="accordion-collapse collapse" aria-labelledby="headingExpGuide" data-bs-parent="#experimentsGuideAccordion">
+      <div class="accordion-body p-3 small text-muted">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-graph-up-arrow text-primary me-1"></i> Interpreting Real-Time Loss Trajectories</h6>
+            <p class="mb-2">How to identify model training states from the multi-series curve:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Healthy Convergence:</strong> Steep logarithmic descent in steps 0–100, smoothly flattening into an asymptotic floor (typical final cross-entropy loss between 0.35 and 0.85).</li>
+              <li><strong>Underfitting:</strong> Loss remains high (> 1.5) with shallow gradient changes. Indicates insufficient learning rate (e.g. &lt; 5e-5 for LoRA), too low rank, or inadequate training epochs.</li>
+              <li><strong>Overfitting / Memorization:</strong> Training loss drops near 0 (&lt; 0.05) while evaluation perplexity deteriorates. Model memorizes tokens verbatim rather than extracting underlying domain logic.</li>
+              <li><strong>Gradient Explosion / Instability:</strong> Sudden vertical loss spikes or NaN values. Remediated by lowering learning rate, activating gradient clipping (1.0), or increasing batch accumulation.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-calculator text-success me-1"></i> Automated Evaluation Metrics Guide</h6>
+            <p class="mb-2">Understanding benchmark performance metrics:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>BLEU Score (0.0 to 1.0):</strong> Measures n-gram precision overlap between the generated completion and verified ground-truth reference. Scores &gt; 0.40 indicate strong factual phrasing.</li>
+              <li><strong>ROUGE-L (0.0 to 1.0):</strong> Computes Longest Common Subsequence (LCS) recall, evaluating sentence structure retention and complete multi-token sequence fidelity.</li>
+              <li><strong>Perplexity ($PPL = \exp(\text{Loss})$):</strong> Geometric mean of inverse probability per token. Measures predictive uncertainty. Lower perplexity signifies a confident, well-adapted model.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-shield-check text-info me-1"></i> 4-Way Empirical RAG Benchmark Methodology</h6>
+            <p class="mb-2">Scientifically answers: <em>Does fine-tuning beat retrieval on enterprise documents?</em></p>
+            <ol class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Base Model (Zero-Shot):</strong> Measures foundation model knowledge without access to private document facts.</li>
+              <li><strong>Base Model + RAG:</strong> Evaluates standard RAG retrieval without model fine-tuning (high token overhead, dependent on chunk extraction).</li>
+              <li><strong>DocTune Fine-Tuned:</strong> Evaluates parametric memory alone (ultra-fast latency, zero prompt token waste, strong domain comprehension).</li>
+              <li><strong>DocTune + RAG (Hybrid):</strong> Combines internalized domain weights with real-time vector citations for maximum factual accuracy and verifiable audit provenance.</li>
+            </ol>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-clock-history text-warning me-1"></i> Run Provenance &amp; Dataset Snapshot Hashing</h6>
+            <p class="mb-2">Every experiment trial is recorded with immutable metadata:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Dataset Hash:</strong> SHA-256 fingerprint of <code>data/private_docs.jsonl</code> guarantees exact data reproducibility.</li>
+              <li><strong>Hyperparameter Signature:</strong> Learning rate, LoRA rank $r$, scaling $\alpha$, batch size, and scheduler recorded in PostgreSQL.</li>
+              <li><strong>Resumption Lineage:</strong> Traces whether the checkpoint originated from step 0 or was resumed from a previous run.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="border-top pt-2 mt-3 d-flex justify-content-between align-items-center">
+          <span class="small text-muted"><i class="bi bi-info-circle me-1"></i> Consult the ML Hyperparameters &amp; Pipeline Actions guide for full statistical details.</span>
+          <a href="/docs#hyperparameters" target="_blank" class="small fw-semibold text-primary text-decoration-none">
+            Open Hyperparameters Guide in Docs &rarr;
+          </a>
         </div>
       </div>
     </div>

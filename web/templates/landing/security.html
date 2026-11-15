@@ -33,7 +33,7 @@
           <div class="fs-2 text-success mb-3"><i class="bi bi-eye-slash"></i></div>
           <h5 class="fw-bold mb-2">Automated PII Masking</h5>
           <p class="text-muted small mb-0">
-            Pre-tokenization scrubber automatically removes SSNs, email addresses, phone numbers, and credentials before training.
+            Pre-tokenization scrubber strips SSNs, emails, phone numbers, API keys, and credentials with interactive live audit preview before dataset generation.
           </p>
         </div>
       </div>
@@ -43,17 +43,17 @@
           <div class="fs-2 text-info mb-3"><i class="bi bi-fingerprint"></i></div>
           <h5 class="fw-bold mb-2">Cryptographic Audits</h5>
           <p class="text-muted small mb-0">
-            Immutable SQLite & PostgreSQL audit trail tracking every operator action, setting change, training run, and model export.
+            Immutable SQLite & PostgreSQL audit trail tracking every operator action, setting change, training run, and model export with user provenance.
           </p>
         </div>
       </div>
 
       <div class="col-md-6 col-lg-3">
         <div class="card landing-card h-100 p-4 bg-body shadow-sm">
-          <div class="fs-2 text-warning mb-3"><i class="bi bi-key"></i></div>
-          <h5 class="fw-bold mb-2">Zero-Dependency RBAC</h5>
+          <div class="fs-2 text-warning mb-3"><i class="bi bi-shield-lock"></i></div>
+          <h5 class="fw-bold mb-2">Path-Hardened I/O</h5>
           <p class="text-muted small mb-0">
-            Standard library cryptographic password hashing (PBKDF2-SHA256, 100k rounds) with signed session tokens.
+            Zero-leakage POSIX storage with strict path traversal defenses blocking directory escape attacks across GGUF and dataset downloads.
           </p>
         </div>
       </div>

@@ -14,8 +14,11 @@
         </p>
 
         <form id="evalForm" class="mb-3">
-          <label class="form-label small fw-semibold">Target Checkpoint</label>
-          <div class="input-group mb-3">
+          <label class="form-label small fw-semibold">
+            Target Checkpoint
+            <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Select fine-tuned LoRA/QLoRA adapter checkpoint directory to run empirical evaluation against domain ground truth."></i>
+          </label>
+          <div class="input-group mb-2">
             <select class="form-select form-select-sm" name="adapter_path" id="adapterPathSelect">
               {% if available_adapters %}
                 {% for a in available_adapters %}
@@ -25,10 +28,11 @@
                 <option value="output_qlora">output_qlora/ (Default)</option>
               {% endif %}
             </select>
-            <button class="btn btn-success btn-sm" type="submit" id="runEvalBtn">
+            <button class="btn btn-success btn-sm" type="submit" id="runEvalBtn" data-bs-toggle="tooltip" data-bs-placement="top" title="Executes golden question evaluation, measuring grounded fact recall and hallucination resistance.">
               <i class="bi bi-play-fill me-1"></i> Run Benchmark
             </button>
           </div>
+          <div class="form-text small">Evaluates checkpoint accuracy across domain knowledge questions.</div>
         </form>
 
         <h6 class="fw-semibold small text-muted mb-2">Golden Test Cases</h6>
@@ -56,17 +60,20 @@
       <div class="card-body d-flex flex-column">
         <div class="mb-3">
           <div class="d-flex justify-content-between align-items-center mb-1">
-            <label class="form-label small fw-semibold mb-0">Enter Document Prompt / Question</label>
+            <label class="form-label small fw-semibold mb-0">
+              Enter Document Prompt / Question
+              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Test how the models retrieve domain facts, handle specialized terms, or refuse unsupported queries."></i>
+            </label>
             <div class="form-check form-switch mb-0">
               <input class="form-check-input" type="checkbox" role="switch" id="ragToggle" checked>
-              <label class="form-check-label small fw-semibold text-info" for="ragToggle">
+              <label class="form-check-label small fw-semibold text-info" for="ragToggle" data-bs-toggle="tooltip" data-bs-placement="top" title="Retrieves top semantic matches from ChromaDB vectorstore and augments the fine-tuned model prompt with verifiable source citations.">
                 <i class="bi bi-vector-pen me-1"></i>Enable Dynamic RAG Grounding
               </label>
             </div>
           </div>
           <div class="input-group mb-2">
             <input type="text" class="form-control" id="promptInput" placeholder="Ask a domain question based on your uploaded documents..." value="">
-            <button class="btn btn-primary" type="button" id="compareBtn" onclick="simulateComparison()">
+            <button class="btn btn-primary" type="button" id="compareBtn" onclick="simulateComparison()" data-bs-toggle="tooltip" data-bs-placement="top" title="Runs parallel inference across Base Model and Fine-Tuned Checkpoint with latency and token telemetry.">
               <i class="bi bi-send-fill me-1"></i> Compare Models
             </button>
           </div>
@@ -145,13 +152,13 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
       </p>
     </div>
     <div class="d-flex gap-2">
-      <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#dpoInfoModal">
+      <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#dpoInfoModal" title="Learn how Direct Preference Optimization aligns model behavior">
         <i class="bi bi-question-circle me-1"></i> What is DPO?
       </button>
-      <button class="btn btn-sm btn-outline-secondary" onclick="exportDPOData()" id="btnExportDPO">
+      <button class="btn btn-sm btn-outline-secondary" onclick="exportDPOData()" id="btnExportDPO" data-bs-toggle="tooltip" data-bs-placement="top" title="Compiles rated interactions into data/preference_pairs.jsonl with prompt, chosen, and rejected triples.">
         <i class="bi bi-file-earmark-arrow-down me-1"></i> Export Dataset
       </button>
-      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#dpoTrainModal" id="btnOpenDPOTrain">
+      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#dpoTrainModal" id="btnOpenDPOTrain" data-bs-toggle="tooltip" data-bs-placement="top" title="Configures and launches TRL DPOTrainer to align model policy directly against human preferences.">
         <i class="bi bi-lightning-charge me-1"></i> Train DPO Model
       </button>
     </div>
@@ -160,13 +167,13 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
     <div class="row g-3 text-center">
       <div class="col-6 col-md-3">
         <div class="p-2 border rounded bg-body-tertiary">
-          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Thumbs Up</div>
+          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Thumbs Up (Chosen)</div>
           <div class="h4 fw-bold text-success mb-0" id="statThumbsUp">0</div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="p-2 border rounded bg-body-tertiary">
-          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Thumbs Down</div>
+          <div class="extra-small text-muted text-uppercase fw-semibold" style="font-size: 0.7rem;">Thumbs Down (Rejected)</div>
           <div class="h4 fw-bold text-danger mb-0" id="statThumbsDown">0</div>
         </div>
       </div>
@@ -184,6 +191,68 @@ Click "Compare Models" to see how the fine-tuned adapter answers using your docu
       </div>
     </div>
     <div id="dpoAlertStatus" class="mt-2 d-none alert alert-info py-1 small mb-0"></div>
+  </div>
+</div>
+
+<!-- Interactive Evaluation, RAG Grounding & DPO Reference Guide Accordion -->
+<div class="accordion accordion-flush border rounded shadow-sm mb-4" id="playgroundGuideAccordion">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingPlaygroundGuide">
+      <button class="accordion-button collapsed py-2.5 px-3 fw-bold text-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapsePlaygroundGuide" aria-expanded="false" aria-controls="collapsePlaygroundGuide">
+        <i class="bi bi-book me-2 text-primary"></i> Evaluation Benchmark, Dynamic RAG &amp; DPO Alignment Reference
+      </button>
+    </h2>
+    <div id="collapsePlaygroundGuide" class="accordion-collapse collapse" aria-labelledby="headingPlaygroundGuide" data-bs-parent="#playgroundGuideAccordion">
+      <div class="accordion-body p-3 small text-muted">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-shield-check text-success me-1"></i> Evaluation Methodology: Fact vs. Hallucination</h6>
+            <p class="mb-2">DocTune Studio benchmarks domain checkpoints against golden evaluation suites testing two critical dimensions:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Fact Retrieval Accuracy:</strong> Assesses whether the model retrieves exact parameters, procedural steps, and facts from ingested corporate documents without hallucinating.</li>
+              <li><strong>Hallucination Resistance (Refusal Rate):</strong> Challenges the model with queries outside domain knowledge. Correct behavior is strict refusal rather than generating plausible falsehoods.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-vector-pen text-info me-1"></i> Dynamic RAG Grounding Architecture</h6>
+            <p class="mb-2">When Dynamic RAG is enabled, query execution combines parameter weights with real-time vector retrieval:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Embedding Model:</strong> <code>BAAI/bge-small-en-v1.5</code> vectorizes user queries into 384-dimensional embeddings.</li>
+              <li><strong>ChromaDB Retrieval:</strong> Executes dense cosine similarity search over sliding-window text chunks in <code>data/vectorstore/</code>.</li>
+              <li><strong>Source Attribution:</strong> Retrieved passages are injected into the context window and rendered as verifiable citation badges with document provenance.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-sliders2 text-primary me-1"></i> DPO Preference Optimization Formulation</h6>
+            <p class="mb-2">Direct Preference Optimization aligns LLMs without training a complex PPO reward model:</p>
+            <div class="p-2 bg-body-tertiary rounded font-monospace extra-small mb-2" style="font-size: 0.74rem;">
+              L_DPO = -E[log &sigma;(&beta; log(&pi;_&theta;(y_w|x)/&pi;_ref(y_w|x)) - &beta; log(&pi;_&theta;(y_l|x)/&pi;_ref(y_l|x)))]
+            </div>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>y_w (Chosen):</strong> High-fidelity completion verified via thumbs-up or human ground-truth correction.</li>
+              <li><strong>y_l (Rejected):</strong> Flawed or hallucinated output logged via thumbs-down.</li>
+              <li><strong>&beta; Parameter (default 0.1):</strong> Regularization factor penalizing drift away from reference model &pi;_ref.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-arrow-repeat text-warning me-1"></i> Continuous Alignment Workflow</h6>
+            <p class="mb-2">Step-by-step workflow for iteratively improving model accuracy:</p>
+            <ol class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li>Evaluate the SFT adapter in the side-by-side comparison pane.</li>
+              <li>Rate responses: Thumbs Up for correct answers, Thumbs Down + write human correction for failures.</li>
+              <li>Click <strong>Export Dataset</strong> to compile <code>data/preference_pairs.jsonl</code>.</li>
+              <li>Click <strong>Train DPO Model</strong> to adapt model weights into <code>output_dpo/</code>.</li>
+            </ol>
+          </div>
+        </div>
+        <div class="border-top pt-2 mt-3 d-flex justify-content-between align-items-center">
+          <span class="small text-muted"><i class="bi bi-info-circle me-1"></i> For in-depth mathematical formulations and benchmark datasets, consult documentation.</span>
+          <a href="/docs#dpo-guide" target="_blank" class="small fw-semibold text-primary text-decoration-none">
+            Open DPO &amp; Evaluation Guide in Docs &rarr;
+          </a>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 

@@ -48,7 +48,7 @@
           <label class="form-label small fw-semibold">Upload Documents (PDF, DOCX, CSV, TXT, MD)</label>
           <div class="input-group">
             <input type="file" class="form-control" id="fileInput" multiple accept=".pdf,.docx,.csv,.txt,.md">
-            <button class="btn btn-warning" type="submit" id="uploadBtn">
+            <button class="btn btn-warning" type="submit" id="uploadBtn" data-bs-toggle="tooltip" data-bs-placement="top" title="Uploads selected files into raw_documents/ for chunking, PII scrubbing, and vector indexing.">
               <i class="bi bi-upload me-1"></i> Upload
             </button>
           </div>
@@ -81,7 +81,7 @@
                     </td>
                     <td class="small text-muted">{{ f.size_kb }} KB</td>
                     <td class="text-end">
-                      <button class="btn btn-xs btn-outline-danger" onclick="deleteDoc('{{ f.name }}')">
+                      <button class="btn btn-xs btn-outline-danger" onclick="deleteDoc('{{ f.name }}')" data-bs-toggle="tooltip" data-bs-placement="left" title="Deletes document from raw_documents/">
                         <i class="bi bi-trash"></i>
                       </button>
                     </td>
@@ -99,20 +99,23 @@
         <!-- ChromaDB Vector Store & RAG Indexing Controls -->
         <div class="mt-3 pt-3 border-top">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <span class="small fw-bold text-secondary"><i class="bi bi-database-check me-1 text-info"></i>ChromaDB Vector Store</span>
+            <span class="small fw-bold text-secondary">
+              <i class="bi bi-database-check me-1 text-info"></i>ChromaDB Vector Store
+              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Embedded in-process vector store (data/vectorstore/) used for hybrid RAG grounding and citation retrieval."></i>
+            </span>
             <span class="badge bg-secondary-subtle text-secondary border small" id="ragStatusBadge">Checking...</span>
           </div>
           <div class="d-flex flex-wrap gap-1 align-items-center">
-            <button type="button" class="btn btn-sm btn-outline-info flex-grow-1" id="btnBuildRagIndex" onclick="triggerRagIndexBuild()" title="Embed & Index all uploaded documents">
+            <button type="button" class="btn btn-sm btn-outline-info flex-grow-1" id="btnBuildRagIndex" onclick="triggerRagIndexBuild()" data-bs-toggle="tooltip" data-bs-placement="top" title="Splits raw documents with sliding token windows, generates BGE-small embeddings, and persists to ChromaDB.">
               <i class="bi bi-vector-pen me-1"></i> Build Vector Index
             </button>
-            <button type="button" class="btn btn-sm btn-outline-primary" onclick="openRagChunksModal()" title="View & Search Indexed Chunks in ChromaDB">
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="openRagChunksModal()" data-bs-toggle="tooltip" data-bs-placement="top" title="Opens modal to inspect indexed text chunks, token lengths, and search vector collection.">
               <i class="bi bi-eye me-1"></i> View Chunks
             </button>
-            <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearRagIndexConfirm()" title="Reset & Clear ChromaDB Vector Store">
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearRagIndexConfirm()" data-bs-toggle="tooltip" data-bs-placement="top" title="Clears ChromaDB vector collection and reset chunk index.">
               <i class="bi bi-trash"></i>
             </button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="checkRagStatus()" title="Refresh Vector Status">
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="checkRagStatus()" data-bs-toggle="tooltip" data-bs-placement="top" title="Polls and refreshes vector store status.">
               <i class="bi bi-arrow-clockwise"></i>
             </button>
           </div>
@@ -317,13 +320,13 @@
       <small class="text-muted">Total instruction pairs: <strong>{{ total_samples }}</strong></small>
     </div>
     <div class="d-flex align-items-center gap-2">
-      <button type="button" class="btn btn-sm btn-outline-info" onclick="openPiiAuditModal()" title="View scrubbed PII details across ingested documents">
+      <button type="button" class="btn btn-sm btn-outline-info" onclick="openPiiAuditModal()" data-bs-toggle="tooltip" data-bs-placement="top" title="Inspects detected and redacted PII entities (SSN, credit cards, emails, tokens) across ingested chunks.">
         <i class="bi bi-shield-check me-1"></i> Ingestion PII Audit
       </button>
-      <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#exportDatasetModal">
+      <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#exportDatasetModal" data-bs-toggle="tooltip" data-bs-placement="top" title="Freezes current dataset into an immutable point-in-time snapshot with SHA-256 fingerprinting for reproducible training.">
         <i class="bi bi-tag-fill me-1"></i> Snapshot Version
       </button>
-      <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearDatasetConfirm()" title="Clear Active Dataset & Purge Dummy Samples">
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearDatasetConfirm()" data-bs-toggle="tooltip" data-bs-placement="top" title="Purges the active private_docs.jsonl instruction dataset.">
         <i class="bi bi-trash me-1"></i> Clear Dataset
       </button>
     </div>
@@ -463,6 +466,65 @@
           {% endif %}
         </tbody>
       </table>
+    </div>
+  </div>
+</div>
+
+<!-- Interactive Data Preparation & Synthetic Curation Guide Accordion -->
+<div class="accordion accordion-flush border rounded shadow-sm mb-4" id="dataPrepGuideAccordion">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingDataPrepGuide">
+      <button class="accordion-button collapsed py-2.5 px-3 fw-bold text-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseDataPrepGuide" aria-expanded="false" aria-controls="collapseDataPrepGuide">
+        <i class="bi bi-book me-2 text-primary"></i> Data Preparation, Ingestion &amp; Synthetic Instruction Curation Reference
+      </button>
+    </h2>
+    <div id="collapseDataPrepGuide" class="accordion-collapse collapse" aria-labelledby="headingDataPrepGuide" data-bs-parent="#dataPrepGuideAccordion">
+      <div class="accordion-body p-3 small text-muted">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-file-earmark-break text-primary me-1"></i> Semantic Sliding-Window Chunking &amp; Overlap</h6>
+            <p class="mb-2">How raw unstructured files are transformed into trainable instruction tokens:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Window Size (512–1024 tokens):</strong> Captures complete domain concepts, SOP steps, and regulatory policies within a coherent semantic boundary.</li>
+              <li><strong>Sliding Overlap (64–128 tokens):</strong> Carries over trailing sentences into subsequent chunks, guaranteeing critical facts spanning paragraph boundaries are never severed.</li>
+              <li><strong>Supported Formats:</strong> Deep parsing across enterprise PDFs (tables, columns), Microsoft Word (DOCX), CSV spreadsheets, Markdown, and TXT files.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-shield-shaded text-success me-1"></i> Enterprise PII Redaction &amp; Privacy Shield</h6>
+            <p class="mb-2">Dual-engine sanitization protecting corporate confidentiality before dataset compilation:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Microsoft Presidio + Regex Engine:</strong> Detects and masks Social Security Numbers (SSN), credit card numbers, personal phone numbers, and enterprise email addresses.</li>
+              <li><strong>Credential Scrubber:</strong> Filters out API keys, AWS credentials, JWT tokens, and private SSH keys to prevent training models on sensitive secrets.</li>
+              <li><strong>PII Audit Modal:</strong> Verify all detected entities and applied redactions with one click via <strong>Ingestion PII Audit</strong>.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-database text-info me-1"></i> Embedded ChromaDB Vector Store &amp; Hybrid RAG</h6>
+            <p class="mb-2">In-process semantic vector indexing without external cloud containers:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>Local Embedding Engine:</strong> Uses <code>BAAI/bge-small-en-v1.5</code> running locally to generate dense 384-dimensional embeddings.</li>
+              <li><strong>Persistent Vectorstore:</strong> Managed inside <code>data/vectorstore/</code> with SQLite metadata and HNSW graph indexing for sub-millisecond similarity search.</li>
+              <li><strong>Real-Time Attribution:</strong> Powers dynamic RAG citations in the Evaluation Playground and 4-way empirical benchmarking in Experiments.</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-body mb-1"><i class="bi bi-tags text-warning me-1"></i> Dataset Versioning &amp; Cryptographic Provenance</h6>
+            <p class="mb-2">Immutable point-in-time snapshots for reproducible ML engineering:</p>
+            <ul class="ps-3 mb-2" style="font-size: 0.8rem;">
+              <li><strong>SHA-256 Manifest:</strong> Every snapshot calculates a cryptographic fingerprint of <code>data/private_docs.jsonl</code> stored in <code>data/datasets/manifest.json</code>.</li>
+              <li><strong>MinIO / S3 Mirroring:</strong> Datasets are mirrored to object storage for distributed worker access and long-term archive retention.</li>
+              <li><strong>Run Lineage:</strong> Every training run links back to the exact snapshot tag and hash, guaranteeing 100% audit reproducibility.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="border-top pt-2 mt-3 d-flex justify-content-between align-items-center">
+          <span class="small text-muted"><i class="bi bi-info-circle me-1"></i> Consult the Data Pipeline Actions guide for comprehensive ingestion configurations.</span>
+          <a href="/docs#pipeline-actions" target="_blank" class="small fw-semibold text-primary text-decoration-none">
+            Open Pipeline Actions Guide in Docs &rarr;
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 </div>

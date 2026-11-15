@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="layerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#e2e8f0" stop-opacity="0.8" />
+    </linearGradient>
+    <filter id="dropShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#0f172a" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Rounded App Icon Background -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bgGrad)" />
+  <rect x="2" y="2" width="60" height="60" rx="14" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.25" />
+
+  <!-- Layer 3 (Bottom Document) -->
+  <path d="M18 38 L32 45 L46 38 L32 31 Z" fill="#ffffff" fill-opacity="0.35" filter="url(#dropShadow)" />
+
+  <!-- Layer 2 (Middle Document / Adapter Layer) -->
+  <path d="M18 31 L32 38 L46 31 L32 24 Z" fill="#ffffff" fill-opacity="0.65" filter="url(#dropShadow)" />
+
+  <!-- Layer 1 (Top Document / Primary Architecture) -->
+  <path d="M18 24 L32 31 L46 24 L32 17 Z" fill="url(#layerGrad)" filter="url(#dropShadow)" />
+
+  <!-- Neural Connection Nodes & Paths (Fine-Tuning Sparks) -->
+  <circle cx="32" cy="17" r="2.2" fill="#38bdf8" stroke="#ffffff" stroke-width="1" />
+  <circle cx="18" cy="24" r="1.8" fill="#34d399" stroke="#ffffff" stroke-width="0.8" />
+  <circle cx="46" cy="24" r="1.8" fill="#a78bfa" stroke="#ffffff" stroke-width="0.8" />
+  <circle cx="32" cy="31" r="2.5" fill="#f59e0b" stroke="#ffffff" stroke-width="1" />
+
+  <!-- Fine-tuning Tuning Arc / Pulse -->
+  <path d="M24 21 Q32 15 40 21" stroke="#38bdf8" stroke-width="1.2" stroke-linecap="round" stroke-dasharray="2 1.5" fill="none" opacity="0.85" />
+</svg>

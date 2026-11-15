@@ -83,13 +83,15 @@
     <div class="row align-items-center g-5 py-4 border-bottom">
       <div class="col-lg-6">
         <span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 3</span>
-        <h3 class="fw-bold mb-3">QLoRA 4-bit Parameter-Efficient Fine-Tuning</h3>
+        <h3 class="fw-bold mb-3">QLoRA Fine-Tuning, FIFO Queue & Sweep Orchestration</h3>
         <p class="text-muted">
-          Full fine-tuning of 8B or 14B models requires expensive multi-GPU clusters. DocTune Studio utilizes QLoRA with 4-bit NormalFloat (NF4) quantization and double quantization via `bitsandbytes`, making fine-tuning possible on consumer GPUs with as little as 12GB to 16GB of VRAM.
+          Full fine-tuning of 8B or 14B models requires expensive multi-GPU clusters. DocTune Studio utilizes QLoRA with 4-bit NormalFloat (NF4) quantization and double quantization via <code>bitsandbytes</code>, enabling training on consumer GPUs with as little as 12GB to 16GB of VRAM.
         </p>
         <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Target Module Tuning:</strong> Injects low-rank adapters into attention projections (`q_proj`, `k_proj`, `v_proj`, `o_proj`) and MLP layers (`gate_proj`, `up_proj`, `down_proj`).</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hardware Governor:</strong> Automated boundary detection prevents OOM crashes by clamping batch sizes, max sequence length, and gradient accumulation.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Sequential FIFO Queue:</strong> Thread-safe <code>JobQueueManager</code> locks the host GPU for one active job at a time, queueing subsequent experiments safely to eliminate CUDA OOM panics.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Checkpoint Resumption:</strong> Recover interrupted training runs from the latest checkpoint step with full optimizer state restoration.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hyperparameter Grid Sweeps:</strong> Orchestrate automated multi-run hyperparameter explorations across learning rates, ranks ($r$), and batch sizes via <code>SweepManager</code>.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hardware Governor:</strong> Automated boundary detection clamps batch sizes, sequence lengths, and gradient accumulation based on real-time device profiling.</li>
           <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Live Telemetry:</strong> Real-time streaming loss curves, GPU temperature, VRAM consumption, and step metrics.</li>
         </ul>
         <a href="/training" class="btn btn-sm btn-outline-info rounded-pill px-3 py-1.5 fw-semibold">Launch Training Studio &rarr;</a>
@@ -121,6 +123,10 @@
                   <td class="fw-semibold text-end">Paged AdamW 8-bit</td>
                 </tr>
                 <tr>
+                  <td class="text-muted">Job Execution:</td>
+                  <td class="fw-semibold text-end text-primary">Sequential FIFO + Checkpoint Recovery</td>
+                </tr>
+                <tr>
                   <td class="text-muted">Memory Efficiency:</td>
                   <td class="fw-semibold text-end text-success">Up to 75% VRAM Reduction</td>
                 </tr>
@@ -135,15 +141,15 @@
     <div class="row align-items-center g-5 py-4 border-bottom flex-lg-row-reverse">
       <div class="col-lg-6">
         <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 4</span>
-        <h3 class="fw-bold mb-3">Hybrid RAG Grounding, Model Verification & Playground</h3>
+        <h3 class="fw-bold mb-3">Hybrid RAG Grounding & Empirical 4-Way Evaluation</h3>
         <p class="text-muted">
-          Verify domain accuracy and eliminate hallucinations before deploying models. The Evaluation Playground provides streaming inference with optional Dynamic RAG Grounding powered by hybrid dense semantic search and BM25 lexical keyword matching.
+          Verify domain accuracy and eliminate hallucinations before deploying models. DocTune Studio features an empirical 4-way evaluation benchmark and streaming playground with dynamic RAG grounding.
         </p>
         <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Empirical 4-Way RAG Benchmark:</strong> Quantifies exact domain knowledge gain across four distinct modalities: (1) Base Model, (2) Base + RAG, (3) Fine-Tuned Model, and (4) Fine-Tuned + RAG with automated latency and BLEU/ROUGE scoring.</li>
           <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Dynamic RAG Grounding:</strong> In-process hybrid search (Reciprocal Rank Fusion, $k=60$) retrieves verified document chunks and injects them directly into model prompts.</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Verifiable Source Citations:</strong> Model answers include structured markdown citations `[1]`, `[2]` linking directly to source documents with similarity confidence scores.</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Side-by-Side Playground:</strong> Run baseline and fine-tuned checkpoints against identical prompts to evaluate domain recall.</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>DPO Dataset Export:</strong> Mark responses as "preferred" or "rejected" to generate datasets for Direct Preference Optimization alignment.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Verifiable Source Citations:</strong> Model answers include structured markdown citations <code>[1]</code>, <code>[2]</code> linking directly to source documents with similarity confidence scores.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Continuous Alignment (DPO):</strong> Interactive preference logging exports chosen vs rejected responses directly into DPO training datasets for RLHF-style refinement.</li>
         </ul>
         <a href="/playground" class="btn btn-sm btn-outline-warning rounded-pill px-3 py-1.5 fw-semibold">Open Playground &rarr;</a>
       </div>
@@ -175,15 +181,15 @@
     <div class="row align-items-center g-5 py-4">
       <div class="col-lg-6">
         <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill px-2.5 py-1 small fw-semibold mb-2">STAGE 5</span>
-        <h3 class="fw-bold mb-3">1-Click GGUF Exporter, Weight Fusion & Ollama Packaging</h3>
+        <h3 class="fw-bold mb-3">GGUF Exporter, Hub Publishing & OpenAI API Serving</h3>
         <p class="text-muted">
-          Once satisfied with training quality, convert checkpoints into production-ready deployment packages with a single click. Automates adapter merging, GGUF quantization, and custom Ollama Modelfile templating.
+          Once satisfied with training quality, convert checkpoints into production-ready deployment packages with a single click. Automates adapter merging, GGUF quantization, Hugging Face Hub pushing, and local OpenAI-compatible serving.
         </p>
         <ul class="list-unstyled text-muted small d-flex flex-column gap-2 mb-4">
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>1-Click GGUF Conversion:</strong> Seamlessly quantizes weights into `Q4_K_M`, `Q5_K_M`, or `Q8_0` with automatic chat template detection (ChatML, Llama-3, Alpaca).</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Automated Modelfile & CLI Scripts:</strong> Generates ready-to-run `Modelfile` and `run_ollama.sh` commands for zero-latency local serving.</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hardened Binary Streaming:</strong> Secure download endpoint protected against path traversal attacks (`..` and absolute path blocking).</li>
-          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Zero-Runtime LoRA Fusion:</strong> Fuses delta matrices into standalone 16-bit safetensors for Hugging Face Hub export.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>1-Click GGUF Conversion:</strong> Seamlessly quantizes weights into <code>Q4_K_M</code>, <code>Q5_K_M</code>, or <code>Q8_0</code> with automatic chat template detection (ChatML, Llama-3, Alpaca).</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Hugging Face Hub Publishing:</strong> Export merged models and LoRA adapters directly to the Hugging Face Model Hub with automated README generation and public/private privacy controls.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>OpenAI-Compatible Inference API:</strong> Serve fine-tuned models directly at <code>POST /v1/chat/completions</code> with streaming token generation, compatible with standard OpenAI SDKs and third-party tools.</li>
+          <li><i class="bi bi-check-circle-fill text-success me-2"></i><strong>Automated Modelfile & CLI Scripts:</strong> Generates ready-to-run <code>Modelfile</code> and <code>run_ollama.sh</code> commands for zero-latency local serving.</li>
         </ul>
         <a href="/models" class="btn btn-sm btn-outline-danger rounded-pill px-3 py-1.5 fw-semibold">Manage Checkpoints &rarr;</a>
       </div>

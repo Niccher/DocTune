@@ -3,13 +3,13 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from pipeline.common import PROJECT_ROOT
 from web.routers import dashboard, data_prep, datasets, training, models, playground, admin, inference, experiments, auth, landing, rag
 from web.services.process_manager import process_mgr
-from web.db.session import init_db
+from web.db.session import init_db, SessionLocal
 from web.services.storage_service import storage_service
 from web.services.redis_subscriber import start_redis_subscriber, stop_redis_subscriber
 from web.services.config_service import config_service
@@ -99,6 +99,7 @@ async def auth_session_middleware(request: Request, call_next):
         path = request.url.path
         is_exempt = (
             path.startswith("/static")
+            or path in ("/favicon.ico", "/favicon.svg")
             or path in ("/health", "/healthz", "/metrics", "/api/docs", "/api/redoc")
             or path in ("/", "/features", "/security", "/docs", "/documentation")
             or path in ("/login", "/register", "/forgot-password", "/reset-password")
@@ -145,6 +146,21 @@ app.include_router(admin.router)
 app.include_router(inference.router)
 app.include_router(experiments.router)
 app.include_router(rag.router)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def get_favicon_ico():
+    """Universal browser favicon endpoint."""
+    ico_path = static_dir / "favicon.ico"
+    if ico_path.is_file():
+        return FileResponse(ico_path, media_type="image/x-icon", headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(static_dir / "img" / "favicon.svg", media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def get_favicon_svg():
+    """Universal modern SVG favicon endpoint."""
+    return FileResponse(static_dir / "img" / "favicon.svg", media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/health")

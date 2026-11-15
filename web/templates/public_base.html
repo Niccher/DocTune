@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page_title }} | {{ get_app_name() }}</title>
 
+  <!-- Universal Favicon & Service Icons -->
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/static/img/favicon.svg">
+
   <!-- Google Font: Source Sans 3 -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap">
   <!-- Bootstrap Icons -->
@@ -80,9 +85,7 @@
   <header class="navbar navbar-expand-lg border-bottom sticky-top bg-body shadow-sm py-2.5">
     <div class="container">
       <a class="navbar-brand d-flex align-items-center gap-2 fw-bold fs-5 text-decoration-none" href="/">
-        <span class="badge bg-primary rounded-3 p-2 d-inline-flex align-items-center justify-content-center">
-          <i class="bi bi-layers-fill text-white fs-6"></i>
-        </span>
+        <img src="/static/img/favicon.svg" alt="{{ get_app_name() }}" width="30" height="30" class="rounded">
         <span class="text-body">{{ get_app_name() }}</span>
       </a>
 
@@ -212,13 +215,21 @@
       </div>
 
       <div class="border-top mt-4 pt-3 d-flex flex-wrap justify-content-between align-items-center small text-muted">
-        <div>
-          &copy; 2026 <strong>{{ get_app_name() }}</strong>. All rights reserved.
+        <div class="d-flex align-items-center gap-2">
+          <span>&copy; 2026 <strong>{{ get_app_name() }}</strong>. All rights reserved.</span>
+          <span class="text-secondary">&bull;</span>
+          <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">v{{ get_app_version() }}</span>
+          <span class="text-secondary d-none d-md-inline">&bull;</span>
+          <span class="text-secondary d-none d-md-inline">Private Document Fine-Tuning Platform</span>
         </div>
-        <div class="d-flex gap-3">
-          <a href="/security" class="text-decoration-none text-muted">Privacy Policy</a>
+        <div class="d-flex align-items-center gap-3">
+          <a href="/features" class="text-decoration-none text-muted">Architecture</a>
+          <span>&bull;</span>
+          <a href="/security" class="text-decoration-none text-muted">Privacy &amp; Security</a>
           <span>&bull;</span>
           <a href="/docs" class="text-decoration-none text-muted">API Docs</a>
+          <span>&bull;</span>
+          <a href="/metrics" target="_blank" class="badge text-bg-light border text-decoration-none"><i class="bi bi-activity text-info me-1"></i>Metrics</a>
           <span>&bull;</span>
           <a href="#top" class="text-decoration-none text-muted">Back to Top &uarr;</a>
         </div>

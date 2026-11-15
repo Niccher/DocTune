@@ -82,28 +82,28 @@ bash scripts/deploy.sh --with-ollama      <span class="text-secondary"># Ollama 
 <section class="py-5 py-lg-6">
   <div class="container">
     <div class="text-center mb-5">
-      <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-1 rounded-pill fw-semibold mb-2">END-TO-END WORKFLOW</span>
-      <h2 class="fw-bold">From Raw Documents to Domain Expert in 5 Steps</h2>
-      <p class="text-muted mx-auto" style="max-width: 620px;">
-        DocTune Studio automates the entire fine-tuning lifecycle, eliminating messy terminal scripts and ad-hoc data formatting.
+      <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-1 rounded-pill fw-semibold mb-2">END-TO-END WORKFLOW & LOGIC</span>
+      <h2 class="fw-bold">From Private Documents to Production LLM in 5 Steps</h2>
+      <p class="text-muted mx-auto" style="max-width: 680px;">
+        DocTune Studio coordinates the complete private fine-tuning lifecycle with zero cloud leaks, automated data preparation, and full hardware governance.
       </p>
     </div>
 
-    <div class="row g-4">
+    <div class="row g-4 mb-5">
       <!-- Step 1 -->
       <div class="col-lg-4 col-md-6">
         <div class="card h-100 landing-card bg-body p-4">
           <div class="d-flex align-items-center gap-3 mb-3">
             <span class="pipeline-step-badge bg-primary-subtle text-primary border border-primary-subtle">1</span>
-            <h5 class="fw-bold mb-0">Document Studio & Vector Index</h5>
+            <h5 class="fw-bold mb-0">Document Ingestion &amp; PII Scrubbing</h5>
           </div>
           <p class="text-muted small mb-3">
-            Upload proprietary manuals, compliance standards, and tabular specs (PDF, DOCX, CSV, TXT). Intelligent sliding-window token chunking and automated PII scrubbing feed directly into an embedded ChromaDB vector store.
+            Upload proprietary manuals, SOPs, contracts, and datasets (PDF, DOCX, CSV, TXT, Markdown). Sliding-window token chunking preserves contextual boundaries while dual-engine PII redaction masks SSNs, credit cards, emails, and API secrets.
           </p>
-          <div class="mt-auto">
-            <span class="badge bg-secondary-subtle text-secondary border">PII Redactor</span>
-            <span class="badge bg-secondary-subtle text-secondary border">Embedded ChromaDB</span>
-            <span class="badge bg-secondary-subtle text-secondary border">Zero Containers</span>
+          <div class="mt-auto d-flex flex-wrap gap-1">
+            <span class="badge bg-secondary-subtle text-secondary border">Presidio PII Redactor</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Sliding Chunks</span>
+            <span class="badge bg-secondary-subtle text-secondary border">ChromaDB Store</span>
           </div>
         </div>
       </div>
@@ -113,14 +113,15 @@ bash scripts/deploy.sh --with-ollama      <span class="text-secondary"># Ollama 
         <div class="card h-100 landing-card bg-body p-4">
           <div class="d-flex align-items-center gap-3 mb-3">
             <span class="pipeline-step-badge bg-success-subtle text-success border border-success-subtle">2</span>
-            <h5 class="fw-bold mb-0">Synthetic Q&A Generation</h5>
+            <h5 class="fw-bold mb-0">Teacher LLM Synthetic Q&amp;A &amp; Snapshots</h5>
           </div>
           <p class="text-muted small mb-3">
-            Harness teacher LLMs (local Ollama, vLLM, or custom models) to generate dense instruction-response pairs. Output is formatted directly into train/eval JSONL splits ready for supervised fine-tuning.
+            Harness high-capacity teacher models (local zero-cost Ollama, vLLM, or cloud models) to convert document passages into dense instruction-response pairs. Create immutable point-in-time snapshots with SHA-256 fingerprinting for reproducible training.
           </p>
-          <div class="mt-auto">
-            <span class="badge bg-secondary-subtle text-secondary border">Ollama Teacher</span>
-            <span class="badge bg-secondary-subtle text-secondary border">JSONL Splits</span>
+          <div class="mt-auto d-flex flex-wrap gap-1">
+            <span class="badge bg-secondary-subtle text-secondary border">Universal Teacher Gateway</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Alpaca &amp; ShareGPT</span>
+            <span class="badge bg-secondary-subtle text-secondary border">SHA-256 Provenance</span>
           </div>
         </div>
       </div>
@@ -130,14 +131,15 @@ bash scripts/deploy.sh --with-ollama      <span class="text-secondary"># Ollama 
         <div class="card h-100 landing-card bg-body p-4">
           <div class="d-flex align-items-center gap-3 mb-3">
             <span class="pipeline-step-badge bg-info-subtle text-info border border-info-subtle">3</span>
-            <h5 class="fw-bold mb-0">QLoRA Training Studio</h5>
+            <h5 class="fw-bold mb-0">QLoRA / LoRA Training &amp; FIFO Queue</h5>
           </div>
           <p class="text-muted small mb-3">
-            Execute 4-bit NormalFloat (NF4) quantized LoRA training. Configure rank, alpha, learning rate, and batch size with automatic GPU memory boundary protection and real-time loss telemetry.
+            Train parameter-efficient adapters using 4-bit NormalFloat (NF4) quantization or 16-bit LoRA. Automated hardware governance prevents CUDA OOMs, sequential FIFO queueing dispatches multi-job sweeps, and checkpoint resumption allows zero-loss recovery.
           </p>
-          <div class="mt-auto">
+          <div class="mt-auto d-flex flex-wrap gap-1">
             <span class="badge bg-secondary-subtle text-secondary border">bitsandbytes NF4</span>
-            <span class="badge bg-secondary-subtle text-secondary border">PEFT Adapters</span>
+            <span class="badge bg-secondary-subtle text-secondary border">FIFO Job Queue</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Checkpoint Resumption</span>
           </div>
         </div>
       </div>
@@ -147,15 +149,15 @@ bash scripts/deploy.sh --with-ollama      <span class="text-secondary"># Ollama 
         <div class="card h-100 landing-card bg-body p-4">
           <div class="d-flex align-items-center gap-3 mb-3">
             <span class="pipeline-step-badge bg-warning-subtle text-warning border border-warning-subtle">4</span>
-            <h5 class="fw-bold mb-0">Hybrid RAG Grounding & Playground</h5>
+            <h5 class="fw-bold mb-0">Dynamic RAG Grounding &amp; DPO Alignment</h5>
           </div>
           <p class="text-muted small mb-3">
-            Benchmark domain performance with streaming token generation and dynamic RAG grounding. Hybrid dense cosine + BM25 keyword matching with Reciprocal Rank Fusion injects verified corporate context with interactive citation drawers.
+            Compare zero-shot base models against fine-tuned adapters with dynamic ChromaDB vector citations. Collect operator thumbs-up and thumbs-down corrections to train aligned models via Direct Preference Optimization (DPO) using TRL DPOTrainer.
           </p>
-          <div class="mt-auto">
-            <span class="badge bg-secondary-subtle text-secondary border">Dense + BM25 Search</span>
-            <span class="badge bg-secondary-subtle text-secondary border">Clickable Citations</span>
-            <span class="badge bg-secondary-subtle text-secondary border">DPO Alignment</span>
+          <div class="mt-auto d-flex flex-wrap gap-1">
+            <span class="badge bg-secondary-subtle text-secondary border">Side-by-Side Playground</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Dense Vector Citations</span>
+            <span class="badge bg-secondary-subtle text-secondary border">DPO Preference Tuning</span>
           </div>
         </div>
       </div>
@@ -165,15 +167,70 @@ bash scripts/deploy.sh --with-ollama      <span class="text-secondary"># Ollama 
         <div class="card h-100 landing-card bg-body p-4">
           <div class="d-flex align-items-center gap-3 mb-3">
             <span class="pipeline-step-badge bg-danger-subtle text-danger border border-danger-subtle">5</span>
-            <h5 class="fw-bold mb-0">1-Click GGUF & Ollama Exporter</h5>
+            <h5 class="fw-bold mb-0">Weight Merging, GGUF Export &amp; Hub Push</h5>
           </div>
           <p class="text-muted small mb-3">
-            Fuse low-rank adapter weights into standalone 16-bit safetensors, or convert with one click to quantized GGUFs (`Q4_K_M`, `Q5_K_M`, `Q8_0`) with automated Ollama Modelfiles, run scripts, and hardened file downloads.
+            Mathematically fold adapter weights into standalone 16-bit models ($W = W_0 + \frac{\alpha}{r}BA$). Convert with 1-click into quantized GGUFs (`Q4_K_M`, `Q5_K_M`, `Q8_0`) with automated Ollama Modelfiles, or push models directly to Hugging Face Hub with generated Model Cards.
           </p>
-          <div class="mt-auto">
-            <span class="badge bg-secondary-subtle text-secondary border">1-Click GGUF</span>
-            <span class="badge bg-secondary-subtle text-secondary border">Ollama Modelfile</span>
-            <span class="badge bg-secondary-subtle text-secondary border">Hardened Downloads</span>
+          <div class="mt-auto d-flex flex-wrap gap-1">
+            <span class="badge bg-secondary-subtle text-secondary border">1-Click GGUF Export</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Ollama Modelfiles</span>
+            <span class="badge bg-secondary-subtle text-secondary border">Push to HF Hub</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- System Architecture Logic Flow Diagram -->
+    <div class="card border-0 bg-body-tertiary shadow-sm p-4 rounded-4">
+      <div class="d-flex align-items-center gap-2 mb-3">
+        <i class="bi bi-diagram-3-fill text-primary fs-5"></i>
+        <h5 class="fw-bold mb-0">How DocTune Studio Logic Operates</h5>
+      </div>
+      <p class="text-muted small mb-4">
+        A deterministic, air-gapped data pipeline that eliminates hallucinated responses through dual-layer adaptation: parametric fine-tuning + verifiable vector grounding.
+      </p>
+      <div class="row g-3 text-center">
+        <div class="col-12 col-md-2">
+          <div class="p-2.5 bg-body rounded border shadow-sm h-100">
+            <div class="text-primary mb-1"><i class="bi bi-file-earmark-arrow-up fs-4"></i></div>
+            <div class="fw-bold small">1. Ingest</div>
+            <div class="text-muted extra-small" style="font-size: 0.72rem;">PDF, DOCX, CSV parsing with sliding-window chunking.</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-2">
+          <div class="p-2.5 bg-body rounded border shadow-sm h-100">
+            <div class="text-success mb-1"><i class="bi bi-shield-shaded fs-4"></i></div>
+            <div class="fw-bold small">2. Scrub PII</div>
+            <div class="text-muted extra-small" style="font-size: 0.72rem;">Presidio + regex redaction of sensitive identifiers.</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-2">
+          <div class="p-2.5 bg-body rounded border shadow-sm h-100">
+            <div class="text-info mb-1"><i class="bi bi-cpu fs-4"></i></div>
+            <div class="fw-bold small">3. Synthesize</div>
+            <div class="text-muted extra-small" style="font-size: 0.72rem;">Teacher LLM generates QA pairs into versioned JSONL.</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-2">
+          <div class="p-2.5 bg-body rounded border shadow-sm h-100">
+            <div class="text-warning mb-1"><i class="bi bi-fire fs-4"></i></div>
+            <div class="fw-bold small">4. Fine-Tune</div>
+            <div class="text-muted extra-small" style="font-size: 0.72rem;">4-bit QLoRA with VRAM limits and checkpoint resumption.</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-2">
+          <div class="p-2.5 bg-body rounded border shadow-sm h-100">
+            <div class="text-danger mb-1"><i class="bi bi-sliders2 fs-4"></i></div>
+            <div class="fw-bold small">5. DPO Align</div>
+            <div class="text-muted extra-small" style="font-size: 0.72rem;">Human thumbs up/down feedback optimizes policy loss.</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-2">
+          <div class="p-2.5 bg-body rounded border shadow-sm h-100">
+            <div class="text-primary mb-1"><i class="bi bi-send-check fs-4"></i></div>
+            <div class="fw-bold small">6. Deploy</div>
+            <div class="text-muted extra-small" style="font-size: 0.72rem;">GGUF quantization, Ollama Modelfile, or HF Hub push.</div>
           </div>
         </div>
       </div>
