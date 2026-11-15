@@ -12,7 +12,7 @@ import hashlib
 from typing import List, Optional
 from pathlib import Path
 from fastapi import APIRouter, Request, UploadFile, File, Form, Query, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from pipeline.common import PROJECT_ROOT, RAW_DOCS_DIR, DEFAULT_JSONL
@@ -709,6 +709,89 @@ async def get_dataset_download_url():
     if DEFAULT_JSONL.exists():
         return JSONResponse({"status": "local", "path": str(DEFAULT_JSONL), "filename": "private_docs.jsonl"})
     return JSONResponse({"status": "error", "message": "Dataset not found"}, status_code=404)
+
+
+@router.get("/api/v1/dataset/snapshots/{version_id}/info", response_class=JSONResponse)
+async def get_snapshot_info(version_id: str):
+    """Retrieve full metadata for a specific dataset version snapshot."""
+    entry = dataset_version_service.get_version(version_id)
+    if not entry:
+        return JSONResponse({"status": "error", "message": f"Snapshot '{version_id}' not found"}, status_code=404)
+    return JSONResponse({"status": "success", "data": entry})
+
+
+@router.get("/api/v1/dataset/snapshots/{version_id}/download")
+async def download_snapshot_file(version_id: str):
+    """Download a dataset snapshot JSONL file directly through the server, streaming from disk or MinIO."""
+    entry = dataset_version_service.get_version(version_id)
+    if not entry:
+        return JSONResponse({"status": "error", "message": f"Snapshot '{version_id}' not found"}, status_code=404)
+
+    local_path = Path(entry.get("path", ""))
+    filename = entry.get("filename") or f"{version_id}.jsonl"
+
+    if local_path.exists():
+        return FileResponse(path=str(local_path), filename=filename, media_type="application/x-jsonlines")
+
+    # If missing from local disk, pull from MinIO S3 into local cache and stream
+    if storage_service.is_s3_enabled():
+        s3_key = entry.get("s3_key") or f"datasets/{filename}"
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        if storage_service.download_file(storage_service.bucket_datasets, s3_key, local_path):
+            return FileResponse(path=str(local_path), filename=filename, media_type="application/x-jsonlines")
+
+    return JSONResponse({"status": "error", "message": "File not found locally or in S3"}, status_code=404)
+
+
+@router.delete("/api/v1/dataset/snapshots/{version_id}", response_class=JSONResponse)
+async def delete_dataset_snapshot_api(version_id: str, request: Request):
+    """Delete a dataset snapshot from MinIO S3, local disk, and the version catalog."""
+    success = dataset_version_service.delete_version(version_id)
+    if not success:
+        return JSONResponse({"status": "error", "message": f"Snapshot '{version_id}' not found"}, status_code=404)
+
+    audit_service.log(
+        action="SNAPSHOT_DELETE",
+        resource_type="dataset_version",
+        resource_id=version_id,
+        request=request,
+        status="SUCCESS",
+        details={"version_id": version_id},
+    )
+    return JSONResponse({"status": "success", "message": f"Snapshot '{version_id}' successfully deleted"})
+
+
+@router.get("/api/v1/data-prep/pii-audit", response_class=JSONResponse)
+async def get_latest_pii_audit():
+    """Retrieve the aggregated PII scrubbed report from the latest ingestion pass."""
+    from pipeline.common import DATA_DIR
+    audit_path = DATA_DIR / "pii_audit_latest.json"
+    if audit_path.exists():
+        try:
+            with open(audit_path, "r", encoding="utf-8") as f:
+                return JSONResponse({"status": "success", "data": json.load(f)})
+        except Exception as e:
+            return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+    # Check MinIO
+    if storage_service.is_s3_enabled():
+        tmp_target = DATA_DIR / "pii_audit_latest.json"
+        if storage_service.download_file(storage_service.bucket_datasets, "pii_audits/latest.json", tmp_target):
+            try:
+                with open(tmp_target, "r", encoding="utf-8") as f:
+                    return JSONResponse({"status": "success", "data": json.load(f)})
+            except Exception:
+                pass
+
+    return JSONResponse({
+        "status": "empty",
+        "message": "No PII audit data recorded yet. Run ingestion with PII scrubbing enabled to generate an audit report.",
+        "data": {
+            "total_entities_scrubbed": 0,
+            "entity_counts": {},
+            "files_scrubbed": [],
+        }
+    })
 
 
 @router.post("/api/v1/data-prep/start")

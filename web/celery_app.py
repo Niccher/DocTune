@@ -168,7 +168,14 @@ if HAS_CELERY and app:
             # 2. Resolve dataset version and verify SHA-256 integrity (B-02)
             ds_path = Path(cfg.dataset_path)
             if dataset_version_id or not ds_path.exists():
-                s3_key = f"datasets/{dataset_version_id}.jsonl" if dataset_version_id else "private_docs.jsonl"
+                s3_key = "private_docs.jsonl"
+                if dataset_version_id:
+                    try:
+                        from web.services.dataset_version_service import dataset_version_service
+                        v_meta = dataset_version_service.get_version(dataset_version_id)
+                        s3_key = (v_meta.get("s3_key") if v_meta else None) or f"datasets/{dataset_version_id}.jsonl"
+                    except Exception:
+                        s3_key = f"datasets/{dataset_version_id}.jsonl"
                 local_target = ds_path if ds_path.parent.exists() else (run_artifacts_dir / "dataset.jsonl")
                 sync_msg = f"--- [STORAGE] Pulling dataset version from S3: {storage_service.bucket_datasets}/{s3_key} ---"
                 publish_redis_event(f"run:{run_id}:stream", {"type": "log", "line": sync_msg, "message": sync_msg})
@@ -351,8 +358,14 @@ if HAS_CELERY and app:
             diag = classify_training_error(e, {"model_id": model_id})
             err_code = diag.get("code", "EXECUTION_ERROR")
             err_title = diag.get("title", str(e))
+            err_msg_body = diag.get("message", "")
             err_hint = diag.get("hint", "")
-            err_full = f"[{err_code}] {err_title}: {err_hint}" if err_hint else f"[{err_code}] {err_title}"
+            parts = [f"[{err_code}] {err_title}"]
+            if err_msg_body and err_msg_body != err_title:
+                parts.append(err_msg_body)
+            if err_hint:
+                parts.append(f"Hint: {err_hint}")
+            err_full = " — ".join(parts)
 
             if run:
                 run.status = "FAILED"

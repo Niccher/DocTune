@@ -47,6 +47,9 @@ async def training_view(request: Request, model_id: Optional[str] = Query(None))
         except Exception:
             qa_pairs_count = 0
 
+    from pipeline.hardware import get_hardware_profile
+    hw_profile = get_hardware_profile()
+
     return templates.TemplateResponse(
         request=request,
         name="training.html",
@@ -63,6 +66,7 @@ async def training_view(request: Request, model_id: Optional[str] = Query(None))
             "downloaded_models": hf_model_service.list_downloaded_models(),
             "curated_models": hf_model_service.list_curated_models(),
             "qa_pairs_count": qa_pairs_count,
+            "hardware": hw_profile.to_dict(),
         },
     )
 
@@ -128,8 +132,34 @@ async def start_training(
             cfg.dataset_version_id = ds_entry.get("version_tag")
             cfg.dataset_sha256 = ds_entry.get("sha256")
 
-    # Proactive Validation: Ensure training dataset exists and is non-empty before launching run
+    # Proactive Validation 1: Hardware compatibility check
+    from pipeline.hardware import get_hardware_profile
+    hw = get_hardware_profile()
+    if method.lower() in ("qlora", "sft-qlora") and not hw.bnb_ok and hw.device != "cuda":
+        return JSONResponse(
+            {
+                "status": "error",
+                "error_code": "GPU_REQUIRED_FOR_QLORA",
+                "message": (
+                    f"Hardware Incompatible: QLoRA (4-bit) requires an NVIDIA GPU with bitsandbytes. "
+                    f"Your server environment is running on {hw.device_name} ({hw.device}). "
+                    f"Please switch fine-tuning method to LoRA (16-bit) or attach an NVIDIA GPU before running QLoRA."
+                ),
+            },
+            status_code=400,
+        )
+
+    # Proactive Validation 2: Ensure training dataset exists and is non-empty before launching run
     ds_path = Path(cfg.dataset_path) if cfg.dataset_path else None
+    if ds_path and (not ds_path.exists() or ds_path.stat().st_size == 0):
+        try:
+            from web.services.storage_service import storage_service
+            if storage_service.is_s3_enabled():
+                s3_key = (ds_entry.get("s3_key") if ds_entry else None) or "datasets/private_docs.jsonl"
+                storage_service.download_file(storage_service.bucket_datasets, s3_key, ds_path)
+        except Exception as dl_err:
+            logger.debug("Could not pull dataset from S3: %s", dl_err)
+
     if not ds_path or not ds_path.exists() or ds_path.stat().st_size == 0:
         return JSONResponse(
             {
@@ -141,6 +171,26 @@ async def start_training(
             },
             status_code=400,
         )
+
+    # Proactive Validation 3: Ensure batch size does not exceed dataset sample count
+    try:
+        with open(ds_path, "r", encoding="utf-8") as f:
+            total_ds_samples = sum(1 for line in f if line.strip())
+        if total_ds_samples > 0 and batch_size > total_ds_samples:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "error_code": "BATCH_SIZE_EXCEEDS_DATASET",
+                    "message": (
+                        f"Batch Size Incompatible: Selected batch size ({batch_size}) exceeds "
+                        f"total dataset samples ({total_ds_samples} pairs). Please set batch size to 1 or 2, "
+                        f"or generate more training samples in Data Prep Studio."
+                    ),
+                },
+                status_code=400,
+            )
+    except Exception as count_err:
+        logger.debug("Failed counting dataset samples: %s", count_err)
 
     # Generate collision-resistant run ID and isolated artifact workspace
     run_id = generate_run_id(method)

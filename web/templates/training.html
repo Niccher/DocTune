@@ -29,10 +29,21 @@
 
           <!-- Method Selection -->
           <div class="mb-3">
-            <label class="form-label small fw-semibold">
-              Fine-Tuning Method
-              <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="QLoRA (4-bit NF4 quantized) fits easily on consumer GPUs (10-14GB). LoRA (16-bit) trains adapters in fp16/bf16. FFT updates all base model weights (requires 48GB+ VRAM)."></i>
-            </label>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small fw-semibold mb-0">
+                Fine-Tuning Method
+                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="QLoRA (4-bit NF4 quantized) fits easily on consumer GPUs (10-14GB). LoRA (16-bit) trains adapters in fp16/bf16. FFT updates all base model weights (requires 48GB+ VRAM)."></i>
+              </label>
+              {% if hardware and hardware.device == 'cuda' %}
+                <span class="badge bg-success-subtle text-success border small" style="font-size: 0.72rem;">
+                  <i class="bi bi-gpu-card me-1"></i>GPU: {{ hardware.device_name }} ({{ hardware.vram_gb }} GB)
+                </span>
+              {% else %}
+                <span class="badge bg-warning-subtle text-warning-emphasis border small" style="font-size: 0.72rem;" title="Running on CPU. QLoRA requires an NVIDIA GPU. Please select LoRA (16-bit).">
+                  <i class="bi bi-cpu me-1"></i>Host CPU (Select LoRA)
+                </span>
+              {% endif %}
+            </div>
             <div class="btn-group w-100" role="group">
               <input type="radio" class="btn-check" name="method" id="m_qlora" value="qlora" checked>
               <label class="btn btn-outline-primary btn-sm" for="m_qlora">QLoRA (4-bit)</label>
@@ -187,7 +198,7 @@
                 Batch Size
                 <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Samples per forward/backward pass per GPU. Direct driver of VRAM. For 8B models on 16GB VRAM, use 2."></i>
               </label>
-              <input type="number" class="form-control form-control-sm" name="batch_size" value="{{ config.per_device_train_batch_size }}" min="1" max="32">
+              <input type="number" class="form-control form-control-sm" name="batch_size" id="batch_size" value="{{ config.per_device_train_batch_size }}" min="1" max="32">
             </div>
             <div class="col-6">
               <label class="form-label small fw-semibold">
@@ -388,8 +399,18 @@
         </div>
         <form id="sweepForm">
           <div class="mb-2">
-            <label class="form-label small fw-semibold">Base Model</label>
-            <input type="text" class="form-control form-control-sm font-monospace" id="sweepModelId" value="{{ config.model_id }}">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small fw-semibold mb-0">Base Model</label>
+              <button type="button" class="btn btn-link btn-sm text-decoration-none p-0 text-info" onclick="syncSweepModelFromMain()">
+                <i class="bi bi-arrow-repeat me-1"></i>Sync Active Model
+              </button>
+            </div>
+            <div class="input-group input-group-sm">
+              <input type="text" class="form-control form-control-sm font-monospace" id="sweepModelId" value="{{ config.model_id }}">
+              <button type="button" class="btn btn-outline-secondary" onclick="syncSweepModelFromMain()" title="Sync from main selected model">
+                <i class="bi bi-arrow-down-left-square"></i>
+              </button>
+            </div>
           </div>
           <div class="mb-2">
             <label class="form-label small fw-semibold">Method</label>
@@ -416,6 +437,64 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-sm btn-info" id="btnLaunchSweep" onclick="launchSweep()">
           <i class="bi bi-play-circle me-1"></i> Generate &amp; Queue Sweep
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: GPU Hardware Warning for QLoRA -->
+<div class="modal fade" id="hardwareWarningModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header bg-warning-subtle text-warning-emphasis">
+        <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>NVIDIA GPU Required for QLoRA</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small mb-2">
+          You selected <strong>QLoRA (4-bit)</strong> fine-tuning, but your active worker environment does not have an NVIDIA GPU:
+        </p>
+        <div class="p-2 border rounded bg-body-secondary small mb-3">
+          <i class="bi bi-cpu me-1 text-secondary"></i> <strong>Detected Hardware:</strong> {{ hardware.device_name or 'Host CPU' }} ({{ hardware.device or 'cpu' }})
+        </div>
+        <div class="alert alert-danger py-2 small mb-0">
+          <i class="bi bi-x-octagon-fill me-1"></i> QLoRA requires an NVIDIA CUDA GPU with <code>bitsandbytes</code> for 4-bit NormalFloat matrix acceleration. Running QLoRA on CPU will fail immediately.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="switchToLoraAndSubmit()">
+          <i class="bi bi-lightning-charge me-1"></i> Switch to LoRA (16-bit) &amp; Launch
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Batch Size Exceeds Dataset Warning -->
+<div class="modal fade" id="datasetBatchWarningModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header bg-danger-subtle text-danger-emphasis">
+        <h5 class="modal-title fw-bold"><i class="bi bi-layers-half text-danger me-2"></i>Batch Size Exceeds Dataset Size</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small mb-2">
+          Your configured per-device batch size (<strong id="warnBatchSize">4</strong>) is larger than the total number of QA samples in your dataset (<strong id="warnDatasetCount">2</strong> pairs).
+        </p>
+        <div class="alert alert-warning py-2 small mb-3">
+          <i class="bi bi-exclamation-circle me-1"></i> PyTorch DataLoader requires the batch size to be &le; total dataset samples. Training with batch size &gt; sample count will cause gradient step division failures.
+        </div>
+        <p class="small text-muted mb-0">
+          We recommend setting Batch Size to <strong>1</strong> or going to Data Prep Studio to generate more instruction pairs (20+ recommended).
+        </p>
+      </div>
+      <div class="modal-footer">
+        <a href="/data-prep" class="btn btn-sm btn-outline-secondary">Go to Data Prep Studio</a>
+        <button type="button" class="btn btn-sm btn-danger" onclick="setBatchSizeToOneAndSubmit()">
+          <i class="bi bi-sliders me-1"></i> Set Batch Size to 1 &amp; Launch
         </button>
       </div>
     </div>
@@ -473,14 +552,15 @@
     });
   });
 
-  // Start Fine-Tuning
-  document.getElementById('trainForm')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
+  const serverHardware = {{ (hardware or {}) | tojson }};
+  const activeQaPairsCount = {{ qa_pairs_count or 0 }};
 
+  async function submitTrainingForm(formData) {
     const btn = document.getElementById('startTrainBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Launching...';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Launching...';
+    }
 
     try {
       const res = await fetch('/api/v1/training/start', { method: 'POST', body: formData });
@@ -491,18 +571,103 @@
         } else {
           showToast('Training launched successfully!', 'success');
         }
-        document.getElementById('trainTerminal').innerText = '';
+        const term = document.getElementById('trainTerminal');
+        if (term) term.innerText = '';
         setTimeout(() => window.location.reload(), 1000);
       } else {
         showToast(data.message || 'Failed to start training', 'error');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning';
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning';
+        }
       }
     } catch (err) {
       showToast('Error: ' + err, 'error');
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning';
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-circle-fill me-1"></i> Start Fine-Tuning';
+      }
     }
+  }
+
+  // Start Fine-Tuning with Pre-Flight Checks
+  document.getElementById('trainForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const selectedMethod = formData.get('method') || 'qlora';
+    const batchSize = parseInt(formData.get('batch_size') || '4', 10);
+    const datasetCount = activeQaPairsCount;
+
+    // Pre-flight Check 1: Hardware GPU check for QLoRA
+    const isCpu = !serverHardware.bnb_ok && serverHardware.device !== 'cuda';
+    if (selectedMethod === 'qlora' && isCpu) {
+      const modal = new bootstrap.Modal(document.getElementById('hardwareWarningModal'));
+      modal.show();
+      return;
+    }
+
+    // Pre-flight Check 2: Batch size vs Dataset size check
+    if (datasetCount > 0 && batchSize > datasetCount) {
+      const warnBatchEl = document.getElementById('warnBatchSize');
+      const warnDsEl = document.getElementById('warnDatasetCount');
+      if (warnBatchEl) warnBatchEl.textContent = batchSize;
+      if (warnDsEl) warnDsEl.textContent = datasetCount;
+      const modal = new bootstrap.Modal(document.getElementById('datasetBatchWarningModal'));
+      modal.show();
+      return;
+    }
+
+    await submitTrainingForm(formData);
+  });
+
+  async function switchToLoraAndSubmit() {
+    const loraRadio = document.querySelector('input[name="method"][value="lora"]');
+    if (loraRadio) {
+      loraRadio.checked = true;
+      const hint = document.getElementById('methodHint');
+      if (hint) hint.innerText = 'LoRA (16-bit): Selected for CPU/GPU fine-tuning.';
+    }
+    const modalEl = document.getElementById('hardwareWarningModal');
+    if (modalEl) {
+      bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    }
+    const form = document.getElementById('trainForm');
+    if (form) {
+      const fd = new FormData(form);
+      fd.set('method', 'lora');
+      await submitTrainingForm(fd);
+    }
+  }
+
+  async function setBatchSizeToOneAndSubmit() {
+    const batchInput = document.getElementById('batch_size');
+    if (batchInput) batchInput.value = '1';
+    const modalEl = document.getElementById('datasetBatchWarningModal');
+    if (modalEl) {
+      bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    }
+    const form = document.getElementById('trainForm');
+    if (form) {
+      const fd = new FormData(form);
+      fd.set('batch_size', '1');
+      await submitTrainingForm(fd);
+    }
+  }
+
+  function syncSweepModelFromMain() {
+    const mainSelect = document.getElementById('base_model_select');
+    const sweepInput = document.getElementById('sweepModelId');
+    if (mainSelect && sweepInput) {
+      sweepInput.value = mainSelect.value;
+      showToast(`Synchronized model: ${mainSelect.value}`, 'info');
+    }
+  }
+
+  document.getElementById('sweepModal')?.addEventListener('show.bs.modal', () => {
+    syncSweepModelFromMain();
+    const activeMethod = document.querySelector('input[name="method"]:checked')?.value || 'qlora';
+    const sweepMethod = document.getElementById('sweepMethod');
+    if (sweepMethod) sweepMethod.value = activeMethod;
   });
 
   // Abort Fine-Tuning

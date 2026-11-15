@@ -9,8 +9,12 @@ import os
 import json
 import time
 import argparse
+import logging
+from typing import Optional, List, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+logger = logging.getLogger("doctune.prepare_data")
 
 try:
     import polars as pl
@@ -286,20 +290,30 @@ Document excerpt:
 def process_one_file(file_path: Path, client: OpenAI, model: str,
                      output_file: Path, max_chunks: int,
                      chunk_size: int, overlap: int,
-                     redact_pii: bool = True, pii_mode: str = "placeholder") -> int:
+                     redact_pii: bool = True, pii_mode: str = "placeholder") -> tuple:
     text = extract_text(file_path)
     if not text:
-        return 0
+        return (0, {"file": file_path.name, "counts": {}, "excerpts": []})
 
+    pii_counts = {}
+    pii_excerpts = []
     if redact_pii:
         try:
             from pipeline.pii_redactor import PIIRedactor
         except ImportError:
             from pii_redactor import PIIRedactor
         redactor = PIIRedactor(mode=pii_mode)
-        text, counts = redactor.redact(text)
-        if counts:
-            print(f"  [PII_SCRUBBED] {file_path.name}: {counts}", flush=True)
+        raw_matches = redactor.analyze(text)
+        for m in raw_matches[:10]:
+            pii_excerpts.append({
+                "entity": m["entity"],
+                "text": m["text"],
+                "start": m["start"],
+                "end": m["end"],
+            })
+        text, pii_counts = redactor.redact(text)
+        if pii_counts:
+            print(f"  [PII_SCRUBBED] {file_path.name}: {pii_counts}", flush=True)
 
     chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)[:max_chunks]
     written = 0
@@ -312,7 +326,7 @@ def process_one_file(file_path: Path, client: OpenAI, model: str,
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             written += len(records)
 
-    return written
+    return (written, {"file": file_path.name, "counts": pii_counts, "excerpts": pii_excerpts})
 
 
 # ============================================================
@@ -330,6 +344,7 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
                     redact_pii: bool = True,
                     pii_mode: str = "placeholder",
                     run_id: Optional[str] = None):
+    start_time = time.time()
     def notify_log(msg: str):
         print(msg, flush=True)
         if run_id:
@@ -374,9 +389,12 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
     effective_key = teacher_api_key.strip() if teacher_api_key and teacher_api_key.strip() else "not-needed"
     notify_log(f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
     notify_log(f"Enterprise PII Redaction: {'ENABLED (' + pii_mode + ')' if redact_pii else 'DISABLED'}")
-    client = OpenAI(base_url=effective_url, api_key=effective_key)
+    client = OpenAI(base_url=effective_url, api_key=effective_key, timeout=60.0)
 
     total_pairs = 0
+    pii_files_audit = []
+    pii_aggregate_counts = {}
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -387,13 +405,35 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         for future in as_completed(futures):
             f_path = futures[future]
             try:
-                pairs = future.result()
+                pairs, pii_data = future.result()
                 total_pairs += pairs
                 notify_log(f"  [OK] {f_path.name}: generated {pairs} pairs (running total: {total_pairs})")
+                if pii_data and pii_data.get("counts"):
+                    pii_files_audit.append(pii_data)
+                    for k, v in pii_data["counts"].items():
+                        pii_aggregate_counts[k] = pii_aggregate_counts.get(k, 0) + v
             except Exception as fe:
                 notify_log(f"  [WARN] {f_path.name} error: {fe}")
 
-    # 2. Upload generated JSONL to MinIO/S3 datasets bucket
+    # 1. Save and upload PII audit summary
+    pii_audit_file = DATA_DIR / "pii_audit_latest.json"
+    pii_summary = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "redact_pii": redact_pii,
+        "pii_mode": pii_mode,
+        "total_entities_scrubbed": sum(pii_aggregate_counts.values()),
+        "entity_counts": pii_aggregate_counts,
+        "files_scrubbed": pii_files_audit,
+    }
+    try:
+        with open(pii_audit_file, "w", encoding="utf-8") as pf:
+            json.dump(pii_summary, pf, indent=2)
+        from web.services.storage_service import storage_service
+        storage_service.upload_file(pii_audit_file, storage_service.bucket_datasets, "pii_audits/latest.json")
+    except Exception as ex:
+        logger.warning("Failed to record PII audit: %s", ex)
+
+    # 2. Upload generated active JSONL to MinIO/S3 datasets bucket
     if output_file.exists():
         try:
             from web.services.storage_service import storage_service
@@ -401,6 +441,28 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
             notify_log(f"[STORAGE] Uploaded dataset artifact {output_file.name} to S3 bucket: {storage_service.bucket_datasets}")
         except Exception as e:
             notify_log(f"[STORAGE NOTICE] Dataset upload to S3 skipped or failed: {e}")
+
+    # 3. Auto-save immutable snapshot with format YYYY-Mon-DD-HHMMSS_<slug>.jsonl
+    if output_file.exists() and total_pairs > 0:
+        try:
+            from web.services.dataset_version_service import dataset_version_service
+            slug = all_files[0].stem if all_files else "docs"
+            duration = round(time.time() - start_time, 1)
+            auto_snap = dataset_version_service.create_auto_version(
+                source_file=output_file,
+                slug_hint=slug,
+                description=f"Auto-generated from {len(all_files)} documents via {teacher_model}",
+                metadata={
+                    "teacher_model": teacher_model,
+                    "teacher_provider": "Teacher Gateway",
+                    "duration_sec": duration,
+                    "files_count": len(all_files),
+                },
+                set_active=True,
+            )
+            notify_log(f"[AUTO-SNAPSHOT] Saved snapshot to MinIO: {auto_snap['filename']} ({auto_snap['sample_count']} pairs, {auto_snap['size_kb']} KB)")
+        except Exception as snap_ex:
+            notify_log(f"[AUTO-SNAPSHOT NOTICE] Automatic snapshot creation skipped: {snap_ex}")
 
     notify_log(f"--- [COMPLETED] Generated {total_pairs} instruction pairs → {output_file.name} ---")
     return total_pairs

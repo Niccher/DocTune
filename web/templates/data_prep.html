@@ -308,6 +308,9 @@
       <small class="text-muted">Total instruction pairs: <strong>{{ total_samples }}</strong></small>
     </div>
     <div class="d-flex align-items-center gap-2">
+      <button type="button" class="btn btn-sm btn-outline-info" onclick="openPiiAuditModal()" title="View scrubbed PII details across ingested documents">
+        <i class="bi bi-shield-check me-1"></i> Ingestion PII Audit
+      </button>
       <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#exportDatasetModal">
         <i class="bi bi-tag-fill me-1"></i> Snapshot Version
       </button>
@@ -375,7 +378,7 @@
   <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
     <div>
       <h5 class="card-title mb-0 fw-bold"><i class="bi bi-clock-history me-2 text-info"></i>Dataset Version History &amp; Provenance</h5>
-      <small class="text-muted">Immutable snapshots linked to fine-tuning runs</small>
+      <small class="text-muted">Immutable snapshots linked to fine-tuning runs (stored on MinIO &amp; catalog)</small>
     </div>
     <span class="badge bg-info-subtle text-info border">{{ dataset_versions|length }} snapshots</span>
   </div>
@@ -384,12 +387,12 @@
       <table class="table table-sm table-hover align-middle mb-0">
         <thead class="table-light">
           <tr>
-            <th>Version Tag</th>
-            <th>Samples</th>
+            <th style="width: 28%;">Version Tag / Name</th>
+            <th>Samples &amp; Size</th>
             <th>SHA-256 Checksum</th>
             <th>Created</th>
             <th>Status</th>
-            <th class="text-end">Action</th>
+            <th class="text-end" style="width: 180px;">Actions</th>
           </tr>
         </thead>
         <tbody id="versionTableBody">
@@ -397,10 +400,13 @@
             {% for v in dataset_versions %}
               <tr>
                 <td>
-                  <span class="fw-bold text-primary">{{ v.version_tag }}</span>
-                  <div class="text-muted small" style="font-size: 0.75rem;">{{ v.description }}</div>
+                  <span class="fw-bold text-primary font-monospace">{{ v.version_tag }}</span>
+                  <div class="text-muted small text-truncate" style="font-size: 0.75rem; max-width: 280px;" title="{{ v.description }}">{{ v.description }}</div>
                 </td>
-                <td class="small">{{ v.sample_count }} pairs</td>
+                <td class="small">
+                  <strong>{{ v.sample_count }}</strong> pairs
+                  <div class="text-muted" style="font-size: 0.72rem;">{{ v.size_kb or (v.size_bytes // 1024 if v.size_bytes else 0) }} KB</div>
+                </td>
                 <td>
                   <code class="small text-muted" title="{{ v.sha256 }}">{{ v.sha256[:12] }}...</code>
                 </td>
@@ -413,13 +419,26 @@
                   {% endif %}
                 </td>
                 <td class="text-end">
-                  {% if not v.is_active %}
-                    <button class="btn btn-xs btn-outline-primary" onclick="activateVersion('{{ v.version_id }}')">
-                      <i class="bi bi-play me-1"></i>Set Active
+                  <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn btn-xs btn-outline-info" onclick="viewSnapshotInfo('{{ v.version_id }}')" title="Snapshot Details & Info">
+                      <i class="bi bi-info-circle"></i> Info
                     </button>
-                  {% else %}
-                    <span class="text-success small fw-semibold"><i class="bi bi-check"></i> In Use</span>
-                  {% endif %}
+                    <a href="/api/v1/dataset/snapshots/{{ v.version_id }}/download" class="btn btn-xs btn-outline-primary" title="Download .jsonl from MinIO" download>
+                      <i class="bi bi-download"></i>
+                    </a>
+                    {% if not v.is_active %}
+                      <button type="button" class="btn btn-xs btn-outline-success" onclick="activateVersion('{{ v.version_id }}')" title="Set Active for Training">
+                        <i class="bi bi-play"></i>
+                      </button>
+                      <button type="button" class="btn btn-xs btn-outline-danger" onclick="deleteSnapshot('{{ v.version_id }}', '{{ v.version_tag }}')" title="Delete from MinIO & Catalog">
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    {% else %}
+                      <span class="btn btn-xs btn-light text-success border-0 disabled" title="Active dataset cannot be deleted while in use">
+                        <i class="bi bi-check2"></i>
+                      </span>
+                    {% endif %}
+                  </div>
                 </td>
               </tr>
             {% endfor %}
@@ -460,6 +479,81 @@
         <button type="button" class="btn btn-sm btn-success" id="btnConfirmSnapshot" onclick="submitSnapshot()">
           <i class="bi bi-check2-circle me-1"></i> Save &amp; Snapshot
         </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Snapshot Detailed Info -->
+<div class="modal fade" id="snapshotInfoModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-info-circle text-info me-2"></i>Snapshot Provenance &amp; Metadata</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-muted">Version Tag / Filename</label>
+            <div class="p-2 border rounded bg-body-secondary font-monospace small" id="infoVersionTag">-</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-muted">Created Timestamp</label>
+            <div class="p-2 border rounded bg-body-secondary small" id="infoCreatedAt">-</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-muted">Teacher Model Used</label>
+            <div class="p-2 border rounded bg-body-secondary small" id="infoTeacherModel">-</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-muted">Samples &amp; Est. Tokens</label>
+            <div class="p-2 border rounded bg-body-secondary small" id="infoSamplesTokens">-</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-muted">File Size</label>
+            <div class="p-2 border rounded bg-body-secondary small" id="infoFileSize">-</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-muted">MinIO / S3 Object Key</label>
+            <div class="p-2 border rounded bg-body-secondary font-monospace small text-truncate" id="infoS3Key">-</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold text-muted">Cryptographic Checksum (SHA-256)</label>
+            <div class="p-2 border rounded bg-body-secondary font-monospace small text-break" id="infoSha256">-</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold text-muted">Description / Notes</label>
+            <div class="p-2 border rounded bg-body-secondary small" id="infoDescription">-</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+        <a id="infoDownloadBtn" href="#" class="btn btn-sm btn-primary" download>
+          <i class="bi bi-download me-1"></i> Download Snapshot (.jsonl)
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Ingestion PII Audit Report -->
+<div class="modal fade" id="piiAuditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-shield-check text-info me-2"></i>Ingestion PII Audit &amp; Scrubbed Telemetry</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="piiAuditModalBody">
+        <div class="text-center py-4">
+          <span class="spinner-border text-primary" role="status"></span>
+          <p class="mt-2 text-muted small">Loading PII audit telemetry...</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>
@@ -1191,6 +1285,119 @@
       }
     } catch (e) {
       showToast('Error: ' + e.message, 'error');
+    }
+  }
+
+  async function viewSnapshotInfo(versionId) {
+    try {
+      const res = await fetch(`/api/v1/dataset/snapshots/${encodeURIComponent(versionId)}/info`);
+      const json = await res.json();
+      if (res.ok && json.status === 'success') {
+        const v = json.data;
+        document.getElementById('infoVersionTag').textContent = v.version_tag || v.version_id;
+        document.getElementById('infoCreatedAt').textContent = (v.created_at || '-').replace('T', ' ').substring(0, 19);
+        document.getElementById('infoTeacherModel').textContent = `${v.teacher_model || 'Unknown'} (${v.teacher_provider || 'Gateway'})`;
+        document.getElementById('infoSamplesTokens').textContent = `${v.sample_count} pairs (~${(v.est_tokens || 0).toLocaleString()} tokens)`;
+        document.getElementById('infoFileSize').textContent = `${v.size_kb || Math.round((v.size_bytes || 0) / 1024)} KB (${(v.size_bytes || 0).toLocaleString()} bytes)`;
+        document.getElementById('infoS3Key').textContent = `s3://${v.s3_bucket || 'doc-tune-datasets'}/${v.s3_key || ('datasets/' + v.filename)}`;
+        document.getElementById('infoSha256').textContent = v.sha256 || '-';
+        document.getElementById('infoDescription').textContent = v.description || '-';
+        document.getElementById('infoDownloadBtn').href = `/api/v1/dataset/snapshots/${encodeURIComponent(versionId)}/download`;
+        const modal = new bootstrap.Modal(document.getElementById('snapshotInfoModal'));
+        modal.show();
+      } else {
+        showToast(json.message || 'Failed to load snapshot details', 'error');
+      }
+    } catch (e) {
+      showToast('Error loading snapshot details: ' + e.message, 'error');
+    }
+  }
+
+  async function deleteSnapshot(versionId, tag) {
+    if (!confirm(`Are you sure you want to permanently delete snapshot "${tag || versionId}" from MinIO and catalog?`)) {
+      return;
+    }
+    try {
+      const csrf = (typeof getCookie === 'function' ? getCookie('doctune_csrf') : null) || (document.cookie.match(/(?:^|;\s*)doctune_csrf=([^;]+)/)?.[1] || '');
+      const headers = csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {};
+      const res = await fetch(`/api/v1/dataset/snapshots/${encodeURIComponent(versionId)}`, {
+        method: 'DELETE',
+        headers: headers,
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        showToast(data.message || 'Snapshot deleted', 'success');
+        setTimeout(() => window.location.reload(), 600);
+      } else {
+        showToast(data.message || 'Failed to delete snapshot', 'error');
+      }
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error');
+    }
+  }
+
+  async function openPiiAuditModal() {
+    const modalEl = document.getElementById('piiAuditModal');
+    const bodyEl = document.getElementById('piiAuditModalBody');
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+    bodyEl.innerHTML = '<div class="text-center py-4"><span class="spinner-border text-primary" role="status"></span><p class="mt-2 text-muted small">Loading PII audit telemetry...</p></div>';
+
+    try {
+      const res = await fetch('/api/v1/data-prep/pii-audit');
+      const json = await res.json();
+      if (res.ok && json.data) {
+        const d = json.data;
+        const total = d.total_entities_scrubbed || 0;
+        const counts = d.entity_counts || {};
+        const files = d.files_scrubbed || [];
+
+        let badges = Object.entries(counts).map(([k, v]) => `<span class="badge bg-secondary me-2 mb-1 p-2"><i class="bi bi-tag me-1"></i>${k}: <strong>${v}</strong></span>`).join('');
+        if (!badges) badges = '<span class="text-muted small">No PII detected or redaction disabled in current files.</span>';
+
+        let filesRows = files.map(f => {
+          let cntBadge = Object.entries(f.counts || {}).map(([k, v]) => `<span class="badge bg-body-secondary text-dark border me-1">${k}: ${v}</span>`).join('');
+          let samplesHtml = (f.excerpts || []).slice(0, 3).map(e => `<code class="d-inline-block text-danger bg-danger-subtle px-1 rounded me-1 mb-1" style="font-size:0.75rem;">${e.entity}: "${e.text}"</code>`).join('');
+          return `<tr>
+            <td class="font-monospace small fw-bold text-primary">${f.file}</td>
+            <td>${cntBadge || '<span class="text-muted small">Clean</span>'}</td>
+            <td>${samplesHtml || '<span class="text-muted small">-</span>'}</td>
+          </tr>`;
+        }).join('');
+
+        if (!filesRows) {
+          filesRows = '<tr><td colspan="3" class="text-center text-muted py-3 small">No sensitive PII matches recorded in latest run.</td></tr>';
+        }
+
+        bodyEl.innerHTML = `
+          <div class="alert alert-info py-2 small mb-3 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-shield-check me-2"></i>Last Ingestion Scrub Mode: <strong>${d.pii_mode || 'placeholder'}</strong> (Timestamp: ${d.timestamp || 'N/A'})</span>
+            <span class="badge bg-primary fs-6">${total} Total Entities Scrubbed</span>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Detected Categories Breakdown:</label>
+            <div>${badges}</div>
+          </div>
+          <div class="table-responsive border rounded">
+            <table class="table table-sm table-hover align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 30%;">Document</th>
+                  <th style="width: 35%;">Scrubbed Entity Counts</th>
+                  <th>Sample Masked Excerpts</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filesRows}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } else {
+        bodyEl.innerHTML = `<div class="alert alert-warning small">${json.message || 'No PII audit data recorded yet.'}</div>`;
+      }
+    } catch (e) {
+      bodyEl.innerHTML = `<div class="alert alert-danger small">Error loading PII audit: ${e.message}</div>`;
     }
   }
 

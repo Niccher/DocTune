@@ -9,6 +9,17 @@ into clear, actionable UI guidance.
 import re
 from typing import Dict, Any, Optional
 
+# Structured Error Codes
+CUDA_OOM = "CUDA_OOM"
+AUTH_GATED_REPO = "AUTH_GATED_REPO"
+MISSING_CHAT_TEMPLATE = "MISSING_CHAT_TEMPLATE"
+LOSS_DIVERGENCE_NAN = "LOSS_DIVERGENCE_NAN"
+STORAGE_EXHAUSTED = "STORAGE_EXHAUSTED"
+GPU_REQUIRED_FOR_QLORA = "GPU_REQUIRED_FOR_QLORA"
+BITSANDBYTES_MISSING = "BITSANDBYTES_MISSING"
+BATCH_SIZE_EXCEEDS_DATASET = "BATCH_SIZE_EXCEEDS_DATASET"
+PIPELINE_ERROR = "PIPELINE_ERROR"
+
 
 def classify_training_error(error: Exception, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
@@ -73,7 +84,16 @@ def classify_training_error(error: Exception, context: Optional[Dict[str, Any]] 
             "hint": "Prune intermediate checkpoints in Settings -> Storage, or increase your storage volume allocation.",
         }
 
-    # 6. bitsandbytes Unavailable
+    # 6. GPU Required for QLoRA 4-Bit
+    if "requires an nvidia gpu" in err_str.lower() or ("qlora" in err_str.lower() and "requires" in err_str.lower()):
+        return {
+            "code": "GPU_REQUIRED_FOR_QLORA",
+            "title": "NVIDIA GPU Required for QLoRA (4-Bit)",
+            "message": "QLoRA 4-bit NormalFloat (NF4) quantization strictly requires an NVIDIA GPU with CUDA. Your environment is running on Host CPU.",
+            "hint": "Switch the fine-tuning method to LoRA (16-bit), or launch the worker container with an NVIDIA GPU attached (via docker-compose.gpu.yml).",
+        }
+
+    # 7. bitsandbytes Unavailable
     if "bitsandbytes" in err_str.lower() and ("not found" in err_str.lower() or "not compiled" in err_str.lower()):
         return {
             "code": "BITSANDBYTES_MISSING",
@@ -82,12 +102,21 @@ def classify_training_error(error: Exception, context: Optional[Dict[str, Any]] 
             "hint": "QLoRA requires an NVIDIA GPU with bitsandbytes. On Apple Silicon (MPS) or CPU, select standard LoRA (16-bit) or GGUF quantization.",
         }
 
+    # 8. Batch Size Exceeds Dataset
+    if "batch size" in err_str.lower() and ("dataset" in err_str.lower() or "sample" in err_str.lower() or "exceed" in err_str.lower()):
+        return {
+            "code": "BATCH_SIZE_EXCEEDS_DATASET",
+            "title": "Batch Size Exceeds Dataset Count",
+            "message": "Your training batch size is larger than the total number of samples in the dataset.",
+            "hint": "Decrease the per-device batch size to 1 or 2 in Training Hyperparameters, or generate more dataset pairs in Data Prep Studio.",
+        }
+
     # Generic Fallback
     return {
         "code": "PIPELINE_ERROR",
         "title": "Pipeline Execution Error",
-        "message": err_str[:250],
-        "hint": "Inspect the complete worker log stream for detailed stack trace analysis.",
+        "message": err_str[:300],
+        "hint": f"Failure reason: {err_str[:200]}. Inspect complete worker logs for detailed traceback.",
     }
 
 
