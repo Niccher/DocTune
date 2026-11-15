@@ -1,6 +1,39 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% if active_job and active_job.status == 'RUNNING' %}
+<!-- Active Job Hero Banner -->
+<div class="row mb-4" id="dataPrepActiveJobContainer">
+  <div class="col-12">
+    <div class="card border-warning bg-warning bg-opacity-10 shadow-sm" id="dataPrepActiveJobCard">
+      <div class="card-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div class="d-flex align-items-center gap-3">
+          <span class="spinner-grow spinner-grow-sm text-warning" role="status"></span>
+          <div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <span class="badge bg-warning text-dark fw-bold">ACTIVE PIPELINE JOB</span>
+              <strong class="fs-6" id="dataPrepJobTypeTitle">{{ active_job.job_type }}</strong>
+              <span class="badge bg-secondary-subtle text-secondary small">PID: {{ active_job.pid or '-' }}</span>
+            </div>
+            <small class="text-muted">
+              Running job <code>{{ active_job.job_id }}</code> &bull; Started at <span id="dataPrepJobStartedText" class="fw-semibold text-body">{{ active_job.started_at_str or 'recently' }}</span> &bull; Elapsed: <span class="badge bg-warning text-dark font-monospace fw-bold ms-1" id="dataPrepJobDurationBadge">{{ active_job.duration_formatted or (active_job.duration_sec ~ 's') }}</span>
+            </small>
+          </div>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('terminalBox')?.scrollIntoView({behavior: 'smooth'})">
+            <i class="bi bi-terminal me-1"></i> View Live Logs
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" onclick="abortDataPrepJob()">
+            <i class="bi bi-stop-circle me-1"></i> Abort Job
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-4">
   <!-- Upload & Document Manager -->
   <div class="col-12 col-lg-5">
@@ -198,6 +231,7 @@
               <label class="form-label small fw-semibold">Workers</label>
               <input type="number" class="form-control form-control-sm" name="workers" value="8" min="1" max="32">
             </div>
+          </div>
           <!-- PII Protection & Compliance -->
           <div class="p-2 mb-3 border rounded bg-body-tertiary">
             <div class="d-flex justify-content-between align-items-center mb-1">
@@ -234,9 +268,16 @@
             <div class="text-muted small">
               Target: <code>data/private_docs.jsonl</code>
             </div>
+            {% if active_job and active_job.status == 'RUNNING' %}
+            <button type="submit" class="btn btn-primary" id="startPrepBtn" disabled>
+              <span class="spinner-border spinner-border-sm me-1.5" role="status" aria-hidden="true"></span>
+              Generating Training Data... (in progress)
+            </button>
+            {% else %}
             <button type="submit" class="btn btn-primary" id="startPrepBtn">
               <i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset
             </button>
+            {% endif %}
           </div>
         </form>
       </div>
@@ -254,7 +295,8 @@
     </div>
   </div>
   <div class="card-body p-2 bg-dark rounded-bottom">
-    <div class="terminal-window" id="terminalBox" style="height: 220px;">Ready. Upload files and click "Generate Training Dataset" to begin.</div>
+    <div class="terminal-window" id="terminalBox" style="height: 220px;">{% if active_logs and active_logs|length > 0 %}{% for l in active_logs %}{{ l }}
+{% endfor %}{% else %}Ready. Upload files and click "Generate Training Dataset" to begin.{% endif %}</div>
   </div>
 </div>
 
@@ -475,22 +517,70 @@
     }
   }
 
+  // Live Active Pipeline Job State & Dynamic Timer
+  let activeJobData = {{ active_job | tojson | safe }};
+
+  function formatDuration(sec) {
+    if (!sec || sec <= 0) return '0s';
+    const s = Math.floor(sec % 60);
+    const m = Math.floor((sec / 60) % 60);
+    const h = Math.floor(sec / 3600);
+    if (h > 0) {
+      return `${h}h ${m < 10 ? '0' : ''}${m}m ${s < 10 ? '0' : ''}${s}s`;
+    } else if (m > 0) {
+      return `${m}m ${s < 10 ? '0' : ''}${s}s`;
+    }
+    return `${s}s`;
+  }
+
+  setInterval(() => {
+    if (activeJobData && activeJobData.status === 'RUNNING' && activeJobData.start_time) {
+      const now = Date.now() / 1000;
+      const elapsed = now - activeJobData.start_time;
+      const badge = document.getElementById('dataPrepJobDurationBadge');
+      if (badge) {
+        badge.innerText = formatDuration(elapsed);
+      }
+    }
+  }, 1000);
+
+  async function abortDataPrepJob() {
+    if (!confirm('Are you sure you want to abort the currently running pipeline job?')) return;
+    try {
+      const res = await fetch('/api/v1/jobs/abort', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Job aborted successfully', 'warning');
+        setTimeout(() => window.location.reload(), 800);
+      } else {
+        showToast(data.message || 'Failed to abort job', 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  }
+
   // Start Ingestion Handler
   document.getElementById('dataPrepForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
+    saveTeacherGatewayState();
     const form = e.target;
     const formData = new FormData(form);
 
     const btn = document.getElementById('startPrepBtn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Starting...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1.5" role="status" aria-hidden="true"></span> Generating Training Data... (in progress)';
 
     try {
       const res = await fetch('/api/v1/data-prep/start', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         showToast('Dataset preparation launched!', 'success');
-        document.getElementById('terminalBox').innerText = '';
+        const box = document.getElementById('terminalBox');
+        if (box) {
+          box.innerText = 'Dataset preparation launched. Awaiting worker logs...\n';
+        }
+        setTimeout(() => window.location.reload(), 1200);
       } else {
         showToast(data.message || 'Failed to start', 'error');
         btn.disabled = false;
@@ -505,11 +595,34 @@
 
   // Handle WebSocket Terminal Output
   window.handleCustomWS = (msg) => {
-    if (msg.type === 'log') {
-      const box = document.getElementById('terminalBox');
-      if (box) {
-        box.innerText += msg.line + '\n';
+    const box = document.getElementById('terminalBox');
+    if (msg.type === 'init') {
+      if (msg.active_job) {
+        activeJobData = msg.active_job;
+      }
+      if (msg.logs && msg.logs.length && box && (!box.innerText || box.innerText.includes('Ready. Upload files'))) {
+        box.innerText = msg.logs.join('\n') + '\n';
         box.scrollTop = box.scrollHeight;
+      }
+    } else if (msg.type === 'log') {
+      const line = msg.line || msg.message;
+      if (box && line) {
+        if (box.innerText.includes('Ready. Upload files')) box.innerText = '';
+        box.innerText += line + '\n';
+        box.scrollTop = box.scrollHeight;
+      }
+    } else if (msg.type === 'status') {
+      if (box) {
+        box.innerText += `\n--- [STATUS: ${msg.status}] ${msg.message || ''} ---\n`;
+        box.scrollTop = box.scrollHeight;
+      }
+      if (msg.status === 'COMPLETED' || msg.status === 'FAILED' || msg.status === 'STOPPED') {
+        const btn = document.getElementById('startPrepBtn');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i> Generate Training Dataset';
+        }
+        setTimeout(() => window.location.reload(), 1500);
       }
     }
   };
@@ -535,6 +648,115 @@
   let isCustomMode = false;
   let autoProbeTimer = null;
 
+  const TEACHER_STORAGE_KEY = 'doctune_teacher_gateway_state';
+
+  function saveTeacherGatewayState() {
+    try {
+      const state = {
+        provider: providerSelect ? providerSelect.value : '',
+        url: urlInput ? urlInput.value : '',
+        model: modelInput ? modelInput.value : '',
+        isCustom: isCustomMode,
+        customModel: modelCustom ? modelCustom.value : '',
+        apiKey: keyInput ? keyInput.value : '',
+        maxChunks: document.querySelector('input[name="max_chunks"]')?.value || '3',
+        chunkSize: document.querySelector('input[name="chunk_size"]')?.value || '1000',
+        overlap: document.querySelector('input[name="overlap"]')?.value || '150',
+        workers: document.querySelector('input[name="workers"]')?.value || '8',
+        redactPii: document.getElementById('redact_pii')?.checked ?? true,
+        piiMode: document.getElementById('pii_mode')?.value || 'placeholder'
+      };
+      localStorage.setItem(TEACHER_STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.warn('Unable to persist teacher gateway state:', e);
+    }
+  }
+
+  function restoreTeacherGatewayState() {
+    try {
+      const raw = localStorage.getItem(TEACHER_STORAGE_KEY);
+      if (!raw) return false;
+      const s = JSON.parse(raw);
+      if (!s || !s.provider) return false;
+
+      // 1. Provider
+      if (providerSelect && s.provider) {
+        providerSelect.value = s.provider;
+      }
+
+      // 2. Base URL
+      if (urlInput && s.url) {
+        urlInput.value = s.url;
+      }
+
+      // 3. API Key
+      if (keyInput && s.apiKey !== undefined) {
+        keyInput.value = s.apiKey;
+      }
+
+      // 4. Update UI labels and hints for the restored provider
+      const preset = teacherPresets[s.provider] || teacherPresets['custom'] || {};
+      if (hintBox && preset.hint) hintBox.innerText = preset.hint;
+      if (preset.auth_required) {
+        if (badgeEl) {
+          badgeEl.className = 'badge bg-warning-subtle text-warning border small';
+          badgeEl.innerText = 'API Key Required';
+        }
+        if (keyHint) keyHint.innerText = `(Requires ${preset.name} Key)`;
+      } else {
+        if (badgeEl) {
+          badgeEl.className = 'badge bg-success-subtle text-success border small';
+          badgeEl.innerText = 'Local / Zero-Cost';
+        }
+        if (keyHint) keyHint.innerText = '(Optional for local runners)';
+      }
+
+      // 5. Model
+      const modelVal = s.model || preset.default_model || '';
+      if (modelInput) modelInput.value = modelVal;
+      if (s.isCustom) {
+        setCustomMode(true);
+        if (modelCustom) modelCustom.value = modelVal;
+      } else {
+        const pool = (preset.suggested_models && preset.suggested_models.length) ? preset.suggested_models : (modelVal ? [modelVal] : []);
+        renderModelOptions(pool, modelVal);
+      }
+
+      // 6. Hyperparameters & PII settings
+      if (s.maxChunks) {
+        const el = document.querySelector('input[name="max_chunks"]');
+        if (el) el.value = s.maxChunks;
+      }
+      if (s.chunkSize) {
+        const el = document.querySelector('input[name="chunk_size"]');
+        if (el) el.value = s.chunkSize;
+      }
+      if (s.overlap) {
+        const el = document.querySelector('input[name="overlap"]');
+        if (el) el.value = s.overlap;
+      }
+      if (s.workers) {
+        const el = document.querySelector('input[name="workers"]');
+        if (el) el.value = s.workers;
+      }
+      if (s.redactPii !== undefined) {
+        const el = document.getElementById('redact_pii');
+        if (el) el.checked = s.redactPii;
+      }
+      if (s.piiMode) {
+        const el = document.getElementById('pii_mode');
+        if (el) el.value = s.piiMode;
+      }
+
+      // Automatically probe models for this restored provider/base_url
+      probeModels(true);
+      return true;
+    } catch (e) {
+      console.warn('Failed restoring teacher gateway state:', e);
+      return false;
+    }
+  }
+
   function setCustomMode(custom) {
     isCustomMode = custom;
     if (isCustomMode) {
@@ -558,6 +780,7 @@
         modelInput.value = modelSelect.value;
       }
     }
+    saveTeacherGatewayState();
   });
 
   modelSelect?.addEventListener('change', () => {
@@ -567,10 +790,12 @@
     } else {
       if (modelInput) modelInput.value = modelSelect.value;
     }
+    saveTeacherGatewayState();
   });
 
   modelCustom?.addEventListener('input', () => {
     if (modelInput) modelInput.value = modelCustom.value.trim();
+    saveTeacherGatewayState();
   });
 
   function renderModelOptions(models, activeModel) {
@@ -699,11 +924,13 @@
     if (!preset.auth_required || (keyInput && keyInput.value.trim().length > 6)) {
       probeModels(true);
     }
+    saveTeacherGatewayState();
   }
 
   // Auto-probe when API key is entered or pasted (debounced)
   keyInput?.addEventListener('input', () => {
     clearTimeout(autoProbeTimer);
+    saveTeacherGatewayState();
     const keyVal = keyInput.value.trim();
     if (keyVal.length > 6 && keyVal !== 'not-needed') {
       autoProbeTimer = setTimeout(() => {
@@ -714,6 +941,7 @@
 
   providerSelect?.addEventListener('change', (e) => {
     updateTeacherUI(e.target.value);
+    saveTeacherGatewayState();
   });
 
   document.getElementById('btnToggleTeacherKey')?.addEventListener('click', () => {
@@ -776,11 +1004,23 @@
     probeModels(false);
   });
 
-  // Initialize initial model selector state on page load
-  const initialProvider = providerSelect ? providerSelect.value : 'ollama';
-  const initialModel = modelInput ? modelInput.value : 'llama3.1:latest';
-  const initialPreset = teacherPresets[initialProvider] || {};
-  renderModelOptions(initialPreset.suggested_models || [], initialModel);
+  // Initialize teacher gateway state on page load (restore previous state or load default preset)
+  const isRestored = restoreTeacherGatewayState();
+  if (!isRestored) {
+    const initialProvider = providerSelect ? providerSelect.value : 'ollama';
+    const initialModel = modelInput ? modelInput.value : 'llama3.1:latest';
+    const initialPreset = teacherPresets[initialProvider] || {};
+    renderModelOptions(initialPreset.suggested_models || [], initialModel);
+  }
+
+  // Persistent listeners for settings and parameters
+  urlInput?.addEventListener('input', saveTeacherGatewayState);
+  document.querySelector('input[name="max_chunks"]')?.addEventListener('input', saveTeacherGatewayState);
+  document.querySelector('input[name="chunk_size"]')?.addEventListener('input', saveTeacherGatewayState);
+  document.querySelector('input[name="overlap"]')?.addEventListener('input', saveTeacherGatewayState);
+  document.querySelector('input[name="workers"]')?.addEventListener('input', saveTeacherGatewayState);
+  document.getElementById('redact_pii')?.addEventListener('change', saveTeacherGatewayState);
+  document.getElementById('pii_mode')?.addEventListener('change', saveTeacherGatewayState);
 
   // Pull / Download Teacher Model Handler
   const pullBtn = document.getElementById('btnPullTeacherModel');
@@ -1012,6 +1252,10 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     checkRagStatus();
+    const box = document.getElementById('terminalBox');
+    if (box) {
+      box.scrollTop = box.scrollHeight;
+    }
   });
 </script>
 {% endblock %}

@@ -30,7 +30,7 @@ with warnings.catch_warnings():
 
 
 def get_cpu_info() -> Dict[str, Any]:
-    """Extract CPU model, cores, architecture, and load average."""
+    """Extract CPU model, cores, architecture, load average, and utilization."""
     model_name = platform.processor() or "Unknown CPU"
 
     # On Linux, inspect /proc/cpuinfo for accurate marketing brand name
@@ -53,6 +53,17 @@ def get_cpu_info() -> Dict[str, Any]:
     except Exception:
         load_1, load_5, load_15 = 0.0, 0.0, 0.0
 
+    load_pct = min(100.0, round((load_1 / cores) * 100.0, 1)) if cores > 0 else 0.0
+    util_pct = load_pct
+
+    try:
+        import psutil
+        ps_util = psutil.cpu_percent(interval=None)
+        if ps_util > 0.0:
+            util_pct = round(ps_util, 1)
+    except Exception:
+        pass
+
     return {
         "model_name": model_name,
         "cores": cores,
@@ -60,11 +71,13 @@ def get_cpu_info() -> Dict[str, Any]:
         "load_avg_1m": round(load_1, 2),
         "load_avg_5m": round(load_5, 2),
         "load_avg_15m": round(load_15, 2),
+        "load_pct": load_pct,
+        "util_pct": util_pct,
     }
 
 
 def get_ram_info() -> Dict[str, Any]:
-    """Extract System Memory (RAM) usage from /proc/meminfo."""
+    """Extract System Memory (RAM) and Swap usage."""
     mem_total_kb = 0
     mem_avail_kb = 0
 
@@ -88,11 +101,26 @@ def get_ram_info() -> Dict[str, Any]:
     else:
         total_gb, avail_gb, used_gb, pct = 0.0, 0.0, 0.0, 0.0
 
+    swap_total_gb = 0.0
+    swap_used_gb = 0.0
+    swap_pct = 0.0
+    try:
+        import psutil
+        sw = psutil.swap_memory()
+        swap_total_gb = round(sw.total / (1024 ** 3), 2)
+        swap_used_gb = round(sw.used / (1024 ** 3), 2)
+        swap_pct = round(sw.percent, 1)
+    except Exception:
+        pass
+
     return {
         "total_gb": total_gb,
         "used_gb": used_gb,
         "avail_gb": avail_gb,
         "used_pct": pct,
+        "swap_total_gb": swap_total_gb,
+        "swap_used_gb": swap_used_gb,
+        "swap_pct": swap_pct,
     }
 
 

@@ -328,7 +328,17 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
                     overlap: int = DEFAULT_CHUNK_OVERLAP,
                     max_workers: int = DEFAULT_MAX_WORKERS,
                     redact_pii: bool = True,
-                    pii_mode: str = "placeholder"):
+                    pii_mode: str = "placeholder",
+                    run_id: Optional[str] = None):
+    def notify_log(msg: str):
+        print(msg, flush=True)
+        if run_id:
+            try:
+                from web.celery_app import publish_redis_event
+                publish_redis_event(f"run:{run_id}:stream", {"type": "log", "line": msg, "message": msg})
+            except Exception:
+                pass
+
     if any(pkg is None for pkg in [pl, PdfReader, Document, OpenAI]):
         raise ImportError(
             "Data ingestion packages (polars, pypdf, python-docx, openai) are not installed. "
@@ -338,13 +348,13 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
 
     if output_file.exists():
         output_file.unlink()
-        print(f"Removed previous {output_file}")
+        notify_log(f"Removed previous {output_file.name}")
 
     try:
         from web.services.storage_service import storage_service
         synced_count = storage_service.sync_bucket_to_dir(storage_service.bucket_docs, docs_dir)
         if synced_count > 0:
-            print(f"[STORAGE] Synchronized {synced_count} documents from S3 bucket: {storage_service.bucket_docs}")
+            notify_log(f"[STORAGE] Synchronized {synced_count} documents from S3 bucket: {storage_service.bucket_docs}")
     except Exception as e:
         print(f"[STORAGE NOTICE] Document sync from S3 skipped or failed: {e}")
 
@@ -354,16 +364,16 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
         all_files.extend(docs_dir.glob(pattern))
 
     all_files = sorted(set(all_files))
-    print(f"Found {len(all_files)} documents in {docs_dir}")
+    notify_log(f"Found {len(all_files)} documents to process in {docs_dir}")
 
     if not all_files:
-        print(f"No documents found. Put PDF / DOCX / CSV files into: {docs_dir}")
+        notify_log(f"No documents found. Please upload PDF / DOCX / CSV files into: {docs_dir}")
         return 0
 
     effective_url = resolve_teacher_url(teacher_url)
     effective_key = teacher_api_key.strip() if teacher_api_key and teacher_api_key.strip() else "not-needed"
-    print(f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
-    print(f"PII Redaction: {'ENABLED (' + pii_mode + ')' if redact_pii else 'DISABLED'}")
+    notify_log(f"Connecting to Teacher LLM gateway at: {effective_url} (Model: {teacher_model})")
+    notify_log(f"Enterprise PII Redaction: {'ENABLED (' + pii_mode + ')' if redact_pii else 'DISABLED'}")
     client = OpenAI(base_url=effective_url, api_key=effective_key)
 
     total_pairs = 0
@@ -375,22 +385,24 @@ def run_preparation(docs_dir: Path = RAW_DOCS_DIR,
             ): f for f in all_files
         }
         for future in as_completed(futures):
-            pairs = future.result()
-            total_pairs += pairs
-            print(f"  +{pairs} pairs  (running total: {total_pairs})")
+            f_path = futures[future]
+            try:
+                pairs = future.result()
+                total_pairs += pairs
+                notify_log(f"  [OK] {f_path.name}: generated {pairs} pairs (running total: {total_pairs})")
+            except Exception as fe:
+                notify_log(f"  [WARN] {f_path.name} error: {fe}")
 
     # 2. Upload generated JSONL to MinIO/S3 datasets bucket
     if output_file.exists():
         try:
             from web.services.storage_service import storage_service
             storage_service.upload_file(output_file, storage_service.bucket_datasets, output_file.name)
-            print(f"[STORAGE] Uploaded dataset artifact {output_file.name} to S3 bucket: {storage_service.bucket_datasets}")
+            notify_log(f"[STORAGE] Uploaded dataset artifact {output_file.name} to S3 bucket: {storage_service.bucket_datasets}")
         except Exception as e:
-            print(f"[STORAGE NOTICE] Dataset upload to S3 skipped or failed: {e}")
+            notify_log(f"[STORAGE NOTICE] Dataset upload to S3 skipped or failed: {e}")
 
-    print("\n" + "=" * 60)
-    print(f"Finished. Wrote {total_pairs} instruction pairs → {output_file}")
-    print("=" * 60)
+    notify_log(f"--- [COMPLETED] Generated {total_pairs} instruction pairs → {output_file.name} ---")
     return total_pairs
 
 

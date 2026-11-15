@@ -430,6 +430,7 @@ if HAS_CELERY and app:
                 max_workers=workers,
                 redact_pii=redact_pii,
                 pii_mode=pii_mode,
+                run_id=run_id,
             )
             done_msg = f"--- [COMPLETED] Wrote {total_pairs} instruction pairs ---"
             publish_redis_event(f"run:{run_id}:stream", {

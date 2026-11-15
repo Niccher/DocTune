@@ -186,6 +186,7 @@ async def data_prep_view(request: Request, page: int = Query(1, ge=1)):
             "dataset_versions": dataset_version_service.list_versions(),
             "active_dataset_version": dataset_version_service.get_active_version(),
             "active_job": state.active_job.to_dict() if state.active_job else None,
+            "active_logs": list(state.log_buffer),
         },
     )
 

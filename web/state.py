@@ -43,6 +43,19 @@ class JobStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+def format_duration(duration_sec: float) -> str:
+    """Format duration in seconds into human-readable HHh MMm SSs or MMm SSs string."""
+    d = max(0, int(duration_sec))
+    hours = d // 3600
+    minutes = (d % 3600) // 60
+    seconds = d % 60
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    elif minutes > 0:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
+
+
 @dataclass
 class JobInfo:
     job_id: str
@@ -54,7 +67,11 @@ class JobInfo:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        duration = (self.end_time or time.time()) - self.start_time
+        duration = max(0.0, (self.end_time or time.time()) - self.start_time)
+        import datetime
+        dt = datetime.datetime.fromtimestamp(self.start_time, tz=datetime.timezone.utc)
+        started_at_str = dt.strftime("%I:%M:%S %p UTC")
+
         return {
             "job_id": self.job_id,
             "job_type": self.job_type.value,
@@ -62,6 +79,9 @@ class JobInfo:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "duration_sec": round(duration, 1),
+            "duration_formatted": format_duration(duration),
+            "started_at_str": started_at_str,
+            "started_at_iso": dt.isoformat(),
             "pid": self.pid,
             "metadata": self.metadata,
         }
@@ -201,6 +221,8 @@ class AppState:
                         "start_time": start_ts,
                         "end_time": end_ts,
                         "duration_sec": round(duration, 1),
+                        "duration_formatted": format_duration(duration),
+                        "started_at_str": time.strftime("%I:%M:%S %p UTC", time.gmtime(start_ts)),
                         "pid": r.pid,
                         "metadata": {
                             "method": r.method,
