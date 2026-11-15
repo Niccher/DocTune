@@ -308,35 +308,111 @@ ollama run my-doctune-model</code></pre>
           </div>
         </div>
 
-        <!-- Section 7: Docker -->
+        <!-- Section 7: Docker & Deployment -->
         <div id="docker" class="mb-4">
-          <h3 class="fw-bold mb-3">7. Docker & Production Deployment</h3>
+          <h3 class="fw-bold mb-3">7. Unified Deployment & Host Inference Engines</h3>
           <p class="text-muted">
-            Run DocTune Studio inside an isolated NVIDIA container environment:
+            DocTune Studio features an automated 13-stage deployment pipeline driven by a single master CLI orchestrator (<code>scripts/deploy.sh</code>). It coordinates the 7-container Docker Compose stack with native host CPU inference engines:
           </p>
 
           <div class="code-terminal shadow-sm mb-3">
-<pre class="mb-0"><code># docker-compose.yml snippet
-services:
-  doctune-studio:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://doctune:secret@postgres:5432/doctune_db
-      - S3_ENDPOINT=http://minio:9000
-      - S3_ACCESS_KEY=minioadmin
-      - S3_SECRET_KEY=minioadmin
-      - AUTH_ENABLED=true
-    volumes:
-      - ./data:/app/data
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]</code></pre>
+            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary small">
+              <span>Master CLI: One-Click Production Deployment</span>
+              <span class="badge text-bg-success">bash scripts/deploy.sh</span>
+            </div>
+<pre class="mb-0"><code># 1. Standard Core Stack (Web Studio, Postgres, Redis, MinIO S3, Celery, RAG, Dozzle)
+bash scripts/deploy.sh
+
+# 2. Deploy Full Stack + Local llama.cpp OpenAI Gateway (Port 8080, Qwen 2.5 1.5B GGUF)
+bash scripts/deploy.sh --with-llamacpp
+
+# 3. Deploy Full Stack + Local Ollama Daemon (Port 11434, qwen2.5:1.5b)
+bash scripts/deploy.sh --with-ollama</code></pre>
+          </div>
+
+          <h5 class="fw-bold mt-4 mb-2">Modular Host Runner Lifecycle Control</h5>
+          <p class="text-muted small">
+            Manage local inference engines directly through the master CLI without taking down container services:
+          </p>
+
+          <div class="code-terminal shadow-sm mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary small">
+              <span>Subcommand Pass-Through</span>
+              <span class="badge text-bg-primary">Runner CLI</span>
+            </div>
+<pre class="mb-0"><code># llama.cpp management (Port 8080)
+bash scripts/deploy.sh llamacpp start
+bash scripts/deploy.sh llamacpp status
+bash scripts/deploy.sh llamacpp logs
+bash scripts/deploy.sh llamacpp stop
+
+# Ollama management (Port 11434)
+bash scripts/deploy.sh ollama start
+bash scripts/deploy.sh ollama status
+bash scripts/deploy.sh ollama logs
+bash scripts/deploy.sh ollama pull-model --model qwen2.5:1.5b
+bash scripts/deploy.sh ollama stop</code></pre>
+          </div>
+
+          <div class="table-responsive mb-3">
+            <table class="table table-bordered bg-body shadow-sm align-middle small">
+              <thead class="table-light">
+                <tr>
+                  <th>Service</th>
+                  <th>Port</th>
+                  <th>Internal Container URL</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="fw-bold">Web Studio & UI</td>
+                  <td><code>80</code></td>
+                  <td><code>http://localhost:80</code></td>
+                  <td>Dashboard, Document Studio, Training UI, Playground</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">PostgreSQL</td>
+                  <td><code>5432</code></td>
+                  <td><code>postgresql://postgres:5432/doctune_studio</code></td>
+                  <td>Relational metadata, configs, and audit logs</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">Redis</td>
+                  <td><code>6379</code></td>
+                  <td><code>redis://redis:6379/0</code></td>
+                  <td>Celery task broker & telemetry Pub/Sub</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">MinIO S3</td>
+                  <td><code>9000 / 9001</code></td>
+                  <td><code>http://minio:9000</code></td>
+                  <td>Object storage API & Web Console (checkpoints, datasets)</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">Dozzle Logs</td>
+                  <td><code>8888</code></td>
+                  <td><code>http://localhost:8888</code></td>
+                  <td>Real-time streaming Docker container log viewer</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">llama.cpp Server</td>
+                  <td><code>8080</code></td>
+                  <td><code>http://host.docker.internal:8080/v1</code></td>
+                  <td>Native CPU AVX2 OpenAI gateway (zero GPU cost)</td>
+                </tr>
+                <tr>
+                  <td class="fw-bold">Ollama Daemon</td>
+                  <td><code>11434</code></td>
+                  <td><code>http://host.docker.internal:11434/v1</code></td>
+                  <td>Local inference daemon with multi-model caching</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="alert alert-secondary small py-2 px-3 mb-0">
+            <i class="bi bi-cpu-fill me-1 text-primary"></i> <strong>Low Memory Architecture:</strong> Running inference natively on the host rather than inside container virtualization preserves full CPU AVX2/AVX-512 vectorization, saves ~1.5 GB of container daemon memory overhead, and allows seamless operation on cloud instances with 6-8 GB of RAM.
           </div>
         </div>
 

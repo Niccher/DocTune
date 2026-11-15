@@ -4,12 +4,53 @@ DocTune Studio follows a **Local-First, Cloud-Identical Deployment Model**. The 
 
 ---
 
-## 1. Local Testing Environment
+## 1. Unified Deployment Architecture & CLI Orchestrator
 
-* **Target Hardware**: Local development machine or on-premise workstation.
-* **Orchestration**: Docker Compose v2 via [`scripts/deploy.sh`](../../scripts/deploy.sh).
-* **GPU Detection**: Automatic. If an NVIDIA GPU with Container Toolkit is detected, PyTorch claims it; otherwise, the Celery worker falls back automatically to multi-threaded CPU execution (`TORCH_NUM_THREADS=7`).
-* **Object Store**: Local MinIO container with data mounted on `doctune_minio_data` Docker volume.
+DocTune Studio provides a **Single Master Entry Point** via [`scripts/deploy.sh`](../../scripts/deploy.sh) that orchestrates both containerized services (PostgreSQL, Redis, MinIO S3, Web Studio, Celery Workers, Dozzle) and zero-overhead native host inference runners (**llama.cpp** and **Ollama**).
+
+### Deployment Modes
+```bash
+# 1. Standard Core Stack (Default: Cloud Teacher / Standby mode)
+bash scripts/deploy.sh
+
+# 2. Full Stack + Local llama.cpp OpenAI Gateway (Port 8080, Qwen 2.5 1.5B GGUF)
+bash scripts/deploy.sh --with-llamacpp
+
+# 3. Full Stack + Local Ollama Daemon (Port 11434, qwen2.5:1.5b)
+bash scripts/deploy.sh --with-ollama
+
+# 4. Clean Redeployment (resets transient containers while preserving database state)
+bash scripts/deploy.sh --hard-reset
+```
+
+### Direct Modular Runner Lifecycle Control
+Operators can manage individual local inference engines directly through the master CLI:
+```bash
+# llama.cpp management (Port 8080)
+bash scripts/deploy.sh llamacpp start
+bash scripts/deploy.sh llamacpp status
+bash scripts/deploy.sh llamacpp logs
+bash scripts/deploy.sh llamacpp stop
+
+# Ollama management (Port 11434)
+bash scripts/deploy.sh ollama start
+bash scripts/deploy.sh ollama status
+bash scripts/deploy.sh ollama logs
+bash scripts/deploy.sh ollama pull-model --model qwen2.5:1.5b
+bash scripts/deploy.sh ollama stop
+```
+
+### Port Layout & Container Networking
+* **Web Studio & UI**: Port `80` (HTTP)
+* **PostgreSQL Database**: Port `5432`
+* **Redis Message Broker**: Port `6379`
+* **MinIO S3 API / Console**: Ports `9000` / `9001`
+* **Dozzle Log Streaming**: Port `8888`
+* **llama.cpp Host Server**: Port `8080` (accessible from containers via `http://host.docker.internal:8080/v1`)
+* **Ollama Host Daemon**: Port `11434` (accessible from containers via `http://host.docker.internal:11434/v1`)
+
+> [!TIP]
+> **Performance & Low Memory Advantage**: Running `llama.cpp` and `Ollama` natively on the host rather than inside container virtualization preserves full CPU AVX2/AVX-512 hardware vectorization, saves ~1.5 GB of container daemon memory overhead, and protects 2-core / 6 GB cloud VMs from Out-Of-Memory (OOM) kernel panics.
 
 ---
 
@@ -19,10 +60,21 @@ DocTune Studio follows a **Local-First, Cloud-Identical Deployment Model**. The 
 flowchart TB
     subgraph GCP["Google Cloud Platform Project"]
         subgraph VPC["VPC Network (Default / Custom)"]
-            subgraph GCE["GCP Compute Engine (G2 Instance: g2-standard-8)"]
-                L4["NVIDIA L4 GPU (24 GB VRAM)"]
-                Docker["Docker Engine + NVIDIA Container Toolkit"]
-                Compose["DocTune Multi-Container Stack (scripts/deploy.sh)"]
+            subgraph GCE["GCP Compute Engine (G2 or E2/N2 Instance)"]
+                subgraph DockerStack["Docker Compose Stack (scripts/deploy.sh)"]
+                    Web["Web Studio (:80)"]
+                    Worker["Celery Worker (PyTorch)"]
+                    Beat["Celery Beat"]
+                    PG[("PostgreSQL (:5432)")]
+                    Redis[("Redis (:6379)")]
+                    MinIO[("MinIO S3 (:9000/:9001)")]
+                    Dozzle["Dozzle Logs (:8888)"]
+                end
+
+                subgraph HostRunners["Native Host Inference Backends (AVX2/AVX-512)"]
+                    LlamaCpp["llama.cpp server (:8080)"]
+                    Ollama["Ollama daemon (:11434)"]
+                end
             end
             
             CloudSQL[("Google Cloud SQL for PostgreSQL\n(Optional Enterprise Managed DB)")]
@@ -32,9 +84,10 @@ flowchart TB
         CloudDNS["Cloud DNS / Load Balancer (:80)"]
     end
 
-    CloudDNS --> GCE
-    Compose --> CloudSQL
-    Compose -.->|S3 Interoperability API| GCS
+    CloudDNS --> Web
+    DockerStack --> CloudSQL
+    DockerStack -.->|S3 API| GCS
+    Web & Worker -.->|host.docker.internal| HostRunners
 ```
 
 ---

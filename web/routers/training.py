@@ -22,6 +22,7 @@ from web.services.queue_manager import queue_manager
 from web.services.sweep_service import sweep_service
 from web.services.dataset_version_service import dataset_version_service
 from web.services.audit_service import audit_service
+from web.services.hf_model_service import hf_model_service
 from web.templates_config import templates
 from web.celery_app import is_celery_available, HAS_CELERY, app as celery_app
 from web.routers.auth import require_project_role, get_project_id
@@ -50,8 +51,19 @@ async def training_view(request: Request, model_id: Optional[str] = Query(None))
             "resumable_checkpoints": queue_manager.discover_resumable_checkpoints(),
             "dataset_versions": dataset_version_service.list_versions(),
             "active_dataset_version": dataset_version_service.get_active_version(),
+            "downloaded_models": hf_model_service.list_downloaded_models(),
+            "curated_models": hf_model_service.list_curated_models(),
         },
     )
+
+
+@router.get("/api/v1/models/downloaded")
+async def get_downloaded_models_api():
+    """Return all locally downloaded Hugging Face and project models."""
+    return JSONResponse({
+        "status": "success",
+        "models": hf_model_service.list_downloaded_models(),
+    })
 
 
 @router.post("/api/v1/training/start")

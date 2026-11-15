@@ -1079,6 +1079,20 @@ def test_training_view_with_query_param():
     assert target_model in resp.text
 
 
+def test_downloaded_models_selector_endpoint():
+    """Verify downloaded models API and training view selector rendering."""
+    resp = client.get("/api/v1/models/downloaded")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert isinstance(data["models"], list)
+
+    resp_ui = client.get("/training")
+    assert resp_ui.status_code == 200
+    assert "base_model_select" in resp_ui.text
+    assert "Downloaded / Cached Models" in resp_ui.text
+
+
 def test_models_view_contains_hub_models():
     """Verify GET /models renders the Hugging Face Base Models Hub section."""
     resp = client.get("/models")
@@ -1895,6 +1909,7 @@ if __name__ == "__main__":
     test_hf_hub_models_list_endpoint()
     test_hf_hub_set_default_model_endpoint()
     test_training_view_with_query_param()
+    test_downloaded_models_selector_endpoint()
     test_models_view_contains_hub_models()
     test_hf_hub_download_status_endpoint()
     test_hf_hub_search_endpoint()

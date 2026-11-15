@@ -32,14 +32,31 @@ Software engineers and contributors: see [docs/README.md](docs/README.md).
 
 ## Setup and Run
 
-### 1. One-Click Deployment (Recommended)
-From the repository root, run the automated 13-stage deployment pipeline:
+### 1. One-Click Unified Deployment (Recommended)
+From the repository root, run the master deployment pipeline:
 
 ```bash
+# Standard Core Stack (UI, DB, Redis, MinIO, Celery, RAG)
 bash scripts/deploy.sh
+
+# With local zero-cost llama.cpp server (Port 8080, Qwen 2.5 1.5B GGUF)
+bash scripts/deploy.sh --with-llamacpp
+
+# With local zero-cost Ollama daemon (Port 11434, qwen2.5:1.5b)
+bash scripts/deploy.sh --with-ollama
 ```
 
 The script inspects host CPU/RAM/disk, auto-creates swap if constrained, configures `.env`, builds all containers, runs database migrations, provisions MinIO buckets, and verifies system health.
+
+#### Modular Inference Runner Commands
+Manage host inference backends directly via the master CLI without restarting containers:
+```bash
+# llama.cpp (Port 8080)
+bash scripts/deploy.sh llamacpp [start|stop|restart|status|logs]
+
+# Ollama (Port 11434)
+bash scripts/deploy.sh ollama [start|stop|restart|status|logs|pull-model]
+```
 
 ### 2. Manual Docker Compose Run
 If you prefer running compose commands directly:

@@ -36,26 +36,47 @@
             </div>
           </div>
 
-          <!-- Base Model ID -->
+          <!-- Base Model ID with Downloaded Models Dropdown -->
           <div class="mb-3">
             <div class="d-flex justify-content-between align-items-center mb-1">
-              <label class="form-label small fw-semibold mb-0">Base Model ID</label>
-              <a href="/models#hub-models" class="text-decoration-none small text-primary">
-                <i class="bi bi-cloud-arrow-down me-1"></i>Browse Hub
-              </a>
+              <label class="form-label small fw-semibold mb-0" for="base_model_select">Base Model ID</label>
+              <div class="d-flex align-items-center gap-2">
+                <span id="baseModelCacheBadge" class="badge bg-secondary-subtle text-secondary small" style="font-size: 0.72rem;">Checking cache...</span>
+                <a href="/models#hub-models" class="text-decoration-none small text-primary" title="Explore model hub, download weights, or configure HF token">
+                  <i class="bi bi-cloud-arrow-down me-1"></i>Browse Hub
+                </a>
+              </div>
             </div>
-            <input type="text" class="form-control form-control-sm font-monospace" name="model_id" list="suggestedModels" value="{{ config.model_id }}" required>
-            <datalist id="suggestedModels">
-              <option value="Qwen/Qwen2.5-1.5B-Instruct">Qwen 2.5 (1.5B) — Free / Ungated</option>
-              <option value="HuggingFaceTB/SmolLM2-1.7B-Instruct">SmolLM2 (1.7B) — Free / Ultra-light</option>
-              <option value="Qwen/Qwen2.5-3B-Instruct">Qwen 2.5 (3B) — Free / Ungated</option>
-              <option value="microsoft/Phi-3.5-mini-instruct">Phi-3.5 Mini (3.8B) — Free / 128k context</option>
-              <option value="meta-llama/Llama-3.2-1B-Instruct">Llama 3.2 (1B) — Gated (HF Token)</option>
-              <option value="meta-llama/Llama-3.2-3B-Instruct">Llama 3.2 (3B) — Gated (HF Token)</option>
-              <option value="Qwen/Qwen2.5-7B-Instruct">Qwen 2.5 (7B) — Free / High Power</option>
-              <option value="meta-llama/Meta-Llama-3-8B-Instruct">Meta Llama 3 (8B) — Standard Gated</option>
-            </datalist>
-            <div class="form-text small">Select a suggested model or type any model ID from Hugging Face.</div>
+
+            <div class="input-group input-group-sm">
+              <select class="form-select form-select-sm font-monospace" id="base_model_select" title="Select downloaded model or curated model">
+                <optgroup label="💾 Downloaded / Cached Models (Ready Offline)">
+                  {% if downloaded_models %}
+                    {% for m in downloaded_models %}
+                      <option value="{{ m.id }}" data-cached="true" data-size="{{ m.size_gb }}" {% if m.id == config.model_id %}selected{% endif %}>
+                        {{ m.name }}{% if m.size_gb %} ({{ m.size_gb }} GB){% endif %} — {{ m.id }}
+                      </option>
+                    {% endfor %}
+                  {% else %}
+                    <option value="" disabled>(No models in local cache — pick below or download from Hub)</option>
+                  {% endif %}
+                </optgroup>
+                <optgroup label="🌟 Curated Foundation Models (Auto-Download)">
+                  {% for m in curated_models %}
+                    <option value="{{ m.id }}" data-cached="{{ 'true' if m.cached else 'false' }}" data-size="{{ m.size_gb or 0 }}" {% if m.id == config.model_id %}selected{% endif %}>
+                      {{ m.name }} ({{ m.params }}) — {{ m.id }}{% if m.cached %} [Cached]{% endif %}
+                    </option>
+                  {% endfor %}
+                </optgroup>
+                <option value="__custom__">✏️ Custom Model ID (Hugging Face)...</option>
+              </select>
+              <input type="text" class="form-control form-control-sm font-monospace d-none" id="base_model_custom" placeholder="e.g. meta-llama/Meta-Llama-3-8B-Instruct">
+              <button class="btn btn-outline-secondary" type="button" id="btnToggleCustomBaseModel" title="Switch between dropdown & custom model ID">
+                <i class="bi bi-pencil" id="toggleCustomBaseModelIcon"></i>
+              </button>
+            </div>
+            <input type="hidden" name="model_id" id="base_model_id" value="{{ config.model_id }}" required>
+            <div class="form-text small" id="baseModelHelpText">Select a downloaded model or type any model ID from Hugging Face.</div>
           </div>
 
           <!-- Dataset Version Selector -->
@@ -523,6 +544,104 @@
       document.querySelector('input[name="grad_accum"]').value = 16;
     }
     estimateVRAM();
+  }
+
+  // Base Model Selector & Custom Switcher Logic
+  const baseModelSelect = document.getElementById('base_model_select');
+  const baseModelCustom = document.getElementById('base_model_custom');
+  const baseModelInput = document.getElementById('base_model_id');
+  const btnToggleCustomBase = document.getElementById('btnToggleCustomBaseModel');
+  const toggleBaseIcon = document.getElementById('toggleCustomBaseModelIcon');
+  const baseModelBadge = document.getElementById('baseModelCacheBadge');
+  const baseModelHelp = document.getElementById('baseModelHelpText');
+
+  let isCustomBaseMode = false;
+
+  function setCustomBaseMode(custom) {
+    isCustomBaseMode = custom;
+    if (isCustomBaseMode) {
+      baseModelSelect?.classList.add('d-none');
+      baseModelCustom?.classList.remove('d-none');
+      if (baseModelCustom && baseModelInput) baseModelCustom.value = baseModelInput.value;
+      if (toggleBaseIcon) toggleBaseIcon.className = 'bi bi-list-ul';
+      if (btnToggleCustomBase) btnToggleCustomBase.title = 'Switch to model dropdown';
+      if (baseModelHelp) baseModelHelp.innerHTML = 'Enter any valid Hugging Face model repository (e.g. <code>mistralai/Mistral-7B-v0.1</code>).';
+    } else {
+      baseModelCustom?.classList.add('d-none');
+      baseModelSelect?.classList.remove('d-none');
+      if (toggleBaseIcon) toggleBaseIcon.className = 'bi bi-pencil';
+      if (btnToggleCustomBase) btnToggleCustomBase.title = 'Type custom model ID';
+      if (baseModelHelp) baseModelHelp.innerText = 'Select a downloaded model or choose from verified curated models.';
+    }
+    updateBaseModelBadge();
+  }
+
+  function updateBaseModelBadge() {
+    if (!baseModelBadge) return;
+    if (isCustomBaseMode) {
+      baseModelBadge.className = 'badge bg-warning-subtle text-warning border small';
+      baseModelBadge.innerHTML = '<i class="bi bi-pencil me-1"></i>Custom HF Model';
+      return;
+    }
+
+    const selectedOpt = baseModelSelect?.selectedOptions[0];
+    if (selectedOpt) {
+      const isCached = selectedOpt.getAttribute('data-cached') === 'true';
+      const sizeGb = selectedOpt.getAttribute('data-size');
+      if (isCached) {
+        baseModelBadge.className = 'badge bg-success-subtle text-success border small';
+        baseModelBadge.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>Cached Locally (${sizeGb ? sizeGb + ' GB' : 'Ready'})`;
+      } else {
+        baseModelBadge.className = 'badge bg-info-subtle text-info border small';
+        baseModelBadge.innerHTML = '<i class="bi bi-cloud-arrow-down me-1"></i>Downloads from Hub';
+      }
+    }
+  }
+
+  btnToggleCustomBase?.addEventListener('click', () => {
+    setCustomBaseMode(!isCustomBaseMode);
+    if (!isCustomBaseMode && baseModelSelect && baseModelInput) {
+      if (baseModelSelect.value && baseModelSelect.value !== '__custom__') {
+        baseModelInput.value = baseModelSelect.value;
+      }
+    }
+    estimateVRAM();
+  });
+
+  baseModelSelect?.addEventListener('change', () => {
+    if (baseModelSelect.value === '__custom__') {
+      setCustomBaseMode(true);
+      baseModelCustom?.focus();
+    } else {
+      if (baseModelInput) baseModelInput.value = baseModelSelect.value;
+      updateBaseModelBadge();
+      estimateVRAM();
+    }
+  });
+
+  baseModelCustom?.addEventListener('input', () => {
+    if (baseModelInput) baseModelInput.value = baseModelCustom.value.trim();
+    updateBaseModelBadge();
+    estimateVRAM();
+  });
+
+  // Initialize selector state on load
+  if (baseModelSelect && baseModelInput) {
+    let found = false;
+    for (let i = 0; i < baseModelSelect.options.length; i++) {
+      if (baseModelSelect.options[i].value === baseModelInput.value) {
+        baseModelSelect.selectedIndex = i;
+        found = true;
+        break;
+      }
+    }
+    if (!found && baseModelInput.value) {
+      setCustomBaseMode(true);
+      if (baseModelCustom) baseModelCustom.value = baseModelInput.value;
+    } else {
+      setCustomBaseMode(false);
+    }
+    updateBaseModelBadge();
   }
 
   // Pre-flight VRAM estimation

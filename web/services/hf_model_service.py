@@ -178,6 +178,88 @@ class HFModelService:
 
         return {"cached": False, "size_mb": 0.0, "size_gb": 0.0, "path": None}
 
+    def list_downloaded_models(self) -> List[Dict[str, Any]]:
+        """
+        Scan local Hugging Face cache directory and return all downloaded/cached models,
+        along with any local merged / base models in the workspace.
+        """
+        downloaded = []
+        seen_ids = set()
+        cache_dir = self.get_cache_dir()
+        curated_map = {m["id"]: m for m in CURATED_BASE_MODELS}
+
+        # 1. Scan Hugging Face hub cache
+        if cache_dir.exists() and cache_dir.is_dir():
+            try:
+                for folder in sorted(cache_dir.iterdir(), key=lambda p: p.name):
+                    if folder.is_dir() and folder.name.startswith("models--"):
+                        parts = folder.name[8:].split("--")
+                        repo_id = "/".join(parts) if len(parts) >= 2 else parts[0]
+                        if repo_id in seen_ids:
+                            continue
+
+                        cache_info = self.check_model_cache(repo_id)
+                        if cache_info.get("cached"):
+                            seen_ids.add(repo_id)
+                            curated = curated_map.get(repo_id, {})
+                            downloaded.append({
+                                "id": repo_id,
+                                "name": curated.get("name") or repo_id.split("/")[-1],
+                                "size_gb": cache_info.get("size_gb", 0.0),
+                                "size_mb": cache_info.get("size_mb", 0.0),
+                                "path": cache_info.get("path"),
+                                "is_cached": True,
+                                "is_curated": bool(curated),
+                                "category": curated.get("category", "cached"),
+                                "params": curated.get("params", "Cached"),
+                                "context_length": curated.get("context_length"),
+                            })
+            except Exception as e:
+                logger.warning("Error scanning HF cache directory: %s", e)
+
+        # 2. Check local workspace outputs (e.g. output_merged, models/)
+        try:
+            from pipeline.common import PROJECT_ROOT
+            local_candidates = [
+                ("output_merged", "Merged Model (output_merged)"),
+                ("models", "Local Models Directory"),
+            ]
+            for dir_rel, label in local_candidates:
+                p = PROJECT_ROOT / dir_rel
+                if p.exists() and p.is_dir():
+                    if (p / "config.json").exists() and str(p) not in seen_ids:
+                        seen_ids.add(str(p))
+                        downloaded.append({
+                            "id": str(p),
+                            "name": label,
+                            "size_gb": 0.0,
+                            "size_mb": 0.0,
+                            "path": str(p),
+                            "is_cached": True,
+                            "is_local_dir": True,
+                            "category": "local",
+                            "params": "Local Fine-Tuned",
+                        })
+                    else:
+                        for sub in p.iterdir():
+                            if sub.is_dir() and (sub / "config.json").exists() and str(sub) not in seen_ids:
+                                seen_ids.add(str(sub))
+                                downloaded.append({
+                                    "id": str(sub),
+                                    "name": f"Local: {sub.name}",
+                                    "size_gb": 0.0,
+                                    "size_mb": 0.0,
+                                    "path": str(sub),
+                                    "is_cached": True,
+                                    "is_local_dir": True,
+                                    "category": "local",
+                                    "params": "Local Fine-Tuned",
+                                })
+        except Exception as e:
+            logger.debug("Error scanning local model directories: %s", e)
+
+        return downloaded
+
     def list_curated_models(self) -> List[Dict[str, Any]]:
         """Return the curated list of models decorated with active cache and default state."""
         settings = config_service.get_settings()

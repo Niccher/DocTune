@@ -3,8 +3,18 @@
 # deploy.sh — ONE-CLICK Deployment & Orchestration Pipeline
 #             for DocTune Studio (Private Document LLM Fine-Tuning Platform)
 #
-# Usage:  bash scripts/deploy.sh
+# Usage:  bash scripts/deploy.sh [flags]
+#         bash scripts/deploy.sh [llamacpp|ollama] [subcommand]
 #         (run from the repository root)
+#
+# Flags:
+#   --with-llamacpp   Start core stack + host llama-server (Port 8080)
+#   --with-ollama     Start core stack + host Ollama daemon (Port 11434)
+#   --hard-reset      Tear down existing containers and re-deploy cleanly
+#
+# Modular Runner Subcommands:
+#   bash scripts/deploy.sh llamacpp [start|stop|restart|status|logs]
+#   bash scripts/deploy.sh ollama [start|stop|restart|status|logs|pull-model]
 #
 # Production Standard Ports:
 #   - Web Studio & Dashboard   : Port 80 (standard HTTP)
@@ -13,6 +23,8 @@
 #   - MinIO S3 API Endpoint    : Port 9000
 #   - MinIO S3 Web Console     : Port 9001
 #   - Dozzle Log Monitor       : Port 8888
+#   - llama.cpp Inference Port : Port 8080 (when enabled)
+#   - Ollama Inference Port    : Port 11434 (when enabled)
 #
 # 13-Step Automated Pipeline:
 #   1. Detect Dynamic IP (Public / LAN Fallback)
@@ -32,6 +44,19 @@
 #  13. Deployment Timeline Summary & Live Endpoints
 # ==============================================================================
 set -euo pipefail
+
+# ── Subcommand Dispatcher for Modular Inference Runners ────────────────────────
+# Enables: bash scripts/deploy.sh llamacpp [start|stop|restart|status|logs]
+#          bash scripts/deploy.sh ollama [start|stop|restart|status|logs|pull-model]
+if [ "${1:-}" = "llamacpp" ] || [ "${1:-}" = "llama" ]; then
+    shift
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    exec bash "$SCRIPT_DIR/deploy_llamacpp.sh" "$@"
+elif [ "${1:-}" = "ollama" ]; then
+    shift
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    exec bash "$SCRIPT_DIR/deploy_ollama.sh" "$@"
+fi
 
 # ── Colors & Formatting ───────────────────────────────────────
 GREEN="\033[0;32m"; YELLOW="\033[1;33m"; RED="\033[0;31m"
@@ -233,10 +258,23 @@ AUTH_ENABLED=$(grep "^AUTH_ENABLED" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' '
 DEPLOY_LLAMACPP=$(grep "^DEPLOY_LLAMACPP" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "false")
 [ -z "$DEPLOY_LLAMACPP" ] && DEPLOY_LLAMACPP="false"
 
+DEPLOY_OLLAMA=$(grep "^DEPLOY_OLLAMA" .env 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "false")
+[ -z "$DEPLOY_OLLAMA" ] && DEPLOY_OLLAMA="false"
+
 WITH_LLAMACPP=false
-if [ "$DEPLOY_LLAMACPP" = "true" ] || [[ "$*" =~ --with-llamacpp|--with-inference ]]; then
-    WITH_LLAMACPP=true
-fi
+WITH_OLLAMA=false
+for arg in "$@"; do
+    case "$arg" in
+        --with-llamacpp|--llamacpp|--with-inference)
+            WITH_LLAMACPP=true ;;
+        --with-ollama|--ollama)
+            WITH_OLLAMA=true ;;
+    esac
+done
+[ "$DEPLOY_LLAMACPP" = "true" ] && WITH_LLAMACPP=true
+[ "$DEPLOY_OLLAMA" = "true" ] && WITH_OLLAMA=true
+
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 
 set_env "WEB_PORT" "$WEB_PORT"
 set_env "POSTGRES_PORT" "$POSTGRES_PORT"
@@ -245,7 +283,9 @@ set_env "MINIO_PORT" "$MINIO_PORT"
 set_env "MINIO_CONSOLE_PORT" "$MINIO_CONSOLE_PORT"
 set_env "DOZZLE_PORT" "$DOZZLE_PORT"
 set_env "LLAMA_CPP_PORT" "$LLAMA_CPP_PORT"
-set_env "DEPLOY_LLAMACPP" "$DEPLOY_LLAMACPP"
+set_env "OLLAMA_PORT" "$OLLAMA_PORT"
+set_env "DEPLOY_LLAMACPP" "$WITH_LLAMACPP"
+set_env "DEPLOY_OLLAMA" "$WITH_OLLAMA"
 set_env "APP_BASE_URL" "$BASE_URL"
 set_env "AUTH_ENABLED" "$AUTH_ENABLED"
 
@@ -255,7 +295,20 @@ log "PostgreSQL Port           -> ${POSTGRES_PORT}"
 log "Redis Port                -> ${REDIS_PORT}"
 log "MinIO S3 API / Console    -> ${MINIO_PORT} / ${MINIO_CONSOLE_PORT}"
 log "Dozzle Log Monitor        -> http://${DETECTED_IP}:${DOZZLE_PORT}"
-log "llama.cpp Inference Port  -> ${LLAMA_CPP_PORT} (Serving: $([ "$WITH_LLAMACPP" = true ] && echo "Active auto-start" || echo "Standby — start anytime via 'bash scripts/deploy_llamacpp.sh start' or pass --with-llamacpp"))"
+if [ "$WITH_LLAMACPP" = true ]; then
+    LLAMA_STATUS="Active auto-start"
+else
+    LLAMA_STATUS="Standby — start via 'bash scripts/deploy.sh llamacpp start' or '--with-llamacpp'"
+fi
+
+if [ "$WITH_OLLAMA" = true ]; then
+    OLLAMA_STATUS="Active auto-start"
+else
+    OLLAMA_STATUS="Standby — start via 'bash scripts/deploy.sh ollama start' or '--with-ollama'"
+fi
+
+log "llama.cpp Inference Port  -> ${LLAMA_CPP_PORT} (Serving: ${LLAMA_STATUS})"
+log "Ollama Inference Port     -> ${OLLAMA_PORT} (Serving: ${OLLAMA_STATUS})"
 
 # ── 5. Preparing Container Environment ────────────────────────
 section "5. Preparing Container Environment"
@@ -300,6 +353,13 @@ if [ "$WITH_LLAMACPP" = true ]; then
     section "6b. Starting llama.cpp Inference Server"
     log "Orchestrating llama.cpp via scripts/deploy_llamacpp.sh..."
     bash scripts/deploy_llamacpp.sh start || warn "llama.cpp startup reported a non-fatal warning; continuing deployment."
+fi
+
+# ── 6c. Provisioning & Starting Ollama Inference (Optional) ───
+if [ "$WITH_OLLAMA" = true ]; then
+    section "6c. Starting Ollama Inference Server"
+    log "Orchestrating Ollama via scripts/deploy_ollama.sh..."
+    bash scripts/deploy_ollama.sh start || warn "Ollama startup reported a non-fatal warning; continuing deployment."
 fi
 
 echo ""
@@ -443,7 +503,12 @@ if [ "$FINAL_STATUS" = "200" ]; then
     if curl -s "http://127.0.0.1:${LLAMA_CPP_PORT}/v1/models" &>/dev/null; then
         echo -e "  ${BOLD}llama.cpp Inference  :${RESET}  http://${DETECTED_IP}:${LLAMA_CPP_PORT}/v1 (Online)"
     else
-        echo -e "  ${BOLD}llama.cpp Inference  :${RESET}  Standby (start anytime: 'bash scripts/deploy_llamacpp.sh start' or '--with-llamacpp')"
+        echo -e "  ${BOLD}llama.cpp Inference  :${RESET}  Standby (start anytime: 'bash scripts/deploy.sh llamacpp start' or '--with-llamacpp')"
+    fi
+    if curl -s "http://127.0.0.1:${OLLAMA_PORT}/api/tags" &>/dev/null; then
+        echo -e "  ${BOLD}Ollama Inference     :${RESET}  http://${DETECTED_IP}:${OLLAMA_PORT} (Online)"
+    else
+        echo -e "  ${BOLD}Ollama Inference     :${RESET}  Standby (start anytime: 'bash scripts/deploy.sh ollama start' or '--with-ollama')"
     fi
     echo ""
     finish_deployment
